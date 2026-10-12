@@ -237,6 +237,42 @@ static void set_vga_palette_full(const struct vbe_mode_info* info, int is_direct
 }
 
 
+extern volatile int global_tick;
+
+static void timer_update(void)
+{
+    static unsigned short last_pit = 0;
+    static unsigned int pit_sub_ticks = 0;
+    static int initialized = 0;
+
+    outb(0x43, 0x00); // Latch Counter 0
+    unsigned char lo = inb(0x40);
+    unsigned char hi = inb(0x40);
+    unsigned short count = ((unsigned short)hi << 8) | lo;
+
+    if (!initialized) {
+        last_pit = count;
+        initialized = 1;
+        return;
+    }
+
+    // Counter counts downwards from 65535 to 0 at 1.193182 MHz
+    unsigned short elapsed;
+    if (count <= last_pit) {
+        elapsed = last_pit - count;
+    } else {
+        elapsed = (last_pit + 65536) - count;
+    }
+    last_pit = count;
+
+    pit_sub_ticks += elapsed;
+    // 100 Hz: 11932 PIT counts = 10.0 ms
+    while (pit_sub_ticks >= 11932) {
+        pit_sub_ticks -= 11932;
+        global_tick++;
+    }
+}
+
 static void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, int rh)
 {
     if (rx < 0) { rw += rx; rx = 0; }
@@ -436,6 +472,7 @@ void kernel_main(void)
     mouse_init();
 
     while (1) {
+        timer_update();
         check_revert_timer();
         
         while (inb(0x64) & 0x01) {

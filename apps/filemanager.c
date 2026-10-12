@@ -275,7 +275,7 @@ void fm_update(unsigned char* v, int mx, int my, int mb, int wx, int wy, int ww,
             int y = wy + 62 + i * 16;
             
             if (mx >= wx+4 && mx < wx+ww-4 && my >= y && my < y+16) {
-                if (last_click_idx == idx && global_tick - last_click_time < 45) {
+                if (last_click_idx == idx && global_tick - last_click_time < 55) {
                     open_file(idx);
                     last_click_idx = -1;
                 } else {
@@ -377,10 +377,23 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         }
     }
     
+    static int last_err_tick = 0;
+    int err_dt = global_tick - last_err_tick;
+    if (err_dt < 0) err_dt = 0;
+    if (err_dt > 0) {
+        last_err_tick = global_tick;
+        if (show_error && error_timer > 0) {
+            error_timer -= err_dt;
+            if (error_timer <= 0) {
+                error_timer = 0;
+                show_error = 0;
+                extern int redraw;
+                redraw = 1;
+            }
+        }
+    }
     if (show_error && error_timer > 0) {
         draw_error_dialog(v, wx, wy, ww, wh);
-        error_timer--;
-        if (error_timer == 0) show_error = 0;
     }
     
     if (ctx_menu_open) {

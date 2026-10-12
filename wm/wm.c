@@ -14,8 +14,8 @@ static int rs_dir(int mx, int my, int wx, int wy, int ww, int wh);
 #include "keyboard.h"
 #include "mm.h"
 
-// 双击判定的 tick 阈值（100Hz 下 45 ticks = 450ms）
-#define DOUBLE_CLICK_TICKS 45
+// 双击判定的 tick 阈值（100Hz 下 55 ticks = 550ms）
+#define DOUBLE_CLICK_TICKS 55
 
 int redraw = 0;
 static int need_mr = 0;
@@ -490,6 +490,31 @@ void wm_draw(unsigned char* v){
 }
 
 
+static int in_icon(int mx, int my, int i) {
+    return (mx >= desk_icon_x[i] - 4 && mx < desk_icon_x[i] + 36 &&
+            my >= desk_icon_y[i] - 4 && my < desk_icon_y[i] + 52);
+}
+
+static void open_icon_app(int clicked_icon) {
+    if(clicked_icon == 0) { wv = 1; am = 0; show_opened("About"); }
+    if(clicked_icon == 1) { cv = 1; cm = 0; ww2 = ww2_def; wh2 = wh2_def; show_opened("Clock"); }
+    if(clicked_icon == 2) { clv = 1; clm = 0; wcw = wcw_def; wch = wch_def; calc_init(); show_opened("Calc"); }
+    if(clicked_icon == 3) { cpv = 1; cpm = 0; cpw = cpw_def; cph = cph_def; cpanel_init(); show_opened("CPanel"); }
+    if(clicked_icon == 4) { fmv = 1; fmm = 0; fmw = fmw_def; fmh = fmh_def; fm_init(); show_opened("Files"); }
+    if(clicked_icon == 5) {
+        if (!edv) { extern void editor_init(void); editor_init(); }
+        edv = 1; edm = 0; edw = edw_def; edh = edh_def; show_opened("Notepad");
+    }
+    bring_to_top(clicked_icon);
+    last_click_icon = -1;
+    last_click_icon_prev = -1;
+    last_click_time_prev = 0;
+    icon_pressed = -1;
+    icon_dragging = -1;
+    redraw = 1;
+    need_mr = 1;
+}
+
 static int in_ok(int mx, int my, int bx, int by) { return (mx>=bx && mx<bx+45 && my>=by && my<by+20); }
 static int in_cl(int mx, int my, int cx, int cy) { return (mx>=cx && mx<cx+12 && my>=cy && my<cy+12); }
 static int in_mi(int mx, int my, int cx, int cy) { return (mx>=cx && mx<cx+12 && my>=cy && my<cy+12); }
@@ -502,27 +527,31 @@ int wm_need_mouse_reset(void){int r=need_mr;need_mr=0;return r;}
 
 void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_release)
 {
-    tick++;
-    global_tick++;
+    static int last_processed_tick = 0;
+    int dt = global_tick - last_processed_tick;
+    if (dt < 0) dt = 0;
+    if (dt > 0) {
+        last_processed_tick = global_tick;
+        if (opened_msg_timer > 0) {
+            opened_msg_timer -= dt;
+            if (opened_msg_timer <= 0) {
+                opened_msg_timer = 0;
+                opened_msg[0] = 0;
+                redraw = 1;
+                need_mr = 1;
+            }
+        }
+    }
     
-    // Rate-limit CMOS RTC access to every 30 ticks to prevent ISA bus stalls
-    static int time_poll_counter = 0;
-    if (++time_poll_counter >= 30) {
-        time_poll_counter = 0;
+    // Poll RTC once every 100 ticks (1 Hz / 1 second) to prevent ISA bus stalls
+    static int last_rtc_tick = 0;
+    if (global_tick - last_rtc_tick >= 100 || last_s == -1) {
+        last_rtc_tick = global_tick;
         int h, m, s;
         get_time(&h, &m, &s);
         if (s != last_s) {
             last_s = s;
             redraw = 1;
-        }
-    }
-
-    if (opened_msg_timer > 0) {
-        opened_msg_timer--;
-        if (opened_msg_timer == 0) {
-            opened_msg[0] = 0;
-            redraw = 1;
-            need_mr = 1;
         }
     }
 
@@ -609,15 +638,20 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     }
     
     // Desktop icon press: record press and wait to see if it becomes a drag or a click
-    if (mb_press && !dragging && !resizing && !power_confirm && !mip && !clp && !okp && icon_dragging == -1 && icon_pressed == -1) {
+    if (mb_press && !dragging && !resizing && !power_confirm && !mip && !clp && !okp && icon_dragging == -1) {
         int clicked_icon = -1;
         for (int i = 5; i >= 0; i--) {
-            if (mx >= desk_icon_x[i] && mx < desk_icon_x[i] + 32 && my >= desk_icon_y[i] && my < desk_icon_y[i] + 32) {
+            if (in_icon(mx, my, i)) {
                 clicked_icon = i;
                 break;
             }
         }
         if (clicked_icon != -1) {
+            // Check double-click on PRESS (instantaneous response, like native Windows)
+            if (last_click_icon_prev == clicked_icon && (global_tick - last_click_time_prev) < DOUBLE_CLICK_TICKS) {
+                open_icon_app(clicked_icon);
+                return;
+            }
             icon_pressed = clicked_icon;
             icon_press_ox = mx - desk_icon_x[clicked_icon];
             icon_press_oy = my - desk_icon_y[clicked_icon];
@@ -631,7 +665,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     
     // If an icon is actively being dragged, move it. Otherwise, if an icon was pressed
     // and the mouse moved enough while held, start dragging. If the button was released
-    // without movement, treat it as a click (and detect double-click here).
+    // without movement, treat it as a click (and detect double-click here as fallback).
     if (icon_dragging != -1) {
         if (mb) {
             desk_icon_x[icon_dragging] = mx - icon_drag_ox;
@@ -646,11 +680,11 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
 
     if (icon_pressed != -1) {
         if (mb) {
-            // still holding: check if moved enough to start dragging
+            // still holding: check if moved enough to start dragging (8px threshold)
             int dx = mx - (desk_icon_x[icon_pressed] + icon_press_ox);
             int dy = my - (desk_icon_y[icon_pressed] + icon_press_oy);
             if (dx < 0) dx = -dx; if (dy < 0) dy = -dy;
-            if (dx > 4 || dy > 4) {
+            if (dx > 8 || dy > 8) {
                 // start dragging
                 icon_dragging = icon_pressed;
                 icon_drag_ox = icon_press_ox;
@@ -662,36 +696,13 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
             }
         } else {
             // button released: interpret as click
-            int clicked_icon = -1;
-            for (int i = 5; i >= 0; i--) {
-                if (mx >= desk_icon_x[i] && mx < desk_icon_x[i] + 32 && my >= desk_icon_y[i] && my < desk_icon_y[i] + 32) {
-                    clicked_icon = i;
-                    break;
-                }
-            }
-            if (clicked_icon == icon_pressed) {
-                if (last_click_icon_prev == clicked_icon && global_tick - last_click_time_prev < DOUBLE_CLICK_TICKS) {
-                    // double click: open
-                    if(clicked_icon == 0) { wv = 1; am = 0; show_opened("About"); }
-                    if(clicked_icon == 1) { cv = 1; cm = 0; ww2 = ww2_def; wh2 = wh2_def; show_opened("Clock"); }
-                    if(clicked_icon == 2) { clv = 1; clm = 0; wcw = wcw_def; wch = wch_def; calc_init(); show_opened("Calc"); }
-                    if(clicked_icon == 3) { cpv = 1; cpm = 0; cpw = cpw_def; cph = cph_def; cpanel_init(); show_opened("CPanel"); }
-                    if(clicked_icon == 4) { fmv = 1; fmm = 0; fmw = fmw_def; fmh = fmh_def; fm_init(); show_opened("Files"); }
-                    if(clicked_icon == 5) {
-                        if (!edv) { extern void editor_init(void); editor_init(); }
-                        edv = 1; edm = 0; edw = edw_def; edh = edh_def; show_opened("Notepad");
-                    }
-                    bring_to_top(clicked_icon);
-                    last_click_icon = -1;
-                    // clear previous click record so triple-clicks don't chain
-                    last_click_icon_prev = -1; last_click_time_prev = 0;
-                    // ensure UI updates immediately and input refresh
-                    redraw = 1; need_mr = 1;
+            if (!icon_press_moved && in_icon(mx, my, icon_pressed)) {
+                if (last_click_icon_prev == icon_pressed && (global_tick - last_click_time_prev) < DOUBLE_CLICK_TICKS) {
+                    open_icon_app(icon_pressed);
+                    return;
                 } else {
-                    // record this release for future double-click detection
-                    last_click_icon_prev = clicked_icon;
+                    last_click_icon_prev = icon_pressed;
                     last_click_time_prev = global_tick;
-                    // visual selection remains from press; ensure redraw
                     redraw = 1;
                 }
             }
@@ -719,15 +730,25 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     }
     
     if(mb_press&&!dragging&&!okp&&!clp&&!mip&&!resizing){
+        int hit_window = 0;
         for (int i=5; i>=0; i--) {
             int id = z_order[i];
             if (id == 5 && edv && !edm && rs_dir(mx,my,edx,edy,edw,edh)){resizing=1;dgw=5;bring_to_top(5);redraw=1;break;}
-            if (id == 4 && fmv && !fmm && rs_dir(mx,my,fmx,fmy,fmw,fmh)){resizing=1;dgw=4;bring_to_top(4);redraw=1;break;}            if (id == 5 && edv && !edm && mx>=edx && mx<edx+edw && my>=edy && my<edy+edh) { bring_to_top(5); editor_click(mx, my, edx, edy+20, edw, edh-20); redraw=1; break; }
-            if (id == 4 && fmv && !fmm && mx>=fmx && mx<fmx+fmw && my>=fmy && my<fmy+fmh) { bring_to_top(4); redraw=1; break; }
-            if (id == 3 && cpv && !cpm && mx>=cpx && mx<cpx+cpw && my>=cpy && my<cpy+cph) { bring_to_top(3); redraw=1; break; }
-            if (id == 2 && clv && !clm && mx>=wcx && mx<wcx+wcw && my>=wcy && my<wcy+wch) { bring_to_top(2); redraw=1; break; }
-            if (id == 1 && cv && !cm && mx>=wx2 && mx<wx2+ww2 && my>=wy2 && my<wy2+wh2) { bring_to_top(1); redraw=1; break; }
-            if (id == 0 && wv && !am && mx>=wx && mx<wx+ww && my>=wy && my<wy+wh) { bring_to_top(0); redraw=1; break; }
+            if (id == 4 && fmv && !fmm && rs_dir(mx,my,fmx,fmy,fmw,fmh)){resizing=1;dgw=4;bring_to_top(4);redraw=1;break;}
+            if (id == 5 && edv && !edm && mx>=edx && mx<edx+edw && my>=edy && my<edy+edh) { hit_window=1; bring_to_top(5); editor_click(mx, my, edx, edy+20, edw, edh-20); redraw=1; break; }
+            if (id == 4 && fmv && !fmm && mx>=fmx && mx<fmx+fmw && my>=fmy && my<fmy+fmh) { hit_window=1; bring_to_top(4); redraw=1; break; }
+            if (id == 3 && cpv && !cpm && mx>=cpx && mx<cpx+cpw && my>=cpy && my<cpy+cph) { hit_window=1; bring_to_top(3); redraw=1; break; }
+            if (id == 2 && clv && !clm && mx>=wcx && mx<wcx+wcw && my>=wcy && my<wcy+wch) { hit_window=1; bring_to_top(2); redraw=1; break; }
+            if (id == 1 && cv && !cm && mx>=wx2 && mx<wx2+ww2 && my>=wy2 && my<wy2+wh2) { hit_window=1; bring_to_top(1); redraw=1; break; }
+            if (id == 0 && wv && !am && mx>=wx && mx<wx+ww && my>=wy && my<wy+wh) { hit_window=1; bring_to_top(0); redraw=1; break; }
+        }
+        if (!hit_window && icon_pressed == -1) {
+            // Clicked on empty desktop background: clear icon selection
+            if (last_click_icon != -1 || last_click_icon_prev != -1) {
+                last_click_icon = -1;
+                last_click_icon_prev = -1;
+                redraw = 1;
+            }
         }
     }
 
