@@ -26,6 +26,12 @@ _start:
     mov gs, ax
     mov ss, ax
     
+    ; Enable CPU L1/L2 cache: clear CR0.CD (bit 30) and CR0.NW (bit 29)
+    mov eax, cr0
+    and eax, 0x9FFFFFFF
+    mov cr0, eax
+    wbinvd
+    
     mov esp, 0x90000
 
     call kernel_main

@@ -18,6 +18,7 @@ static unsigned char cmos_get_sec(void) {
 
 void check_revert_timer(void)
 {
+    if (revert_timer <= 0) return;
     static unsigned char last_cmos_sec = 0xFF;
     unsigned char cur_sec = cmos_get_sec();
     if (last_cmos_sec == 0xFF) last_cmos_sec = cur_sec;

@@ -453,21 +453,41 @@ void wm_init(void){
     calc_init();cpanel_init();fm_init();redraw=1;
 }
 
-void wm_draw(unsigned char* v){if(redraw){for(int y=0;y<screen_h;y++)for(int x=0;x<screen_w;x++)PUT_PIXEL(v, x, y, 7);
-    for (int i=0; i<6; i++) {
-        if (desk_icon_x[i] == 0 || desk_icon_x[i] > screen_w - 32) desk_icon_x[i] = screen_w - 60;
-        if (desk_icon_y[i] == 0 || desk_icon_y[i] > screen_h - 32) desk_icon_y[i] = 40 + i*60;
+void wm_draw(unsigned char* v){
+    if(redraw){
+        if (screen_bpp > 8) {
+            unsigned int gray_dword = ((unsigned int)palette16[7] << 16) | (unsigned int)palette16[7];
+            for (int y = 0; y < screen_h; y++) {
+                unsigned int* line = (unsigned int*)(v + y * screen_pitch);
+                int dwords = screen_w / 2;
+                for (int x = 0; x < dwords; x++) {
+                    line[x] = gray_dword;
+                }
+            }
+        } else {
+            for (int y = 0; y < screen_h; y++) {
+                unsigned char* line = v + y * screen_pitch;
+                for (int x = 0; x < screen_w; x++) {
+                    line[x] = 7;
+                }
+            }
+        }
+        for (int i=0; i<6; i++) {
+            if (desk_icon_x[i] == 0 || desk_icon_x[i] > screen_w - 32) desk_icon_x[i] = screen_w - 60;
+            if (desk_icon_y[i] == 0 || desk_icon_y[i] > screen_h - 32) desk_icon_y[i] = 40 + i*60;
+        }
+        icon(v,desk_icon_x[0],desk_icon_y[0],1,"About", last_click_icon == 0);
+        icon(v,desk_icon_x[1],desk_icon_y[1],2,"Clock", last_click_icon == 1);
+        icon(v,desk_icon_x[2],desk_icon_y[2],4,"Calc", last_click_icon == 2);
+        icon(v,desk_icon_x[3],desk_icon_y[3],6,"CPanel", last_click_icon == 3);
+        icon(v,desk_icon_x[4],desk_icon_y[4],5,"Files", last_click_icon == 4);
+        icon(v,desk_icon_x[5],desk_icon_y[5],3,"Notepad", last_click_icon == 5);
+        draw_all(v);
+        draw_menubar(v);
+        if(power_confirm) {  draw_power_dialog(v); }
     }
-    icon(v,desk_icon_x[0],desk_icon_y[0],1,"About", last_click_icon == 0);
-    icon(v,desk_icon_x[1],desk_icon_y[1],2,"Clock", last_click_icon == 1);
-    icon(v,desk_icon_x[2],desk_icon_y[2],4,"Calc", last_click_icon == 2);
-    icon(v,desk_icon_x[3],desk_icon_y[3],6,"CPanel", last_click_icon == 3);
-    icon(v,desk_icon_x[4],desk_icon_y[4],5,"Files", last_click_icon == 4);
-    icon(v,desk_icon_x[5],desk_icon_y[5],3,"Notepad", last_click_icon == 5);
-    draw_all(v);
-    draw_menubar(v);
-    if(power_confirm) {  draw_power_dialog(v); }
-    }redraw=0;}
+    redraw=0;
+}
 
 
 static int in_ok(int mx, int my, int bx, int by) { return (mx>=bx && mx<bx+45 && my>=by && my<by+20); }
@@ -484,10 +504,18 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
 {
     tick++;
     global_tick++;
-    if(cv&&!cm&&!dragging&&!resizing&&!power_confirm&&!clp&&!okp&&!mip&&tick>60){tick=0;redraw=1;}
     
-    int h,m,s; get_time(&h,&m,&s);
-    if (s != last_s) { last_s = s; redraw = 1; }
+    // Rate-limit CMOS RTC access to every 30 ticks to prevent ISA bus stalls
+    static int time_poll_counter = 0;
+    if (++time_poll_counter >= 30) {
+        time_poll_counter = 0;
+        int h, m, s;
+        get_time(&h, &m, &s);
+        if (s != last_s) {
+            last_s = s;
+            redraw = 1;
+        }
+    }
 
     if (opened_msg_timer > 0) {
         opened_msg_timer--;

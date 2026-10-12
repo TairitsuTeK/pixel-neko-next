@@ -208,7 +208,9 @@ real_mode:
 
     mov eax, cr0
     or eax, 1
+    and eax, 0x9FFFFFFF ; Clear CR0.CD (bit 30) and CR0.NW (bit 29) to ensure cache is enabled
     mov cr0, eax
+    wbinvd
     
     jmp 0x08:pm32 - payload_start + 0x8000
     

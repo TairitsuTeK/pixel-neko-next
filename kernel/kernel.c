@@ -237,14 +237,56 @@ static void set_vga_palette_full(const struct vbe_mode_info* info, int is_direct
 }
 
 
-static void wait_vsync(void) {
-    int timeout = 50000;
-    while ((inb(0x3DA) & 8) && --timeout);
-    timeout = 50000;
-    while (!(inb(0x3DA) & 8) && --timeout);
+static void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, int rh)
+{
+    if (rx < 0) { rw += rx; rx = 0; }
+    if (ry < 0) { rh += ry; ry = 0; }
+    if (rx + rw > screen_w) rw = screen_w - rx;
+    if (ry + rh > screen_h) rh = screen_h - ry;
+    if (rw <= 0 || rh <= 0) return;
+
+    int bytes_per_pixel = (screen_bpp <= 8) ? 1 : 2;
+    int line_bytes = rw * bytes_per_pixel;
+    
+    for (int y = 0; y < rh; y++) {
+        int offset = (ry + y) * screen_pitch + rx * bytes_per_pixel;
+        const unsigned char* s = src + offset;
+        unsigned char* d = (unsigned char*)lfb_ptr + offset;
+        
+        int dwords = line_bytes / 4;
+        for (int i = 0; i < dwords; i++) {
+            ((unsigned int*)d)[i] = ((const unsigned int*)s)[i];
+        }
+        for (int i = dwords * 4; i < line_bytes; i++) {
+            d[i] = s[i];
+        }
+    }
 }
 
-
+static void copy_fullscreen_to_lfb(const unsigned char* s_buf)
+{
+    int bytes_per_line = screen_w * (screen_bpp <= 8 ? 1 : 2);
+    if (bytes_per_line == screen_pitch) {
+        int dwords = (bytes_per_line * screen_h) / 4;
+        const unsigned int* s = (const unsigned int*)s_buf;
+        unsigned int* d = (unsigned int*)lfb_ptr;
+        for (int i = 0; i < dwords; i++) {
+            d[i] = s[i];
+        }
+    } else {
+        for (int y = 0; y < screen_h; y++) {
+            const unsigned char* s = s_buf + y * screen_pitch;
+            unsigned char* d = (unsigned char*)lfb_ptr + y * screen_pitch;
+            int dwords = bytes_per_line / 4;
+            for (int i = 0; i < dwords; i++) {
+                ((unsigned int*)d)[i] = ((const unsigned int*)s)[i];
+            }
+            for (int i = dwords * 4; i < bytes_per_line; i++) {
+                d[i] = s[i];
+            }
+        }
+    }
+}
 
 static int try_set_vbe_mode(int mode, int req_w, int req_h)
 {
@@ -360,6 +402,15 @@ void set_resolution(int w, int h, int bpp)
 
 void kernel_main(void)
 {
+    // Ensure CPU L1/L2 Cache is active (clear CD bit 30 and NW bit 29 in CR0)
+    asm volatile (
+        "movl %%cr0, %%eax\n\t"
+        "andl $0x9FFFFFFF, %%eax\n\t"
+        "movl %%eax, %%cr0\n\t"
+        "wbinvd\n\t"
+        : : : "eax"
+    );
+
     idt_init();
     pmm_init();
     pci_scan_vga();
@@ -400,6 +451,8 @@ void kernel_main(void)
 
         int mr = wm_need_mouse_reset();
         int moved = (mx != last_mx || my != last_my);
+        int prev_drawn_x = last_mx;
+        int prev_drawn_y = last_my;
         
         if (mr || moved) {
             if (last_mx >= 0) mouse_reset(v);
@@ -412,36 +465,27 @@ void kernel_main(void)
             if (last_mx >= 0) mouse_reset(v);
         }
         
+        extern int redraw;
+        int need_full_copy = redraw || (last_mx == -1);
+        
         wm_draw(v);
 
-        if (!wm_is_dragging() && (mr || moved || last_mx == -1)) {
+        if (!wm_is_dragging() && (mr || moved || last_mx == -1 || need_full_copy)) {
             mouse_draw(v);
             last_mx = mx; last_my = my;
         } else if (wm_is_dragging()) {
             last_mx = -1;
         }
 
-        wait_vsync();
-        int bytes_per_line = screen_w * (screen_bpp <= 8 ? 1 : 2);
-        if (bytes_per_line == screen_pitch) {
-            int dwords = (bytes_per_line * screen_h) / 4;
-            unsigned int* s = (unsigned int*)v;
-            unsigned int* d = (unsigned int*)lfb_ptr;
-            for (int i = 0; i < dwords; i++) {
-                d[i] = s[i];
+        if (need_full_copy) {
+            copy_fullscreen_to_lfb(v);
+        } else if (mr || moved) {
+            // Fast partial update: only copy old cursor and new cursor regions (1KB instead of 960KB)
+            if (prev_drawn_x >= 0) {
+                copy_rect_to_lfb(v, prev_drawn_x, prev_drawn_y, 16, 16);
             }
-        } else {
-            // Line-by-line copy handling hardware scanline pitch padding
-            for (int y = 0; y < screen_h; y++) {
-                unsigned char* s = v + y * screen_pitch;
-                unsigned char* d = (unsigned char*)lfb_ptr + y * screen_pitch;
-                int dwords = bytes_per_line / 4;
-                for (int i = 0; i < dwords; i++) {
-                    ((unsigned int*)d)[i] = ((unsigned int*)s)[i];
-                }
-                for (int i = dwords * 4; i < bytes_per_line; i++) {
-                    d[i] = s[i];
-                }
+            if (last_mx >= 0) {
+                copy_rect_to_lfb(v, last_mx, last_my, 16, 16);
             }
         }
     }
