@@ -1,6 +1,7 @@
 #include "editor.h"
 #include "font.h"
 #include "fat.h"
+#include "vfs.h"
 #include "wm.h"
 #include "keyboard.h"
 
@@ -38,11 +39,10 @@ void editor_init(void) {
 
 void editor_open_file(const char* filename) {
     editor_init();
-    file_handle_t* h = fat_open(filename);
-    if (h) {
-        editor_len = fat_read(h, (unsigned char*)editor_buf, EDITOR_MAX);
-        fat_close(h);
-        for (int i=0; i<256; i++) {
+    int bytes = vfs_read_file(filename, (unsigned char*)editor_buf, EDITOR_MAX);
+    if (bytes >= 0) {
+        editor_len = bytes;
+        for (int i = 0; i < 256; i++) {
             current_filename[i] = filename[i];
             if (!filename[i]) break;
         }
@@ -50,11 +50,13 @@ void editor_open_file(const char* filename) {
 }
 
 static void save_file(const char* name) {
-    fat_write_file(name, (unsigned char*)editor_buf, editor_len);
-    is_modified = 0;
-    for(int i=0;i<256;i++) {
-        current_filename[i] = name[i];
-        if(!name[i]) break;
+    int ret = vfs_write_file(name, (const unsigned char*)editor_buf, editor_len);
+    if (ret == VFS_OK) {
+        is_modified = 0;
+        for (int i = 0; i < 256; i++) {
+            current_filename[i] = name[i];
+            if (!name[i]) break;
+        }
     }
 }
 

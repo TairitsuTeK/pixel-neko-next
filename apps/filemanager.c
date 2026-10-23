@@ -1,6 +1,7 @@
 #include "filemanager.h"
 #include "font.h"
 #include "fat.h"
+#include "vfs.h"
 #include "disk.h"
 #include "wm.h"
 
@@ -11,11 +12,24 @@ static int selected = -1;
 static int scroll_offset = 0;
 static int show_error = 0;
 static int error_timer = 0;
+static char err_msg1[36] = "Action failed";
+static char err_msg2[36] = "Or unsupported.";
 static int last_click_idx = -1;
 static int last_click_time = 0;
 static int last_mb = 0;
 extern volatile int global_tick;
 extern int redraw;
+
+static void show_error_msg(const char* m1, const char* m2) {
+    int i;
+    for (i = 0; i < 35 && m1[i]; i++) err_msg1[i] = m1[i];
+    err_msg1[i] = '\0';
+    for (i = 0; i < 35 && m2[i]; i++) err_msg2[i] = m2[i];
+    err_msg2[i] = '\0';
+    show_error = 1;
+    error_timer = 250;
+    redraw = 1;
+}
 
 static int ctx_menu_open = 0;
 static int ctx_mx = 0, ctx_my = 0;
@@ -54,46 +68,36 @@ static void format_size(unsigned int size, char* buf) {
     }
 }
 
-static void file_callback(const file_info_t* info) {
+
+
+static void vfs_fm_callback(const vfs_dirent_t* ent) {
     if (file_count < 64) {
-        files[file_count] = *info;
+        int i;
+        for (i = 0; i < 31 && ent->name[i]; i++) {
+            files[file_count].name[i] = ent->name[i];
+        }
+        files[file_count].name[i] = '\0';
+        files[file_count].attr = ent->is_dir ? 0x10 : 0x20;
+        files[file_count].size = ent->size;
+        files[file_count].first_cluster = ent->first_cluster;
         file_count++;
     }
 }
 
 static void load_files(void) {
-    static int fat_initialized = 0;
-    if (!fat_initialized) {
-        fat_init();
-        fat_initialized = 1;
-    }
-    
     file_count = 0;
     selected = -1;
     scroll_offset = 0;
     ctx_menu_open = 0;
     
     if (current_path[0] == 0) { 
-        for (int i = 0; i < MAX_VOLUMES; i++) {
-            if (g_volumes[i].type != 0) {
+        // Enumerate Windows-assigned drives from VFS (A: ~ Z:)
+        for (int i = 0; i < 26; i++) {
+            vfs_drive_t* d = vfs_get_drive('A' + i);
+            if (d && file_count < 64) {
                 files[file_count].attr = 0x10;
-                files[file_count].size = g_volumes[i].total_clusters * g_volumes[i].sectors_per_cluster;
-                files[file_count].name[0] = 'C' + i;
-                files[file_count].name[1] = ':';
-                files[file_count].name[2] = '\\';
-                files[file_count].name[3] = 0;
-                file_count++;
-            }
-        }
-        char cdrom_letter = 'D'; // Start guessing from D
-        for (int i = 0; i < MAX_VOLUMES; i++) {
-            if (g_volumes[i].type != 0) cdrom_letter = 'C' + i + 1;
-        }
-        for (int i = 0; i < MAX_DRIVES; i++) {
-            if (g_drives[i].present && g_drives[i].is_atapi) {
-                files[file_count].attr = 0x10;
-                files[file_count].size = 0;
-                files[file_count].name[0] = cdrom_letter++;
+                files[file_count].size = d->total_sectors;
+                files[file_count].name[0] = d->letter;
                 files[file_count].name[1] = ':';
                 files[file_count].name[2] = '\\';
                 files[file_count].name[3] = 0;
@@ -114,7 +118,20 @@ static void load_files(void) {
         file_count++;
     }
     
-    fat_list_dir(current_path, file_callback);
+    int ret = vfs_list_dir(current_path, vfs_fm_callback);
+    if (ret != VFS_OK) {
+        if (ret == VFS_ERR_UNSUPPORTED) {
+            show_error_msg("Cannot read partition", "File system unsupported");
+        } else if (ret == VFS_ERR_NO_MEDIA) {
+            show_error_msg("Device not ready", "Please insert disc/disk");
+        } else {
+            show_error_msg("Read failed", "Disk or read error");
+        }
+        if (len <= 3) {
+            current_path[0] = 0;
+            load_files();
+        }
+    }
 }
 
 void fm_init(void) {
@@ -293,15 +310,25 @@ void fm_update(unsigned char* v, int mx, int my, int mb, int wx, int wy, int ww,
 }
 
 static void draw_error_dialog(unsigned char* v, int wx, int wy, int ww, int wh) {
-    int dx = wx + ww/2 - 60, dy = wy + wh/2 - 25, dw = 120, dh = 50;
-    for (int y = dy; y < dy+dh && y < 768; y++)
-        for (int x = dx; x < dx+dw && x < 1024; x++) PUT_PIXEL(v, x, y, 8);
+    int dw = 220, dh = 65;
+    int dx = wx + (ww - dw) / 2, dy = wy + (wh - dh) / 2;
+    for (int y = dy; y < dy+dh && y < screen_h; y++)
+        for (int x = dx; x < dx+dw && x < screen_w; x++) PUT_PIXEL(v, x, y, 7);
     for (int x = dx; x < dx+dw; x++) { PUT_PIXEL(v, x, dy, 15); PUT_PIXEL(v, x, dy+dh-1, 0); }
     for (int y = dy; y < dy+dh; y++) { PUT_PIXEL(v, dx, y, 15); PUT_PIXEL(v, dx+dw-1, y, 0); }
-    for (int y = dy+10; y < dy+25; y++) for (int x = dx+10; x < dx+25; x++) PUT_PIXEL(v, x, y, 4);
-    font_draw_text(v, dx+15, dy+14, "X", 15);
-    font_draw_text(v, dx+30, dy+12, "Action failed", 15);
-    font_draw_text(v, dx+30, dy+24, "Or unsupported.", 0);
+    // Alert stop sign / icon box
+    for (int y = dy+12; y < dy+36; y++)
+        for (int x = dx+10; x < dx+34; x++) PUT_PIXEL(v, x, y, 4);
+    font_draw_text(v, dx+18, dy+18, "!", 15);
+    font_draw_text(v, dx+40, dy+14, err_msg1, 0);
+    font_draw_text(v, dx+40, dy+28, err_msg2, 8);
+    // OK button
+    int obx = dx + (dw - 50) / 2, oby = dy + 44;
+    for (int y = oby; y < oby+16; y++)
+        for (int x = obx; x < obx+50; x++) PUT_PIXEL(v, x, y, 7);
+    for (int x = obx; x < obx+50; x++) { PUT_PIXEL(v, x, oby, 15); PUT_PIXEL(v, x, oby+15, 0); }
+    for (int y = oby; y < oby+16; y++) { PUT_PIXEL(v, obx, y, 15); PUT_PIXEL(v, obx+49, y, 0); }
+    font_draw_text(v, obx+18, oby+4, "OK", 0);
 }
 
 void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
@@ -336,37 +363,40 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         font_draw_text(v, wx+8, y, dname, fg);
         
         if (current_path[0] == 0) {
-            if (files[idx].size > 0) {
-                char type_str[10];
-                int drive_v = files[idx].name[0] - 'C';
-                if (drive_v >= 0 && drive_v < MAX_VOLUMES) {
-                    if (g_volumes[drive_v].type == 32) my_strcpy(type_str, "FAT32");
-                    else if (g_volumes[drive_v].type == 16) my_strcpy(type_str, "FAT16");
-                    else my_strcpy(type_str, "Disk");
-                } else my_strcpy(type_str, "Disk");
-                
-                font_draw_text(v, wx+ww-150, y, type_str, fg);
-                char size_str[24];
-                unsigned int secs = files[idx].size;
-                if (secs >= 2097152) { // >= 1GB
-                    unsigned int gb = secs / 2097152;
-                    int p=0; char temp[10]; int tp=0;
-                    if(gb==0){size_str[p++]='0';}else{while(gb>0){temp[tp++]='0'+gb%10;gb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
-                    size_str[p++]=' '; size_str[p++]='G'; size_str[p++]='B'; size_str[p]=0;
-                } else if (secs >= 2048) { // >= 1MB
-                    unsigned int mb = secs / 2048;
-                    int p=0; char temp[10]; int tp=0;
-                    if(mb==0){size_str[p++]='0';}else{while(mb>0){temp[tp++]='0'+mb%10;mb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
-                    size_str[p++]=' '; size_str[p++]='M'; size_str[p++]='B'; size_str[p]=0;
+            vfs_drive_t* d = vfs_get_drive(files[idx].name[0]);
+            if (d) {
+                if (d->drv_type == VFS_DRV_FLOPPY) {
+                    font_draw_text(v, wx+ww-150, y, "Floppy", fg);
+                    font_draw_text(v, wx+ww-75, y, "1.44 MB", fg);
+                } else if (d->drv_type == VFS_DRV_CDROM) {
+                    font_draw_text(v, wx+ww-150, y, "CD-ROM", fg);
+                    font_draw_text(v, wx+ww-75, y, d->label[0] ? d->label : "Disc", fg);
                 } else {
-                    unsigned int kb = secs / 2;
-                    int p=0; char temp[10]; int tp=0;
-                    if(kb==0){size_str[p++]='0';}else{while(kb>0){temp[tp++]='0'+kb%10;kb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
-                    size_str[p++]=' '; size_str[p++]='K'; size_str[p++]='B'; size_str[p]=0;
+                    // Hard disk partition
+                    const char* fs_nm = vfs_get_fs_name(d->fs_type);
+                    font_draw_text(v, wx+ww-150, y, fs_nm, fg);
+                    char size_str[24];
+                    unsigned int secs = files[idx].size;
+                    if (secs >= 2097152) { // >= 1GB
+                        unsigned int gb = secs / 2097152;
+                        int p=0; char temp[10]; int tp=0;
+                        if(gb==0){size_str[p++]='0';}else{while(gb>0){temp[tp++]='0'+gb%10;gb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
+                        size_str[p++]=' '; size_str[p++]='G'; size_str[p++]='B'; size_str[p]=0;
+                    } else if (secs >= 2048) { // >= 1MB
+                        unsigned int mb = secs / 2048;
+                        int p=0; char temp[10]; int tp=0;
+                        if(mb==0){size_str[p++]='0';}else{while(mb>0){temp[tp++]='0'+mb%10;mb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
+                        size_str[p++]=' '; size_str[p++]='M'; size_str[p++]='B'; size_str[p]=0;
+                    } else {
+                        unsigned int kb = secs / 2;
+                        int p=0; char temp[10]; int tp=0;
+                        if(kb==0){size_str[p++]='0';}else{while(kb>0){temp[tp++]='0'+kb%10;kb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
+                        size_str[p++]=' '; size_str[p++]='K'; size_str[p++]='B'; size_str[p]=0;
+                    }
+                    font_draw_text(v, wx+ww-75, y, size_str, fg);
                 }
-                font_draw_text(v, wx+ww-75, y, size_str, fg);
             } else {
-                font_draw_text(v, wx+ww-150, y, "CD-ROM", fg);
+                font_draw_text(v, wx+ww-150, y, "Drive", fg);
             }
         } else if (!(files[idx].attr & 0x10)) {
             char size_str[24];

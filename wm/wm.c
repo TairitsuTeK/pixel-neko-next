@@ -13,6 +13,7 @@ static int rs_dir(int mx, int my, int wx, int wy, int ww, int wh);
 #include "editor.h"
 #include "keyboard.h"
 #include "mm.h"
+#include "power.h"
 
 // 双击判定的 tick 阈值（100Hz 下 55 ticks = 550ms）
 #define DOUBLE_CLICK_TICKS 55
@@ -598,17 +599,9 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         if(mb_release && power_ok_pressed){power_ok_pressed=0;
             if(mx>=obx && mx<obx+80 && my>=oby && my<oby+22){
                 if(power_confirm==1) {
-                    // 1. Keyboard Controller reset
-                    outb(0x64, 0xFE);
-                    // 2. PCI reset
-                    outb(0xCF9, 0x02);
-                    outb(0xCF9, 0x06);
-                    // 3. Triple fault fallback
-                    struct { unsigned short limit; unsigned int base; } __attribute__((packed)) null_idtp = {0, 0};
-                    asm volatile("lidt %0; int3" : : "m"(null_idtp));
+                    sys_reboot();
                 } else {
-                    extern void bios_shutdown(void);
-                    bios_shutdown();
+                    sys_shutdown();
                 }
             }else{redraw=1;}}
         if(redraw) { need_mr=1; }

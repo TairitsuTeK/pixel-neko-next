@@ -56,7 +56,7 @@ typedef struct {
 } fat_fs_t;
 
 typedef struct {
-    char           name[13];
+    char           name[32];
     unsigned char  attr;
     unsigned int   size;
     unsigned int   first_cluster;
@@ -87,7 +87,10 @@ int fat_create_dir(const char* name);
 int fat_write_file(const char* name, const unsigned char* buf, unsigned int size);
 void fat_flush_all(void);
 
-#define MAX_VOLUMES 4
+int fat_mount_volume(int vol_idx, int drive_idx, unsigned int lba);
+int mount_fat(fat_fs_t* vol, int drive_idx, unsigned int lba, unsigned char* boot_sector);
+
+#define MAX_VOLUMES 16
 extern fat_fs_t g_volumes[MAX_VOLUMES];
 
 #endif

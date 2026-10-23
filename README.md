@@ -3,9 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%201700.000)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%201750.000)-brightgreen.svg)]()
 
-**Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、FAT16/FAT32 文件系统、丰富的内置应用程序以及极致复古的经典开机体验。
+**Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
 ---
 
@@ -19,18 +19,16 @@
   - **高版本 CPU 品牌字符串优先**：自动安全读取 CPUID 扩展叶（0x80000002..0x80000004），针对现代 Core i3/i5/i7/i9、Xeon、AMD Ryzen 等输出规范化品牌全称。
   - **经典处理器三级匹配策略**：对不支持扩展品牌串的早期 CPU（如奔腾 Pro、奔腾 II、早期奔腾 III），结合 Intel Brand Index 及精确的 Family / Model 查表策略，完美呈现 `Intel Pentium Pro`、`Intel Pentium II (Klamath)`、`Intel Pentium III (Katmai)` 等经典型号。
   - **架构级安全边界探测**：严格遵守 x86 规范对叶片范围进行校验，确保在奔腾 Pro、各种虚拟机（QEMU、VMware、VirtualBox、Bochs）及实机硬件上均稳定无虞。
-- **🖥️ 高清图形桌面 & VBE 显示**
-  - 支持最高 1024×768 / 800×600 / 640×480 @ 16-bit (RGB 565) 高清彩色显示，以及兼容标准的 320×200 Mode 13h。
-  - 基于线性帧缓冲区（LFB）与软件双缓冲（Backbuffer），配合局部脏矩形快速刷新。
-- **🔄 实模式跳转蹦床（Real-mode Trampoline）**
-  - 在 32 位保护模式与 16 位实模式间实现无缝动态切换，复用 BIOS INT 10h 动态更改屏幕分辨率，复用 BIOS INT 15h (APM) 实现安全电源关机。
-- **🪟 完备的窗口管理器（Window Manager）**
-  - 支持窗口拖拽、窗口大小缩放、Z-Order 层叠管理与顶置聚焦。
-  - 拥有经典顶部菜单栏、时钟显示、桌面图标自由拖动、双击快速启动及自适应屏幕居中的电源确认对话框。
-- **💾 存储与文件系统支持**
-  - **IDE / ATA 驱动**：支持主/从盘检测、PIO 模式扇区读写与缓存冲刷（Cache Flush）。
-  - **ATAPI 支持**：支持光驱设备识别与 ATAPI (READ 12) 扇区读取。
-  - **FAT16 / FAT32 文件系统**：支持根目录及子目录遍历、文件查找、新建、读取、写入持久化保存、重命名与删除。
+- **🔌 完善的电源管理与经典安全停机画面（针对 ASUS KN97 等奔腾 Pro 机型）**
+  - **阶梯式关机策略**：依序执行 ACPI S5 状态切换、标准 APM 1.2 握手切断电源、模拟器 I/O 关机端口。
+  - **经典安全停机画面（Safe to Turn Off）**：针对 Baby AT 架构物理机械开关主板（如奔腾 Pro 华硕 KN97），关机后呈现 Windows 95/98 经典全屏 *"It is now safe to turn off your computer."*，并永久挂起 CPU，绝不静默返回保护模式桌面。
+  - **可靠硬件重启**：通过 8042 键盘控制器复位脉冲（0xFE）与 PCI 复位向量（0xCF9）实现秒级干净重启。
+- **💾 全新统一虚拟文件系统（VFS）与存储子系统**
+  - **Windows 对齐盘符体系**：A: 与 B: 专给软驱预留；硬盘数据分区从 C: 开始依次分配；光驱紧随已分配硬盘分区之后（若无硬盘则光驱自动为 C: 盘）；自动隐藏 EFI 系统分区与扩展容器分区。
+  - **CDFS 光盘驱动 (ISO9660 + Joliet)**：完整支持标准 ISO9660 与 Joliet 长文件名扩展，解决 CD/DVD 点开为空的问题，支持只读浏览与读取光盘文件。
+  - **原生软盘驱动 (FDC)**：原生 82077AA / NEC765 控制器驱动 + ISA DMA 通道 2 传输，支持 1.44M/720K 软盘及 FAT12 格式。
+  - **文件系统容错交互**：识别 NTFS、exFAT、Linux ext 等分区并分配盘符；双击不支持的分区时友好弹出 *"Cannot read partition"* 模态提示框。
+  - **FAT12 / FAT16 / FAT32 文件系统**：完整保留记事本及文件管理器对可写磁盘分区的文件新建、编辑、写入保存及删除能力；对光盘等只读介质进行写保护拦截。
 - **📱 丰富的内置应用程序**
   - **文本编辑器（Editor）**：支持文件打开、键盘光标导航、多行编辑与磁盘回写保存。
   - **计算器（Calculator）**：四则运算，拟物化 3D 浮雕按钮与即时计算。

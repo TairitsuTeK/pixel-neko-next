@@ -17,17 +17,24 @@ C_SOURCES = kernel/kernel.c \
             kernel/timer.c \
             kernel/cpu.c \
             kernel/splash.c \
+            kernel/power.c \
             drivers/speaker.c \
             drivers/mouse.c \
             drivers/keyboard.c \
             drivers/disk.c \
+            drivers/blkdev.c \
+            drivers/isadma.c \
+            drivers/fdc.c \
             drivers/font.c \
             wm/wm.c \
             apps/calc.c \
             apps/cpanel.c \
             apps/editor.c \
             apps/filemanager.c \
-            fs/fat.c
+            fs/fat.c \
+            fs/part.c \
+            fs/iso9660.c \
+            fs/vfs.c
 
 ASM_SOURCES = boot/multiboot.asm boot/vbe.asm boot/idt_asm.asm
 HEADERS = $(wildcard include/*.h)

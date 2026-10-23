@@ -83,6 +83,8 @@ void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
         buf[9] = '0' + (sec % 10);
         font_draw_text(v, wx+10, wy+146, buf, 4);
         draw_btn(v, wx+130, wy+140, 115, 24, "YES");
+    } else {
+        font_draw_text(v, wx+10, wy+146, "Live Mode: Session settings", 8);
     }
 }
 

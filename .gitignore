@@ -11,6 +11,7 @@ output.txt
 __pycache__/
 *.pyc
 plan.md
+plan2.md
 
 # Editor directories
 .vscode/

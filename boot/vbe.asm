@@ -184,22 +184,48 @@ real_mode:
     jmp .done
 
 .do_shutdown:
-    mov ax, 0x5301 ; APM Connect
+    ; Disconnect any previous APM connection
+    mov ax, 0x5304
     xor bx, bx
     int 0x15
-    mov ax, 0x530E ; APM Enable
+
+    ; Connect real mode APM interface
+    mov ax, 0x5301
+    xor bx, bx
+    int 0x15
+
+    ; APM Driver Version 1.2
+    mov ax, 0x530E
     xor bx, bx
     mov cx, 0x0102
     int 0x15
-    mov ax, 0x5307 ; Set Power State
-    mov bx, 0x0001 ; All devices
-    mov cx, 0x0003 ; Off
+
+    ; Enable power management for all devices
+    mov ax, 0x5308
+    mov bx, 0x0001
+    mov cx, 0x0001
     int 0x15
-    ; If APM fails, try Bochs/QEMU ports
+
+    ; Engage power management for all devices
+    mov ax, 0x530F
+    mov bx, 0x0001
+    mov cx, 0x0001
+    int 0x15
+
+    ; Set Power State: Off (BX=0001h all devices, CX=0003h Off)
+    mov ax, 0x5307
+    mov bx, 0x0001
+    mov cx, 0x0003
+    int 0x15
+
+    ; If APM fails, try Bochs / QEMU / VirtualBox ports
     mov dx, 0x604
     mov ax, 0x2000
     out dx, ax
     mov dx, 0xB004
+    out dx, ax
+    mov dx, 0x4004
+    mov ax, 0x3400
     out dx, ax
     jmp .done
 

@@ -101,7 +101,7 @@ static const char* split_path(const char* path, char* comp) {
     return path + i;
 }
 
-static int mount_fat(fat_fs_t* vol, int drive_idx, unsigned int lba, unsigned char* boot_sector) {
+int mount_fat(fat_fs_t* vol, int drive_idx, unsigned int lba, unsigned char* boot_sector) {
     bpb_t* bpb = (bpb_t*)&boot_sector[11];
     
     if (bpb->bytes_per_sector != 512) return -1;
@@ -117,8 +117,6 @@ static int mount_fat(fat_fs_t* vol, int drive_idx, unsigned int lba, unsigned ch
     if (total_clusters < 4085) vol->type = 12;
     else if (total_clusters < 65525) vol->type = 16;
     else vol->type = 32;
-
-    if (vol->type == 12) return -1; 
 
     vol->drive_idx = drive_idx;
     vol->partition_lba = lba;
@@ -136,6 +134,13 @@ static int mount_fat(fat_fs_t* vol, int drive_idx, unsigned int lba, unsigned ch
     
     vol->cached_fat_sector = 0xFFFFFFFF;
     return 0;
+}
+
+int fat_mount_volume(int vol_idx, int drive_idx, unsigned int lba) {
+    if (vol_idx < 0 || vol_idx >= MAX_VOLUMES) return -1;
+    unsigned char sec[512];
+    if (disk_read_drive(drive_idx, lba, sec) != 0) return -1;
+    return mount_fat(&g_volumes[vol_idx], drive_idx, lba, sec);
 }
 
 int fat_init(void) {
@@ -163,18 +168,45 @@ int fat_init(void) {
 }
 
 static unsigned int fat_read_entry(fat_fs_t* vol, unsigned int cluster) {
-    unsigned int fat_offset = (vol->type == 32) ? (cluster * 4) : (cluster * 2);
-    unsigned int fat_sector = vol->reserved_sectors + (fat_offset / 512);
-    unsigned int ent_offset = fat_offset % 512;
-    
-    if (vol->cached_fat_sector != fat_sector) {
-        if (disk_read_drive(vol->drive_idx, vol->partition_lba + fat_sector, vol->fat_sector_buf) != 0) return 0x0FFFFFFF;
-        vol->cached_fat_sector = fat_sector;
-    }
-    
-    if (vol->type == 32) {
+    if (vol->type == 12) {
+        unsigned int fat_offset = cluster + (cluster / 2);
+        unsigned int fat_sector = vol->reserved_sectors + (fat_offset / 512);
+        unsigned int ent_offset = fat_offset % 512;
+        unsigned char b0, b1;
+
+        if (vol->cached_fat_sector != fat_sector) {
+            if (disk_read_drive(vol->drive_idx, vol->partition_lba + fat_sector, vol->fat_sector_buf) != 0) return 0x0FFFFFFF;
+            vol->cached_fat_sector = fat_sector;
+        }
+        b0 = vol->fat_sector_buf[ent_offset];
+
+        if (ent_offset == 511) {
+            unsigned char next_buf[512];
+            if (disk_read_drive(vol->drive_idx, vol->partition_lba + fat_sector + 1, next_buf) != 0) return 0x0FFFFFFF;
+            b1 = next_buf[0];
+        } else {
+            b1 = vol->fat_sector_buf[ent_offset + 1];
+        }
+
+        unsigned short val = (unsigned short)b0 | (((unsigned short)b1) << 8);
+        return (cluster & 1) ? ((val >> 4) & 0x0FFF) : (val & 0x0FFF);
+    } else if (vol->type == 32) {
+        unsigned int fat_offset = cluster * 4;
+        unsigned int fat_sector = vol->reserved_sectors + (fat_offset / 512);
+        unsigned int ent_offset = fat_offset % 512;
+        if (vol->cached_fat_sector != fat_sector) {
+            if (disk_read_drive(vol->drive_idx, vol->partition_lba + fat_sector, vol->fat_sector_buf) != 0) return 0x0FFFFFFF;
+            vol->cached_fat_sector = fat_sector;
+        }
         return (*(unsigned int*)&vol->fat_sector_buf[ent_offset]) & 0x0FFFFFFF;
     } else {
+        unsigned int fat_offset = cluster * 2;
+        unsigned int fat_sector = vol->reserved_sectors + (fat_offset / 512);
+        unsigned int ent_offset = fat_offset % 512;
+        if (vol->cached_fat_sector != fat_sector) {
+            if (disk_read_drive(vol->drive_idx, vol->partition_lba + fat_sector, vol->fat_sector_buf) != 0) return 0x0FFFFFFF;
+            vol->cached_fat_sector = fat_sector;
+        }
         return *(unsigned short*)&vol->fat_sector_buf[ent_offset];
     }
 }
@@ -223,7 +255,7 @@ typedef int (*dir_callback_t)(fat_fs_t* vol, dir_entry_t* entry, unsigned int se
 static int traverse_dir(fat_fs_t* vol, unsigned int start_cluster, dir_callback_t cb, void* user_data) {
     unsigned char buf[512];
     
-    if (start_cluster == 0 && vol->type == 16) {
+    if (start_cluster == 0 && (vol->type == 12 || vol->type == 16)) {
         unsigned int root_start = vol->reserved_sectors + vol->num_fats * vol->sectors_per_fat;
         for (unsigned int i = 0; i < vol->root_dir_sectors; i++) {
             if (disk_read_drive(vol->drive_idx, vol->partition_lba + root_start + i, buf) != 0) return -1;
@@ -238,8 +270,10 @@ static int traverse_dir(fat_fs_t* vol, unsigned int start_cluster, dir_callback_
     
     unsigned int current = start_cluster;
     if (current == 0 && vol->type == 32) current = vol->root_cluster;
+
+    unsigned int end_cluster_mark = (vol->type == 12) ? 0x0FF8 : ((vol->type == 16) ? 0xFFF8 : 0x0FFFFFF8);
     
-    while (current >= 2 && current < 0x0FFFFFF8) {
+    while (current >= 2 && current < end_cluster_mark) {
         unsigned int start_sector = cluster_to_sector(vol, current);
         for (unsigned int i = 0; i < vol->sectors_per_cluster; i++) {
             if (disk_read_drive(vol->drive_idx, vol->partition_lba + start_sector + i, buf) != 0) return -1;
@@ -250,7 +284,7 @@ static int traverse_dir(fat_fs_t* vol, unsigned int start_cluster, dir_callback_
             }
         }
         unsigned int next = fat_read_entry(vol, current);
-        if (next >= 0x0FFFFFF8 || next == 0) break;
+        if (next >= end_cluster_mark || next == 0) break;
         current = next;
     }
     return 0;

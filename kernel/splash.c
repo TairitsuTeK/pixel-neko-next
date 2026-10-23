@@ -7,6 +7,7 @@
 #include "cpu.h"
 #include "mm.h"
 #include "fat.h"
+#include "vfs.h"
 #include "mouse.h"
 
 #ifndef NULL
@@ -282,8 +283,8 @@ typedef struct {
     void (*exec)(void);
 } boot_step_t;
 
-static void run_fat_init(void) {
-    fat_init();
+static void run_vfs_init(void) {
+    vfs_init();
 }
 
 void splash_run(void)
@@ -360,7 +361,7 @@ void splash_run(void)
 
     // Title and system info
     font_draw_text(v, win_x + 68, win_y + 16, "Pixel Neko Next", 0);
-    font_draw_text(v, win_x + 68, win_y + 32, "Version C2.0 (Build 1700.000)", 0);
+    font_draw_text(v, win_x + 68, win_y + 32, "Version C2.0 (Build 1750.000)", 0);
     font_draw_text(v, win_x + 68, win_y + 48, "32-Bit Graphical Operating System", 8);
     font_draw_text(v, win_x + 68, win_y + 64, "(C) 2026 Tairitsu_tty / XNZM", 8);
 
@@ -384,7 +385,7 @@ void splash_run(void)
         { "Configuring PS/2 keyboard buffer...", "IRQ1 Remapped", 3, 56, 140, NULL },
         { "Initializing PS/2 mouse streaming...", "Auxiliary Device Enabled", 4, 70, 160, mouse_init },
         { "Probing ATA IDE storage & partitions...", "Master/Slave Drive Check", 5, 82, 180, NULL },
-        { "Mounting FAT16/FAT32 volumes...", "Virtual File System Ready", 6, 92, 180, run_fat_init },
+        { "Mounting drives & volumes (VFS)...", "Virtual File System Ready", 6, 92, 180, run_vfs_init },
         { "Loading desktop environment...", "Window Manager Ready", 7, 100, 160, wm_init }
     };
 
