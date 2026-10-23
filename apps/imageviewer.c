@@ -207,7 +207,7 @@ void imageviewer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
             my_str_cat(stat_str, "%");
         }
         my_str_cat(stat_str, " | RAM: ");
-        unsigned int mb_used = (g_img.page_count * 4) / 1024;
+        int mb_used = (int)((g_img.page_count * 4) / 1024);
         my_int_to_str(mb_used, nbuf); my_str_cat(stat_str, nbuf);
         my_str_cat(stat_str, "MB");
     } else {

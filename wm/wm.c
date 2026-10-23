@@ -73,7 +73,7 @@ static int icon_press_ox = 0, icon_press_oy = 0;
 static int icon_press_moved = 0;
 static int menu_open = 0, menu_index = -1;
 extern volatile int global_tick;
-static int last_click_icon = -1, last_click_time = 0, last_s = -1;
+static int last_click_icon = -1;
 // Track previous click release for double-click timing (separate from visual selection)
 static int last_click_icon_prev = -1, last_click_time_prev = 0;
 
@@ -98,7 +98,6 @@ static int pzw_def=180, pzh_def=200;
 static int pzv=0, pzm=0;
 static int imx=60, imy=35, imw=480, imh=340;
 static int imw_def=480, imh_def=340;
-static int oimx=60, oimy=35;
 
 static int z_order[9] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
 void bring_to_top(int id) {
@@ -111,7 +110,6 @@ void bring_to_top(int id) {
 }
 static int dragging=0, dgo=0, dgoy=0, dgw=0;
 static int drag_active=0, drag_bx=0, drag_by=0, drag_bw=0, drag_bh=0;
-static int owx=80, owy=52, owx2=100, owy2=70, owcx=95, owcy=50, ocpx=85, ocpy=55, ofmx=85, ofmy=50, oedx=90, oedy=60, osix=75, osiy=45, opzx=110, opzy=50;
 static int okp=0, okbx=0, okby=0;
 static int clp=0, clcx=0, clcy=0, clw=0;
 static int mip=0, miw=0;
@@ -984,6 +982,8 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     if (mb_release) {
         if (resizing) { resizing=0; dgw=0; redraw=1; }
     }
+    
+    if (mb_press && !dragging && !okp && !clp && !mip && !resizing) {
         int hit_window = 0;
         for (int i=8; i>=0; i--) {
             int id = z_order[i];
@@ -1072,15 +1072,15 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
 
     if(mb&1&&!okp&&!clp&&!mip&&!resizing){
         if(!dragging){
-            if(wv&&mx>=wx&&mx<wx+ww&&my>=wy&&my<wy+12){bring_to_top(0);dragging=1;dgw=1;dgo=mx-wx;dgoy=my-wy;owx=wx;owy=wy;}
-            else if(cv&&mx>=wx2&&mx<wx2+ww2&&my>=wy2&&my<wy2+12){bring_to_top(1);dragging=1;dgw=2;dgo=mx-wx2;dgoy=my-wy2;owx2=wx2;owy2=wy2;}
-            else if(clv&&mx>=wcx&&mx<wcx+wcw&&my>=wcy&&my<wcy+12){bring_to_top(2);dragging=1;dgw=3;dgo=mx-wcx;dgoy=my-wcy;owcx=wcx;owcy=wcy;}
-            else if(cpv&&mx>=cpx&&mx<cpx+cpw&&my>=cpy&&my<cpy+12){bring_to_top(3);dragging=1;dgw=4;dgo=mx-cpx;dgoy=my-cpy;ocpx=cpx;ocpy=cpy;}
-            else if(fmv&&mx>=fmx&&mx<fmx+fmw&&my>=fmy&&my<fmy+12){bring_to_top(4);dragging=1;dgw=5;dgo=mx-fmx;dgoy=my-fmy;ofmx=fmx;ofmy=fmy;}
-            else if(edv&&mx>=edx&&mx<edx+edw&&my>=edy&&my<edy+12){bring_to_top(5);dragging=1;dgw=6;dgo=mx-edx;dgoy=my-edy;oedx=edx;oedy=edy;}
-            else if(siv&&mx>=six&&mx<six+siw&&my>=siy&&my<siy+12){bring_to_top(6);dragging=1;dgw=7;dgo=mx-six;dgoy=my-siy;osix=six;osiy=siy;}
-            else if(pzv&&mx>=pzx&&mx<pzx+pzw&&my>=pzy&&my<pzy+12){bring_to_top(7);dragging=1;dgw=8;dgo=mx-pzx;dgoy=my-pzy;opzx=pzx;opzy=pzy;}
-            else if(imv&&mx>=imx&&mx<imx+imw&&my>=imy&&my<imy+12){bring_to_top(8);dragging=1;dgw=9;dgo=mx-imx;dgoy=my-imy;oimx=imx;oimy=imy;}
+            if(wv&&mx>=wx&&mx<wx+ww&&my>=wy&&my<wy+12){bring_to_top(0);dragging=1;dgw=1;dgo=mx-wx;dgoy=my-wy;}
+            else if(cv&&mx>=wx2&&mx<wx2+ww2&&my>=wy2&&my<wy2+12){bring_to_top(1);dragging=1;dgw=2;dgo=mx-wx2;dgoy=my-wy2;}
+            else if(clv&&mx>=wcx&&mx<wcx+wcw&&my>=wcy&&my<wcy+12){bring_to_top(2);dragging=1;dgw=3;dgo=mx-wcx;dgoy=my-wcy;}
+            else if(cpv&&mx>=cpx&&mx<cpx+cpw&&my>=cpy&&my<cpy+12){bring_to_top(3);dragging=1;dgw=4;dgo=mx-cpx;dgoy=my-cpy;}
+            else if(fmv&&mx>=fmx&&mx<fmx+fmw&&my>=fmy&&my<fmy+12){bring_to_top(4);dragging=1;dgw=5;dgo=mx-fmx;dgoy=my-fmy;}
+            else if(edv&&mx>=edx&&mx<edx+edw&&my>=edy&&my<edy+12){bring_to_top(5);dragging=1;dgw=6;dgo=mx-edx;dgoy=my-edy;}
+            else if(siv&&mx>=six&&mx<six+siw&&my>=siy&&my<siy+12){bring_to_top(6);dragging=1;dgw=7;dgo=mx-six;dgoy=my-siy;}
+            else if(pzv&&mx>=pzx&&mx<pzx+pzw&&my>=pzy&&my<pzy+12){bring_to_top(7);dragging=1;dgw=8;dgo=mx-pzx;dgoy=my-pzy;}
+            else if(imv&&mx>=imx&&mx<imx+imw&&my>=imy&&my<imy+12){bring_to_top(8);dragging=1;dgw=9;dgo=mx-imx;dgoy=my-imy;}
         }
         if(dragging){
             int nwx=mx-dgo,nwy=my-dgoy;
