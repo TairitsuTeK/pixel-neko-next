@@ -1,6 +1,10 @@
 #ifndef PORT_H
 #define PORT_H
 
+#ifndef NULL
+#define NULL ((void*)0)
+#endif
+
 static inline void outb(unsigned short port, unsigned char value)
 {
     __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));

@@ -9,6 +9,10 @@
 #include "fat.h"
 #include "mouse.h"
 
+#ifndef NULL
+#define NULL ((void*)0)
+#endif
+
 // Check if user pressed a key (Esc/Space/Enter) or clicked mouse to skip animation
 static int splash_poll_skip(void)
 {

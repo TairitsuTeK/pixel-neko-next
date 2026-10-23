@@ -1,5 +1,4 @@
 #include "cpu.h"
-#include "timer.h"
 
 cpu_info_t g_cpu_info = {
     .vendor = "Unknown",

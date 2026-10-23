@@ -37,7 +37,7 @@ void timer_update(void)
     if (count <= last_pit) {
         elapsed = last_pit - count;
     } else {
-        elapsed = (last_pit + 65536) - count;
+        elapsed = (unsigned short)((last_pit + 65536U) - count);
     }
     last_pit = count;
 

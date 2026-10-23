@@ -245,8 +245,6 @@ void isr_handler(struct trap_frame* frame) {
     serial_puts("\n");
     serial_puts("System halted safely. Triple-fault reboot prevented.\n");
     // If graphical display is active, render classic system error alert
-    extern int screen_w, screen_h;
-    extern unsigned char backbuffer[];
     if (screen_w >= 320 && screen_h >= 200) {
         int box_w = 340;
         int box_h = 120;

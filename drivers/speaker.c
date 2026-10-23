@@ -22,7 +22,7 @@ void speaker_play(unsigned int freq, unsigned int duration_ms)
         outb(0x61, tmp | 3); // enable speaker
     }
     
-    sleep_ms(duration_ms);
+    sleep_ms((int)duration_ms);
     
     // Turn speaker off
     outb(0x61, inb(0x61) & 0xFC);

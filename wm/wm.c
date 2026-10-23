@@ -219,8 +219,10 @@ static void about_win(unsigned char* v, int wx, int wy)
     font_draw_text(v, wx+8, wy+100, "(C) 2026 Tairitsu_tty / XNZM", 0);
     
     font_draw_text(v, wx+8, wy+120, "CPU:", 0);
-    char cpu_disp[48];
+    char cpu_disp[64];
     int max_chars = (ww - 56) / 8;
+    if (max_chars > 60) max_chars = 60;
+    if (max_chars < 1) max_chars = 1;
     int ci = 0;
     while (cpu_model_string[ci] && ci < max_chars) {
         cpu_disp[ci] = cpu_model_string[ci];
