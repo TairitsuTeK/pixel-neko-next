@@ -32,13 +32,18 @@ static unsigned int measure_cpu_mhz(void) {
     // Restore port 0x61
     outb(0x61, orig_61);
 
-    unsigned long long start_tsc = ((unsigned long long)start_high << 32) | start_low;
-    unsigned long long end_tsc = ((unsigned long long)end_high << 32) | end_low;
+    unsigned int elapsed_cycles;
+    if (end_high == start_high) {
+        if (end_low <= start_low) return 200;
+        elapsed_cycles = end_low - start_low;
+    } else if (end_high == start_high + 1) {
+        elapsed_cycles = (0xFFFFFFFF - start_low) + 1 + end_low;
+    } else {
+        return 200;
+    }
 
-    if (end_tsc <= start_tsc) return 200;
-
-    unsigned long long elapsed = end_tsc - start_tsc;
-    unsigned int mhz = (unsigned int)((elapsed + 5000) / 10000);
+    // In 10 ms (0.01 s), cycles / 10000 = MHz (native 32-bit division)
+    unsigned int mhz = (elapsed_cycles + 5000) / 10000;
 
     // Round to standard clock boundaries for clean reporting
     if (mhz >= 50) {
