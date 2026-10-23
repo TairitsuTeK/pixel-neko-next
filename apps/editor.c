@@ -49,6 +49,8 @@ void editor_open_file(const char* filename) {
     }
 }
 
+#include "speaker.h"
+
 static void save_file(const char* name) {
     int ret = vfs_write_file(name, (const unsigned char*)editor_buf, editor_len);
     if (ret == VFS_OK) {
@@ -57,6 +59,8 @@ static void save_file(const char* name) {
             current_filename[i] = name[i];
             if (!name[i]) break;
         }
+    } else {
+        speaker_beep();
     }
 }
 
@@ -384,5 +388,35 @@ void editor_release(void) {
     if (sel_start == sel_end) {
         sel_start = -1;
         sel_end = -1;
+    }
+}
+
+char g_clipboard[4096] = {0};
+
+void editor_copy(void) {
+    if (sel_start != -1 && sel_end != -1 && sel_start != sel_end) {
+        int s = sel_start < sel_end ? sel_start : sel_end;
+        int e = sel_start > sel_end ? sel_start : sel_end;
+        int len = e - s;
+        if (len >= (int)sizeof(g_clipboard) - 1) len = sizeof(g_clipboard) - 1;
+        for (int i = 0; i < len; i++) {
+            g_clipboard[i] = editor_buf[s + i];
+        }
+        g_clipboard[len] = '\0';
+    }
+}
+
+void editor_cut(void) {
+    editor_copy();
+    delete_selection();
+}
+
+void editor_paste(void) {
+    if (g_clipboard[0] == '\0') return;
+    if (sel_start != -1 && sel_end != -1 && sel_start != sel_end) {
+        delete_selection();
+    }
+    for (int i = 0; g_clipboard[i] != '\0'; i++) {
+        insert_char(g_clipboard[i]);
     }
 }

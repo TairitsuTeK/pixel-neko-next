@@ -14,6 +14,7 @@ typedef struct {
     blkdev_t*      dev;
     unsigned int   root_extent_lba;
     unsigned int   root_data_len;
+    unsigned int   total_sectors;
     int            is_joliet;
     char           volume_label[33];
     int            mounted;

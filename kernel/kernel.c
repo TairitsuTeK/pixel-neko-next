@@ -11,9 +11,11 @@ int screen_w = 320;
 int screen_h = 200;
 int screen_bpp = 8;
 int screen_pitch = 320;
-unsigned char backbuffer[1024 * 768 * 2];
+unsigned char backbuffer[1024 * 768 * 4];
 unsigned int lfb_ptr = 0xA0000;
+unsigned char* lfb = (unsigned char*)0xA0000;
 unsigned short palette16[256];
+unsigned int palette32[256];
 
 extern int vbe_set_mode(int mode);
 extern int vbe_get_mode_info(int mode);
@@ -63,19 +65,6 @@ struct pci_vga_info {
 
 static struct pci_vga_info pci_vga = {0, 0, 0, 0, 0};
 
-static inline unsigned int pci_read_config(unsigned char bus, unsigned char slot, unsigned char func, unsigned char offset)
-{
-    unsigned int address = (1U << 31) | ((unsigned int)bus << 16) | ((unsigned int)slot << 11) | ((unsigned int)func << 8) | (offset & 0xFC);
-    outl(0xCF8, address);
-    return inl(0xCFC);
-}
-
-static inline void pci_write_config(unsigned char bus, unsigned char slot, unsigned char func, unsigned char offset, unsigned int val)
-{
-    unsigned int address = (1U << 31) | ((unsigned int)bus << 16) | ((unsigned int)slot << 11) | ((unsigned int)func << 8) | (offset & 0xFC);
-    outl(0xCF8, address);
-    outl(0xCFC, val);
-}
 
 static void pci_scan_vga(void)
 {
@@ -211,6 +200,7 @@ static void set_vga_palette_full(const struct vbe_mode_info* info, int is_direct
         unsigned short c16 = make_color16(r * 4, g * 4, b * 4, info);
         if (screen_bpp == 15) c16 &= 0x7FFF;
         palette16[i] = c16;
+        palette32[i] = ((unsigned int)(r * 4) << 16) | ((unsigned int)(g * 4) << 8) | (unsigned int)(b * 4);
 
         if (!is_direct_color) {
             if (i == 0) outb(0x3C8, 0);
@@ -249,7 +239,7 @@ void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, int rh)
     if (ry + rh > screen_h) rh = screen_h - ry;
     if (rw <= 0 || rh <= 0) return;
 
-    int bytes_per_pixel = (screen_bpp <= 8) ? 1 : 2;
+    int bytes_per_pixel = (screen_bpp <= 8) ? 1 : ((screen_bpp <= 16) ? 2 : ((screen_bpp <= 24) ? 3 : 4));
     int line_bytes = rw * bytes_per_pixel;
     
     for (int y = 0; y < rh; y++) {
@@ -269,13 +259,17 @@ void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, int rh)
 
 void copy_fullscreen_to_lfb(const unsigned char* s_buf)
 {
-    int bytes_per_line = screen_w * (screen_bpp <= 8 ? 1 : 2);
+    int bytes_per_pixel = (screen_bpp <= 8) ? 1 : ((screen_bpp <= 16) ? 2 : ((screen_bpp <= 24) ? 3 : 4));
+    int bytes_per_line = screen_w * bytes_per_pixel;
     if (bytes_per_line == screen_pitch) {
         int dwords = (bytes_per_line * screen_h) / 4;
         const unsigned int* s = (const unsigned int*)s_buf;
         unsigned int* d = (unsigned int*)lfb_ptr;
         for (int i = 0; i < dwords; i++) {
             d[i] = s[i];
+        }
+        for (int i = dwords * 4; i < bytes_per_line * screen_h; i++) {
+            ((unsigned char*)d)[i] = s_buf[i];
         }
     } else {
         for (int y = 0; y < screen_h; y++) {
@@ -328,12 +322,16 @@ static int try_set_vbe_mode(int mode, int req_w, int req_h)
     asm volatile("cli");
     
     lfb_ptr = found_lfb;
+    lfb = (unsigned char*)found_lfb;
     screen_w = (info->x_res > 0) ? info->x_res : req_w;
     screen_h = (info->y_res > 0) ? info->y_res : req_h;
     screen_bpp = (info->bpp > 0) ? info->bpp : 16;
-    screen_pitch = (info->bytes_per_scanline > 0) ? info->bytes_per_scanline : (screen_w * (screen_bpp <= 8 ? 1 : 2));
+    int bpp_bytes = (screen_bpp <= 8) ? 1 : ((screen_bpp <= 16) ? 2 : ((screen_bpp <= 24) ? 3 : 4));
+    screen_pitch = (info->bytes_per_scanline > 0) ? info->bytes_per_scanline : (screen_w * bpp_bytes);
     
-    set_vga_palette_full(info, 1);
+    set_vga_palette_full(info, (screen_bpp > 8));
+    extern void gfx_accel_set_mode(int w, int h, int bpp);
+    gfx_accel_set_mode(screen_w, screen_h, screen_bpp);
     return 1;
 }
 
@@ -341,7 +339,8 @@ void set_resolution(int w, int h, int bpp)
 {
     // Bounds check to ensure resolution fits within backbuffer
     if (w <= 0 || h <= 0 || w > 1024 || h > 768) return;
-    if ((unsigned int)(w * h * (bpp <= 8 ? 1 : 2)) > sizeof(backbuffer)) return;
+    int bpp_bytes = (bpp <= 8) ? 1 : ((bpp <= 16) ? 2 : ((bpp <= 24) ? 3 : 4));
+    if ((unsigned int)(w * h * bpp_bytes) > sizeof(backbuffer)) return;
 
     if (w == 320 && h == 200 && bpp == 8) {
         asm volatile("cli");
@@ -352,9 +351,12 @@ void set_resolution(int w, int h, int bpp)
 
         screen_w = 320; screen_h = 200; screen_bpp = 8; screen_pitch = 320;
         lfb_ptr = 0xA0000;
+        lfb = (unsigned char*)0xA0000;
         
         // Restore DAC palette for 8-bit mode
         set_vga_palette_full(0, 0);
+        extern void gfx_accel_set_mode(int w, int h, int bpp);
+        gfx_accel_set_mode(320, 200, 8);
         return;
     }
     
@@ -365,21 +367,51 @@ void set_resolution(int w, int h, int bpp)
         pci_scan_vga();
     }
     
-    int candidates[4] = {0, 0, 0, 0};
+    int candidates[8] = {0};
     int num_candidates = 0;
     
-    if (w == 800 && h == 600) {
-        candidates[0] = 0x114; // 800x600 16bpp (64K colors)
-        candidates[1] = 0x113; // 800x600 15bpp (32K colors)
-        num_candidates = 2;
-    } else if (w == 640 && h == 480) {
-        candidates[0] = 0x111; // 640x480 16bpp (64K colors)
-        candidates[1] = 0x110; // 640x480 15bpp (32K colors)
-        num_candidates = 2;
-    } else if (w == 1024 && h == 768) {
-        candidates[0] = 0x117; // 1024x768 16bpp (64K colors)
-        candidates[1] = 0x116; // 1024x768 15bpp (32K colors)
-        num_candidates = 2;
+    if (bpp >= 24) {
+        if (w == 800 && h == 600) {
+            candidates[0] = 0x115; // 800x600 24/32bpp
+            candidates[1] = 0x114; // 800x600 16bpp
+            candidates[2] = 0x113; // 800x600 15bpp
+            num_candidates = 3;
+        } else if (w == 640 && h == 480) {
+            candidates[0] = 0x112; // 640x480 24/32bpp
+            candidates[1] = 0x111; // 640x480 16bpp
+            candidates[2] = 0x110; // 640x480 15bpp
+            num_candidates = 3;
+        } else if (w == 1024 && h == 768) {
+            candidates[0] = 0x118; // 1024x768 24/32bpp
+            candidates[1] = 0x117; // 1024x768 16bpp
+            candidates[2] = 0x116; // 1024x768 15bpp
+            num_candidates = 3;
+        }
+    } else if (bpp <= 8) {
+        if (w == 800 && h == 600) {
+            candidates[0] = 0x103; // 800x600 8bpp
+            num_candidates = 1;
+        } else if (w == 640 && h == 480) {
+            candidates[0] = 0x101; // 640x480 8bpp
+            num_candidates = 1;
+        } else if (w == 1024 && h == 768) {
+            candidates[0] = 0x105; // 1024x768 8bpp
+            num_candidates = 1;
+        }
+    } else { // 15 or 16 bpp
+        if (w == 800 && h == 600) {
+            candidates[0] = 0x114; // 800x600 16bpp (64K colors)
+            candidates[1] = 0x113; // 800x600 15bpp (32K colors)
+            num_candidates = 2;
+        } else if (w == 640 && h == 480) {
+            candidates[0] = 0x111; // 640x480 16bpp (64K colors)
+            candidates[1] = 0x110; // 640x480 15bpp (32K colors)
+            num_candidates = 2;
+        } else if (w == 1024 && h == 768) {
+            candidates[0] = 0x117; // 1024x768 16bpp (64K colors)
+            candidates[1] = 0x116; // 1024x768 15bpp (32K colors)
+            num_candidates = 2;
+        }
     }
     
     for (int i = 0; i < num_candidates; i++) {
@@ -388,11 +420,10 @@ void set_resolution(int w, int h, int bpp)
         }
     }
 
-    // Fallback: If 800x600/1024x768 failed, try 640x480 (16bpp then 15bpp)
-    if (w != 640 || h != 480) {
-        if (try_set_vbe_mode(0x111, 640, 480)) return;
-        if (try_set_vbe_mode(0x110, 640, 480)) return;
-    }
+    // Fallback: If requested mode failed, try 800x600 16bpp then 640x480 16bpp
+    if (try_set_vbe_mode(0x114, 800, 600)) return;
+    if (try_set_vbe_mode(0x111, 640, 480)) return;
+    if (try_set_vbe_mode(0x110, 640, 480)) return;
 
     // Fallback: Standard VGA 320x200 8-bit mode 0x13
     bios_set_mode(0x13);
@@ -401,7 +432,10 @@ void set_resolution(int w, int h, int bpp)
     asm volatile("cli");
     screen_w = 320; screen_h = 200; screen_bpp = 8; screen_pitch = 320;
     lfb_ptr = 0xA0000;
+    lfb = (unsigned char*)0xA0000;
     set_vga_palette_full(0, 0);
+    extern void gfx_accel_set_mode(int w, int h, int bpp);
+    gfx_accel_set_mode(320, 200, 8);
 }
 
 void kernel_main(void)

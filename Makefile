@@ -18,6 +18,9 @@ C_SOURCES = kernel/kernel.c \
             kernel/cpu.c \
             kernel/splash.c \
             kernel/power.c \
+            kernel/panic.c \
+            drivers/ati_mach64.c \
+            drivers/gfx_accel.c \
             drivers/speaker.c \
             drivers/mouse.c \
             drivers/keyboard.c \
@@ -31,6 +34,8 @@ C_SOURCES = kernel/kernel.c \
             apps/cpanel.c \
             apps/editor.c \
             apps/filemanager.c \
+            apps/sysinfo.c \
+            apps/puzzle.c \
             fs/fat.c \
             fs/part.c \
             fs/iso9660.c \

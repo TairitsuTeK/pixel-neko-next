@@ -3,6 +3,7 @@
 #include "mm.h"
 #include "wm.h"
 #include "font.h"
+#include "panic.h"
 
 extern volatile int global_tick;
 
@@ -244,57 +245,7 @@ void isr_handler(struct trap_frame* frame) {
     serial_puts(cpu_model_string);
     serial_puts("\n");
     serial_puts("System halted safely. Triple-fault reboot prevented.\n");
-    // If graphical display is active, render classic system error alert
-    if (screen_w >= 320 && screen_h >= 200) {
-        int box_w = 340;
-        int box_h = 120;
-        int bx = (screen_w - box_w) / 2;
-        int by = (screen_h - box_h) / 2;
 
-        for (int y = by; y < by + box_h; y++) {
-            for (int x = bx; x < bx + box_w; x++) {
-                PUT_PIXEL(backbuffer, x, y, 7);
-            }
-        }
-        // Black outline & double frame
-        for (int x = bx; x < bx + box_w; x++) {
-            PUT_PIXEL(backbuffer, x, by, 0);
-            PUT_PIXEL(backbuffer, x, by + box_h - 1, 0);
-            PUT_PIXEL(backbuffer, x, by + 2, 0);
-            PUT_PIXEL(backbuffer, x, by + box_h - 3, 0);
-        }
-        for (int y = by; y < by + box_h; y++) {
-            PUT_PIXEL(backbuffer, bx, y, 0);
-            PUT_PIXEL(backbuffer, bx + box_w - 1, y, 0);
-            PUT_PIXEL(backbuffer, bx + 2, y, 0);
-            PUT_PIXEL(backbuffer, bx + box_w - 3, y, 0);
-        }
-
-        // Draw alert title & details
-        font_draw_text(backbuffer, bx + 16, by + 12, "Sorry, a system error occurred.", 0);
-        const char* name = (frame->int_no < 32) ? exception_names[frame->int_no] : "Unknown Trap";
-        font_draw_text(backbuffer, bx + 16, by + 32, name, 4);
-
-        char eip_str[32] = "EIP: 0x";
-        const char hex[] = "0123456789ABCDEF";
-        for (int i = 0; i < 8; i++) {
-            eip_str[7 + i] = hex[(frame->eip >> ((7 - i) * 4)) & 0xF];
-        }
-        eip_str[15] = '\0';
-        font_draw_text(backbuffer, bx + 16, by + 52, eip_str, 0);
-        font_draw_text(backbuffer, bx + 16, by + 72, cpu_model_string, 8);
-        font_draw_text(backbuffer, bx + 16, by + 92, "Press any key to restart...", 1);
-
-        copy_fullscreen_to_lfb(backbuffer);
-    }
-
-    // Wait for keypress then reboot
-    while (1) {
-        if (inb(0x64) & 0x01) {
-            inb(0x60);
-            outb(0x64, 0xFE);
-            outb(0xCF9, 0x06);
-        }
-        asm volatile("pause");
-    }
+    const char* name = (frame->int_no < 32) ? exception_names[frame->int_no] : "Fatal Exception";
+    panic_show_exception(frame, name);
 }

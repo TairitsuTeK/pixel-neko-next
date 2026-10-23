@@ -58,6 +58,9 @@ void vfs_init(void) {
         d->dev = blkdev_get(0);
         d->start_lba = 0;
         d->total_sectors = fdc_get_total_sectors(0);
+        d->total_kb = 1440;
+        d->free_kb = 0;
+        d->is_free_known = 0;
         my_strcpy(d->label, "3.5\" Floppy (A:)", sizeof(d->label));
     }
 
@@ -71,6 +74,9 @@ void vfs_init(void) {
         d->dev = blkdev_get(1);
         d->start_lba = 0;
         d->total_sectors = fdc_get_total_sectors(1);
+        d->total_kb = 1440;
+        d->free_kb = 0;
+        d->is_free_known = 0;
         my_strcpy(d->label, "3.5\" Floppy (B:)", sizeof(d->label));
     }
 
@@ -90,13 +96,15 @@ void vfs_init(void) {
         d->dev = part->dev;
         d->start_lba = part->start_lba;
         d->total_sectors = part->total_sectors;
+        d->total_kb = (unsigned int)(((unsigned long long)d->total_sectors * 512) / 1024);
+        d->free_kb = 0;
+        d->is_free_known = 0;
         my_strcpy(d->label, part->label, sizeof(d->label));
 
         next_letter++;
     }
 
     // 3. Optical drives (CD/DVD): immediately follow hard disk partitions.
-    // If no hard disk exists (e.g. ASUS KN97 test bench with no HDD), next_letter is 'C'.
     int b_count = blkdev_count();
     int cd_idx = 0;
 
@@ -114,11 +122,16 @@ void vfs_init(void) {
             d->dev = dev;
             d->start_lba = 0;
             d->total_sectors = 0;
+            d->total_kb = 0;
+            d->free_kb = 0;
+            d->is_free_known = 1;
 
             // Attempt ISO9660 mount
             if (cd_idx < 4) {
                 if (iso_mount(dev, &g_iso_fs[cd_idx]) == 0) {
                     d->mounted = 1;
+                    d->total_sectors = g_iso_fs[cd_idx].total_sectors;
+                    d->total_kb = d->total_sectors * 2;
                     if (g_iso_fs[cd_idx].volume_label[0]) {
                         my_strcpy(d->label, g_iso_fs[cd_idx].volume_label, sizeof(d->label));
                     } else {
@@ -278,4 +291,54 @@ int vfs_write_file(const char* path, const unsigned char* buf, unsigned int size
         return VFS_ERR_IO;
     }
     return VFS_OK;
+}
+
+int vfs_get_drive_space(char letter, unsigned int* total_kb, unsigned int* free_kb, int* is_known) {
+    vfs_drive_t* drv = vfs_get_drive(letter);
+    if (!drv) return -1;
+
+    if (drv->drv_type == VFS_DRV_CDROM) {
+        if (total_kb) *total_kb = drv->total_kb;
+        if (free_kb) *free_kb = 0;
+        if (is_known) *is_known = 1;
+        return 0;
+    }
+
+    if (drv->drv_type == VFS_DRV_FLOPPY) {
+        unsigned int tot = 1440, fre = 0;
+        if (fat_get_volume_space(letter, &tot, &fre) == 0) {
+            drv->total_kb = tot;
+            drv->free_kb = fre;
+            drv->is_free_known = 1;
+            if (total_kb) *total_kb = tot;
+            if (free_kb) *free_kb = fre;
+            if (is_known) *is_known = 1;
+            return 0;
+        } else {
+            if (total_kb) *total_kb = 1440;
+            if (free_kb) *free_kb = 0;
+            if (is_known) *is_known = 0;
+            return 0;
+        }
+    }
+
+    // Hard disk partition
+    if (drv->is_supported) {
+        unsigned int tot = drv->total_kb, fre = 0;
+        if (fat_get_volume_space(letter, &tot, &fre) == 0) {
+            drv->total_kb = tot;
+            drv->free_kb = fre;
+            drv->is_free_known = 1;
+            if (total_kb) *total_kb = tot;
+            if (free_kb) *free_kb = fre;
+            if (is_known) *is_known = 1;
+            return 0;
+        }
+    }
+
+    // Fallback or unsupported FS (NTFS/EXT)
+    if (total_kb) *total_kb = drv->total_kb;
+    if (free_kb) *free_kb = 0;
+    if (is_known) *is_known = 0;
+    return 0;
 }

@@ -53,6 +53,9 @@ typedef struct {
     
     unsigned int   cached_fat_sector;
     unsigned char  fat_sector_buf[512];
+
+    unsigned int   free_clusters;
+    int            is_free_calculated;
 } fat_fs_t;
 
 typedef struct {
@@ -89,6 +92,7 @@ void fat_flush_all(void);
 
 int fat_mount_volume(int vol_idx, int drive_idx, unsigned int lba);
 int mount_fat(fat_fs_t* vol, int drive_idx, unsigned int lba, unsigned char* boot_sector);
+int fat_get_volume_space(char letter, unsigned int* total_kb, unsigned int* free_kb);
 
 #define MAX_VOLUMES 16
 extern fat_fs_t g_volumes[MAX_VOLUMES];

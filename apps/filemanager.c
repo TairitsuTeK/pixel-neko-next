@@ -4,6 +4,7 @@
 #include "vfs.h"
 #include "disk.h"
 #include "wm.h"
+#include "speaker.h"
 
 char current_path[256] = "C:\\";
 static file_info_t files[64];
@@ -29,6 +30,7 @@ static void show_error_msg(const char* m1, const char* m2) {
     show_error = 1;
     error_timer = 250;
     redraw = 1;
+    speaker_beep();
 }
 
 static int ctx_menu_open = 0;
@@ -65,6 +67,32 @@ static void format_size(unsigned int size, char* buf) {
             while (tp > 0) buf[p++] = temp[--tp];
         }
         buf[p++] = ' '; buf[p++] = 'M'; buf[p++] = 'B'; buf[p] = 0;
+    }
+}
+
+static void format_kb(unsigned int kb, char* buf) {
+    int p = 0;
+    char temp[16]; int tp = 0;
+    if (kb >= 1048576) { // >= 1GB
+        unsigned int gb = kb / 1048576;
+        unsigned int rem = ((kb % 1048576) * 10) / 1048576;
+        if (gb == 0) temp[tp++] = '0';
+        else { while (gb > 0) { temp[tp++] = '0' + gb % 10; gb /= 10; } }
+        while (tp > 0) buf[p++] = temp[--tp];
+        buf[p++] = '.';
+        buf[p++] = '0' + rem;
+        buf[p++] = ' '; buf[p++] = 'G'; buf[p++] = 'B'; buf[p] = 0;
+    } else if (kb >= 1024) { // >= 1MB
+        unsigned int mb = kb / 1024;
+        if (mb == 0) temp[tp++] = '0';
+        else { while (mb > 0) { temp[tp++] = '0' + mb % 10; mb /= 10; } }
+        while (tp > 0) buf[p++] = temp[--tp];
+        buf[p++] = ' '; buf[p++] = 'M'; buf[p++] = 'B'; buf[p] = 0;
+    } else {
+        if (kb == 0) temp[tp++] = '0';
+        else { while (kb > 0) { temp[tp++] = '0' + kb % 10; kb /= 10; } }
+        while (tp > 0) buf[p++] = temp[--tp];
+        buf[p++] = ' '; buf[p++] = 'K'; buf[p++] = 'B'; buf[p] = 0;
     }
 }
 
@@ -336,11 +364,18 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     my_strcat(title, current_path[0] ? current_path : "Drives");
     font_draw_text(v, wx+5, wy+20, title, 0);
     
-    font_draw_text(v, wx+8, wy+40, "Name", 0);
-    font_draw_text(v, wx+ww-75, wy+40, "Size", 0);
+    if (current_path[0] == 0) {
+        font_draw_text(v, wx+8, wy+40, "Drive", 0);
+        font_draw_text(v, wx+70, wy+40, "Type", 0);
+        font_draw_text(v, wx+ww-160, wy+40, "Total", 0);
+        font_draw_text(v, wx+ww-80, wy+40, "Free", 0);
+    } else {
+        font_draw_text(v, wx+8, wy+40, "Name", 0);
+        font_draw_text(v, wx+ww-75, wy+40, "Size", 0);
+    }
     for (int x = wx+4; x < wx+ww-4; x++) if (wy+58 < 768 && x < 1024) PUT_PIXEL(v, x, wy+58, 8);
     
-    int max_display = (wh - 80) / 16;
+    int max_display = (wh - 90) / 16;
     if (max_display > 10) max_display = 10;
     
     for (int i = 0; i < max_display && (i + scroll_offset) < file_count; i++) {
@@ -365,38 +400,39 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         if (current_path[0] == 0) {
             vfs_drive_t* d = vfs_get_drive(files[idx].name[0]);
             if (d) {
+                unsigned int tot_k = 0, fre_k = 0;
+                int is_known = 0;
+                vfs_get_drive_space(d->letter, &tot_k, &fre_k, &is_known);
+
+                char tot_str[24], fre_str[24];
+                format_kb(tot_k, tot_str);
+
                 if (d->drv_type == VFS_DRV_FLOPPY) {
-                    font_draw_text(v, wx+ww-150, y, "Floppy", fg);
-                    font_draw_text(v, wx+ww-75, y, "1.44 MB", fg);
-                } else if (d->drv_type == VFS_DRV_CDROM) {
-                    font_draw_text(v, wx+ww-150, y, "CD-ROM", fg);
-                    font_draw_text(v, wx+ww-75, y, d->label[0] ? d->label : "Disc", fg);
-                } else {
-                    // Hard disk partition
-                    const char* fs_nm = vfs_get_fs_name(d->fs_type);
-                    font_draw_text(v, wx+ww-150, y, fs_nm, fg);
-                    char size_str[24];
-                    unsigned int secs = files[idx].size;
-                    if (secs >= 2097152) { // >= 1GB
-                        unsigned int gb = secs / 2097152;
-                        int p=0; char temp[10]; int tp=0;
-                        if(gb==0){size_str[p++]='0';}else{while(gb>0){temp[tp++]='0'+gb%10;gb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
-                        size_str[p++]=' '; size_str[p++]='G'; size_str[p++]='B'; size_str[p]=0;
-                    } else if (secs >= 2048) { // >= 1MB
-                        unsigned int mb = secs / 2048;
-                        int p=0; char temp[10]; int tp=0;
-                        if(mb==0){size_str[p++]='0';}else{while(mb>0){temp[tp++]='0'+mb%10;mb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
-                        size_str[p++]=' '; size_str[p++]='M'; size_str[p++]='B'; size_str[p]=0;
+                    font_draw_text(v, wx+70, y, "FAT12", fg);
+                    font_draw_text(v, wx+ww-160, y, tot_str, fg);
+                    if (is_known) {
+                        format_kb(fre_k, fre_str);
+                        font_draw_text(v, wx+ww-80, y, fre_str, fg);
                     } else {
-                        unsigned int kb = secs / 2;
-                        int p=0; char temp[10]; int tp=0;
-                        if(kb==0){size_str[p++]='0';}else{while(kb>0){temp[tp++]='0'+kb%10;kb/=10;}while(tp>0)size_str[p++]=temp[--tp];}
-                        size_str[p++]=' '; size_str[p++]='K'; size_str[p++]='B'; size_str[p]=0;
+                        font_draw_text(v, wx+ww-80, y, "--", fg);
                     }
-                    font_draw_text(v, wx+ww-75, y, size_str, fg);
+                } else if (d->drv_type == VFS_DRV_CDROM) {
+                    font_draw_text(v, wx+70, y, "CDFS", fg);
+                    font_draw_text(v, wx+ww-160, y, tot_str, fg);
+                    font_draw_text(v, wx+ww-80, y, "0 KB (RO)", fg);
+                } else {
+                    const char* fs_nm = vfs_get_fs_name(d->fs_type);
+                    font_draw_text(v, wx+70, y, fs_nm, fg);
+                    font_draw_text(v, wx+ww-160, y, tot_str, fg);
+                    if (is_known) {
+                        format_kb(fre_k, fre_str);
+                        font_draw_text(v, wx+ww-80, y, fre_str, fg);
+                    } else {
+                        font_draw_text(v, wx+ww-80, y, "-- (N/A)", fg);
+                    }
                 }
             } else {
-                font_draw_text(v, wx+ww-150, y, "Drive", fg);
+                font_draw_text(v, wx+70, y, "Drive", fg);
             }
         } else if (!(files[idx].attr & 0x10)) {
             char size_str[24];
@@ -405,6 +441,32 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         } else {
             font_draw_text(v, wx+ww-75, y, "DIR", fg);
         }
+    }
+    
+    // Bottom status bar
+    int status_y = wy + wh - 14;
+    for (int x = wx+4; x < wx+ww-4; x++) PUT_PIXEL(v, x, status_y - 2, 8);
+    char status_txt[128];
+    if (current_path[0] == 0) {
+        font_draw_text(v, wx + 8, status_y, "Drives Root | Double-click to open drive", 8);
+    } else {
+        char cur_drv = current_path[0];
+        unsigned int tot_k = 0, fre_k = 0; int is_known = 0;
+        vfs_get_drive_space(cur_drv, &tot_k, &fre_k, &is_known);
+        char t_str[24], f_str[24];
+        format_kb(tot_k, t_str);
+        status_txt[0] = 0;
+        my_strcat(status_txt, "Drive ");
+        char dstr[4] = { cur_drv, ':', '\\', 0 };
+        my_strcat(status_txt, dstr);
+        my_strcat(status_txt, " | Total: ");
+        my_strcat(status_txt, t_str);
+        if (is_known) {
+            format_kb(fre_k, f_str);
+            my_strcat(status_txt, " | Free: ");
+            my_strcat(status_txt, f_str);
+        }
+        font_draw_text(v, wx + 8, status_y, status_txt, 0);
     }
     
     static int last_err_tick = 0;

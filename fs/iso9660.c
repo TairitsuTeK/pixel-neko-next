@@ -39,6 +39,7 @@ int iso_mount(blkdev_t* dev, iso_fs_t* fs) {
                 unsigned char* root_rec = &sec[156];
                 fs->root_extent_lba = *(unsigned int*)&root_rec[2];
                 fs->root_data_len = *(unsigned int*)&root_rec[10];
+                fs->total_sectors = *(unsigned int*)&sec[80];
 
                 // Joliet Volume Label (UCS-2 BE)
                 int lp = 0;
@@ -57,6 +58,7 @@ int iso_mount(blkdev_t* dev, iso_fs_t* fs) {
             unsigned char* root_rec = &sec[156];
             fs->root_extent_lba = *(unsigned int*)&root_rec[2];
             fs->root_data_len = *(unsigned int*)&root_rec[10];
+            fs->total_sectors = *(unsigned int*)&sec[80];
 
             int lp = 0;
             for (int i = 40; i < 72 && lp < 31; i++) {

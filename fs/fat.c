@@ -133,6 +133,8 @@ int mount_fat(fat_fs_t* vol, int drive_idx, unsigned int lba, unsigned char* boo
     else vol->root_cluster = 0; 
     
     vol->cached_fat_sector = 0xFFFFFFFF;
+    vol->free_clusters = 0;
+    vol->is_free_calculated = 0;
     return 0;
 }
 
@@ -450,6 +452,7 @@ static void free_chain(fat_fs_t* vol, unsigned int cluster) {
     while (cluster >= 2 && cluster < 0x0FFFFFF8) {
         unsigned int next = fat_read_entry(vol, cluster);
         fat_write_entry(vol, cluster, 0);
+        if (vol->is_free_calculated) vol->free_clusters++;
         cluster = next;
     }
 }
@@ -581,9 +584,51 @@ static unsigned int allocate_cluster(fat_fs_t* vol) {
     for (unsigned int i = 2; i < vol->total_clusters + 2; i++) {
         if (fat_read_entry(vol, i) == 0) {
             fat_write_entry(vol, i, 0x0FFFFFFF);
+            if (vol->is_free_calculated && vol->free_clusters > 0) vol->free_clusters--;
             return i;
         }
     }
+    return 0;
+}
+
+int fat_get_volume_space(char letter, unsigned int* total_kb, unsigned int* free_kb) {
+    char path_buf[4] = { letter, ':', '\\', 0 };
+    const char* p = path_buf;
+    fat_fs_t* vol = get_vol(&p);
+    if (!vol || vol->type == 0) return -1;
+
+    unsigned int total_k = (unsigned int)(((unsigned long long)vol->total_clusters * vol->sectors_per_cluster * 512) / 1024);
+    if (total_kb) *total_kb = total_k;
+
+    if (vol->is_free_calculated) {
+        if (free_kb) *free_kb = (unsigned int)(((unsigned long long)vol->free_clusters * vol->sectors_per_cluster * 512) / 1024);
+        return 0;
+    }
+
+    // Try reading FSInfo sector if FAT32
+    if (vol->type == 32) {
+        unsigned char fsinfo[512];
+        if (disk_read_drive(vol->drive_idx, vol->partition_lba + 1, fsinfo) == 0) {
+            unsigned int lead_sig = *(unsigned int*)&fsinfo[0];
+            unsigned int struct_sig = *(unsigned int*)&fsinfo[484];
+            unsigned int free_count = *(unsigned int*)&fsinfo[488];
+            if (lead_sig == 0x41615252 && struct_sig == 0x61417272 && free_count != 0xFFFFFFFF && free_count <= vol->total_clusters) {
+                vol->free_clusters = free_count;
+                vol->is_free_calculated = 1;
+                if (free_kb) *free_kb = (unsigned int)(((unsigned long long)free_count * vol->sectors_per_cluster * 512) / 1024);
+                return 0;
+            }
+        }
+    }
+
+    // Otherwise scan FAT table to count 0x00 entries
+    unsigned int free_cnt = 0;
+    for (unsigned int i = 2; i < vol->total_clusters + 2; i++) {
+        if (fat_read_entry(vol, i) == 0) free_cnt++;
+    }
+    vol->free_clusters = free_cnt;
+    vol->is_free_calculated = 1;
+    if (free_kb) *free_kb = (unsigned int)(((unsigned long long)free_cnt * vol->sectors_per_cluster * 512) / 1024);
     return 0;
 }
 

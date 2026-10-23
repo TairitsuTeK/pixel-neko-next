@@ -38,6 +38,9 @@ typedef struct {
     blkdev_t*      dev;
     unsigned int   start_lba;
     unsigned int   total_sectors;
+    unsigned int   total_kb;
+    unsigned int   free_kb;
+    int            is_free_known;
     char           label[32];
     int            mounted;
 } vfs_drive_t;
@@ -51,5 +54,6 @@ int  vfs_find_file(const char* path, vfs_dirent_t* out_entry);
 int  vfs_read_file(const char* path, unsigned char* buf, unsigned int max_size);
 int  vfs_write_file(const char* path, const unsigned char* buf, unsigned int size);
 const char* vfs_get_fs_name(part_fs_type_t type);
+int  vfs_get_drive_space(char letter, unsigned int* total_kb, unsigned int* free_kb, int* is_known);
 
 #endif
