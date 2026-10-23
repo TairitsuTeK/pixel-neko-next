@@ -1,7 +1,7 @@
 # Pixel Neko Next — 阶段开发暂停与进度备忘录 (pause.md)
 
 > **记录时间**：2026-10-23  
-> **当前系统版本**：`Version C2.0 (Build 2000.000)`  
+> **当前系统版本**：`Version C2.0 (Build 2000.001)`  
 > **指导规划文件**：[plan3.md](plan3.md)  
 > **状态简述**：按照 [plan3.md](plan3.md) 的全量要求，**核心代码已全面编写与对接完毕**。因时间安排需要，在此提交当前所有代码与方案文档并暂停工作（暂不编译与发布 ISO），以便下次无缝接管与验证。
 
@@ -76,4 +76,26 @@
    - [kernel/panic.c](kernel/panic.c)：将仅在 Pentium 4 开始引入的 `pause` 指令统一重构为标准兼容的 `rep; nop`，避免老式 CPU 异常；
 3. **文档与工程元数据对齐**：[README.md](README.md) 同步更新至 `Version C2.0 (Build 2000.000)` 并补全 2D 加速、磁盘空间报表、SysInfo 及 15 推盘等项目架构树；
 4. **编译与发布模式**：所有修改已通过严格的静态语法与原型检查，提交至 GitHub `main` 分支后将自动触发 GitHub Actions CI 矩阵编译并发布 `pixel_neko_build_2000.000.iso`。
+
+---
+
+## 五、 Build 2000.001 界面排版与视觉重叠全面修复 (Layout Overhaul)
+
+针对 PCBox 虚拟机实机测试中反馈的排版与重叠缺陷进行了彻底排查与重构：
+1. **控制面板 ([apps/cpanel.c](apps/cpanel.c))**：
+   - 修复了 `Mouse Speed:`、`Resolution:`、`Color Depth:`、`Driver:` 文本标签与右侧控件/状态文字之间的像素重叠，左侧标签统一对齐于 `wx+10`，输入控件与滑块统一移至 `wx+120`；
+   - 色彩深度下拉框重构：废除在字符串末尾覆盖绘制 `N/A` 的做法，改为专用无重叠文本（如 `24-bit (No VRAM)` / `32-bit (No VRAM)`）；
+   - 展开下拉列表高度与按钮位置解耦：窗口默认高度提升至 210px，底部 `Apply Mode` / `OK` 按钮下移至 `wy+172`，彻底消除下拉框遮挡按钮的视觉缺陷。
+2. **系统信息 ([apps/sysinfo.c](apps/sysinfo.c))**：
+   - 窗口默认尺寸加宽至 420×220px；
+   - 顶部选项卡标头加宽至 95px 并实现居中文本渲染，彻底根除 `PCI Bus` 超出标头边框的问题；
+   - Tab 0（System）值起始坐标右移至 `lx+125`，彻底解决 `Installed RAM:`、`Graphics Card:`、`Video Memory:` 与数值的重叠问题；
+   - Tab 2（Drives）多列报表由手动空格拼凑重构为定点多列对齐渲染（Drive `lx+8`、FileSystem `lx+56`、Total Size `lx+165`、Free Space `lx+275`），各列完美对齐，消除右侧边框截断。
+3. **菜单栏下拉菜单 ([wm/wm.c](wm/wm.c))**：
+   - 废除虚线框 `box()` 与透明灰色底，重构为经典 Mac OS 实心纯白背景（Color 15）、1px 实体黑边框与 2px 经典实体右下投影；
+   - 菜单宽度加宽至 172px，行距采用 18px，解决 `System Information` 与 `Shut Down Computer` 右侧字母截断问题；
+   - 同步更新菜单点击检测区域与安全边界检查。
+4. **文件管理器 ([apps/filemanager.c](apps/filemanager.c))**：
+   - 底部状态栏 Y 坐标上移至 `wy+wh-18`（分割线 `wy+wh-21`），彻底避免文字像素切穿窗口底部黑边框；
+   - 状态栏文字增加右侧边界保护，默认窗口宽度提升至 320px，保证大容量驱动器状态信息完整呈现。
 

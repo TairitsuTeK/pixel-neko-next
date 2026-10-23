@@ -444,8 +444,8 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     }
     
     // Bottom status bar
-    int status_y = wy + wh - 14;
-    for (int x = wx+4; x < wx+ww-4; x++) PUT_PIXEL(v, x, status_y - 2, 8);
+    int status_y = wy + wh - 18;
+    for (int x = wx+4; x < wx+ww-4; x++) PUT_PIXEL(v, x, status_y - 3, 8);
     char status_txt[128];
     if (current_path[0] == 0) {
         font_draw_text(v, wx + 8, status_y, "Drives Root | Double-click to open drive", 8);
@@ -465,6 +465,10 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
             format_kb(fre_k, f_str);
             my_strcat(status_txt, " | Free: ");
             my_strcat(status_txt, f_str);
+        }
+        int max_status_chars = (ww - 20) / 8;
+        if (max_status_chars > 0 && max_status_chars < 127) {
+            status_txt[max_status_chars] = '\0';
         }
         font_draw_text(v, wx + 8, status_y, status_txt, 0);
     }

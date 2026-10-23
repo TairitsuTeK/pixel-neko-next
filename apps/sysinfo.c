@@ -153,10 +153,10 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     }
 
     // Tabs Header
-    const char* tab_names[3] = { "  System  ", "  PCI Bus  ", "  Drives  " };
-    int tab_w = 78, tab_h = 18;
+    const char* tab_names[3] = { "System", "PCI Bus", "Drives" };
+    int tab_w = 95, tab_h = 18;
     for (int t = 0; t < 3; t++) {
-        int tx = wx + 10 + t * 84;
+        int tx = wx + 10 + t * 100;
         int ty = wy + 24;
         int active = (t == active_tab);
 
@@ -173,7 +173,9 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
             PUT_PIXEL(v, tx, y, active ? 15 : 7);
             PUT_PIXEL(v, tx + tab_w - 1, y, 0);
         }
-        font_draw_text(v, tx + 6, ty + 3, tab_names[t], active ? 0 : 15);
+        int tw = 0; while (tab_names[t][tw]) tw++;
+        int text_x = tx + (tab_w - tw * 8) / 2;
+        font_draw_text(v, text_x, ty + 3, tab_names[t], active ? 0 : 15);
     }
 
     // Inner Content Frame
@@ -190,14 +192,14 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
     if (active_tab == 0) {
         // Tab 0: System
-        int lx = fx + 8, ly = fy + 8;
+        int lx = fx + 10, ly = fy + 8;
         font_draw_text(v, lx, ly, "OS Version:", 0);
-        font_draw_text(v, lx + 90, ly, "Pixel Neko Next (Build " KERNEL_BUILD ")", 1);
+        font_draw_text(v, lx + 125, ly, "Pixel Neko Next (Build " KERNEL_BUILD ")", 1);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Processor:", 0);
         const char* brand = cpu_model_string[0] ? cpu_model_string : "i686 Compatible CPU";
-        font_draw_text(v, lx + 90, ly, brand, 0);
+        font_draw_text(v, lx + 125, ly, brand, 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Frequency:", 0);
@@ -205,11 +207,11 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         int_to_str(g_cpu_info.mhz > 0 ? g_cpu_info.mhz : 200, mhz_buf);
         int mi = 0; while (mhz_buf[mi]) mi++;
         mhz_buf[mi++] = ' '; mhz_buf[mi++] = 'M'; mhz_buf[mi++] = 'H'; mhz_buf[mi++] = 'z'; mhz_buf[mi] = '\0';
-        font_draw_text(v, lx + 90, ly, mhz_buf, 0);
+        font_draw_text(v, lx + 125, ly, mhz_buf, 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Features:", 0);
-        font_draw_text(v, lx + 90, ly, "FPU, TSC, MSR, PAE, APIC, CMOV", 8);
+        font_draw_text(v, lx + 125, ly, "FPU, TSC, MSR, PAE, APIC, CMOV", 8);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Installed RAM:", 0);
@@ -225,11 +227,11 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         ram_buf[ri++] = ' '; ram_buf[ri++] = 'M'; ram_buf[ri++] = 'B'; ram_buf[ri++] = ' ';
         ram_buf[ri++] = 'T'; ram_buf[ri++] = 'o'; ram_buf[ri++] = 't'; ram_buf[ri++] = 'a'; ram_buf[ri++] = 'l'; ram_buf[ri++] = ')';
         ram_buf[ri] = '\0';
-        font_draw_text(v, lx + 90, ly, ram_buf, 0);
+        font_draw_text(v, lx + 125, ly, ram_buf, 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Graphics Card:", 0);
-        font_draw_text(v, lx + 90, ly, gfx_accel_get_name(), 0);
+        font_draw_text(v, lx + 125, ly, gfx_accel_get_name(), 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Video Memory:", 0);
@@ -238,14 +240,14 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         int_to_str(vram_mb, vram_buf);
         int vi = 0; while (vram_buf[vi]) vi++;
         vram_buf[vi++] = ' '; vram_buf[vi++] = 'M'; vram_buf[vi++] = 'B'; vram_buf[vi] = '\0';
-        font_draw_text(v, lx + 90, ly, vram_buf, 0);
+        font_draw_text(v, lx + 125, ly, vram_buf, 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "2D Engine:", 0);
         if (gfx_accel_is_active()) {
-            font_draw_text(v, lx + 90, ly, "ATI Mach64 GUI Accelerator (Active)", 2);
+            font_draw_text(v, lx + 125, ly, "ATI Mach64 GUI Accelerator (Active)", 2);
         } else {
-            font_draw_text(v, lx + 90, ly, "Software Rasterizer (VBE Mode)", 8);
+            font_draw_text(v, lx + 125, ly, "Software Rasterizer (VBE Mode)", 8);
         }
 
     } else if (active_tab == 1) {
@@ -285,28 +287,26 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
         // Pagination buttons
         int pbtn_y = fy + fh - 20;
-        int prev_x = fx + 10;
-        int next_x = fx + fw - 70;
+        int prev_x = fx + 14;
+        int next_x = fx + fw - 84;
         font_draw_text(v, prev_x, pbtn_y, "[ < Prev ]", pci_page > 0 ? 0 : 8);
         font_draw_text(v, next_x, pbtn_y, "[ Next > ]", pci_page < max_pages - 1 ? 0 : 8);
 
     } else if (active_tab == 2) {
-        // Tab 2: Storage Drives
+        // Tab 2: Storage Drives (Multi-column aligned)
         int lx = fx + 8, ly = fy + 6;
-        font_draw_text(v, lx, ly, "Drive   FileSystem      Total Size     Free Space", 0);
+        font_draw_text(v, lx, ly, "Drive", 0);
+        font_draw_text(v, lx + 56, ly, "FileSystem", 0);
+        font_draw_text(v, lx + 165, ly, "Total Size", 0);
+        font_draw_text(v, lx + 275, ly, "Free Space", 0);
         ly += 16;
 
         for (int letter = 'A'; letter <= 'Z'; letter++) {
             vfs_drive_t* d = vfs_get_drive((char)letter);
             if (d && d->present) {
-                char line[64];
-                line[0] = '['; line[1] = (char)letter; line[2] = ':'; line[3] = ']';
-                line[4] = ' '; line[5] = ' ';
-                int li = 6;
+                char drv_buf[8] = { '[', (char)letter, ':', ']', 0 };
                 const char* fs = (d->drv_type == VFS_DRV_FLOPPY) ? "FAT12" :
                                  ((d->drv_type == VFS_DRV_CDROM) ? "CDFS" : vfs_get_fs_name(d->fs_type));
-                while (*fs && li < 20) line[li++] = *fs++;
-                while (li < 22) line[li++] = ' ';
 
                 unsigned int tot_k = 0, fre_k = 0;
                 int is_known = 0;
@@ -323,12 +323,10 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
                     fre_buf[0] = '-'; fre_buf[1] = '-'; fre_buf[2] = '\0';
                 }
 
-                int ti = 0; while (tot_buf[ti] && li < 36) line[li++] = tot_buf[ti++];
-                while (li < 38) line[li++] = ' ';
-                int fi = 0; while (fre_buf[fi] && li < 54) line[li++] = fre_buf[fi++];
-                line[li] = '\0';
-
-                font_draw_text(v, lx, ly, line, 0);
+                font_draw_text(v, lx, ly, drv_buf, 0);
+                font_draw_text(v, lx + 56, ly, fs, 0);
+                font_draw_text(v, lx + 165, ly, tot_buf, 0);
+                font_draw_text(v, lx + 275, ly, fre_buf, 0);
                 ly += 14;
             }
         }
@@ -337,9 +335,9 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
 void sysinfo_click(int mx, int my, int wx, int wy, int ww, int wh) {
     // Check tab clicks
-    int tab_w = 78, tab_h = 18;
+    int tab_w = 95, tab_h = 18;
     for (int t = 0; t < 3; t++) {
-        int tx = wx + 10 + t * 84;
+        int tx = wx + 10 + t * 100;
         int ty = wy + 24;
         if (mx >= tx && mx < tx + tab_w && my >= ty && my < ty + tab_h) {
             active_tab = t;
@@ -352,13 +350,13 @@ void sysinfo_click(int mx, int my, int wx, int wy, int ww, int wh) {
         int fx = wx + 10, fy = wy + 46;
         int fw = ww - 20, fh = wh - 54;
         int pbtn_y = fy + fh - 20;
-        int prev_x = fx + 10;
-        int next_x = fx + fw - 70;
+        int prev_x = fx + 14;
+        int next_x = fx + fw - 84;
 
         if (my >= pbtn_y - 2 && my <= pbtn_y + 14) {
-            if (mx >= prev_x && mx <= prev_x + 60 && pci_page > 0) {
+            if (mx >= prev_x && mx <= prev_x + 80 && pci_page > 0) {
                 pci_page--;
-            } else if (mx >= next_x && mx <= next_x + 60) {
+            } else if (mx >= next_x && mx <= next_x + 80) {
                 int max_pages = (pci_count + 5) / 6;
                 if (pci_page < max_pages - 1) {
                     pci_page++;

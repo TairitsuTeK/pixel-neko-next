@@ -78,7 +78,9 @@ static void draw_btn(unsigned char* v, int bx, int by, int bw, int bh, const cha
     for(int y=by; y<by+bh; y++) for(int x=bx; x<bx+bw; x++) PUT_PIXEL(v, x, y, 7);
     for(int x=bx; x<bx+bw; x++) { PUT_PIXEL(v, x, by, 15); PUT_PIXEL(v, x, by+bh-1, 0); }
     for(int y=by; y<by+bh; y++) { PUT_PIXEL(v, bx, y, 15); PUT_PIXEL(v, bx+bw-1, y, 0); }
-    font_draw_text(v, bx+4, by+(bh/2)-4, text, 0);
+    int tw = 0; while (text[tw]) tw++;
+    int tx = bx + (bw - tw * 8) / 2;
+    font_draw_text(v, tx, by+(bh/2)-4, text, 0);
 }
 
 static void draw_combo_box(unsigned char* v, int bx, int by, int bw, int bh, const char* text)
@@ -88,12 +90,12 @@ static void draw_combo_box(unsigned char* v, int bx, int by, int bw, int bh, con
     for(int y=by; y<by+bh; y++) { PUT_PIXEL(v, bx, y, 0); PUT_PIXEL(v, bx+bw-1, y, 8); }
 
     // Down arrow button on right
-    int abx = bx + bw - 16;
+    int abx = bx + bw - 18;
     for(int y=by+1; y<by+bh-1; y++) for(int x=abx; x<bx+bw-1; x++) PUT_PIXEL(v, x, y, 7);
     for(int y=by+1; y<by+bh-1; y++) PUT_PIXEL(v, abx, y, 8);
-    font_draw_text(v, abx+4, by+2, "v", 0);
+    font_draw_text(v, abx+5, by+3, "v", 0);
 
-    font_draw_text(v, bx+4, by+3, text, 0);
+    font_draw_text(v, bx+6, by+3, text, 0);
 }
 
 void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
@@ -101,8 +103,8 @@ void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
     (void)ww; (void)wh;
 
     // 1. Mouse Speed Slider
-    font_draw_text(v, wx+8, wy+20, "Mouse Speed:", 0);
-    int tx = wx+95, ty = wy+22;
+    font_draw_text(v, wx+10, wy+26, "Mouse Speed:", 0);
+    int tx = wx+120, ty = wy+28;
     for(int y=ty; y<ty+6; y++) for(int x=tx; x<tx+100; x++) PUT_PIXEL(v, x, y, 7);
     for(int x=tx; x<tx+100; x++) { PUT_PIXEL(v, x, ty, 0); PUT_PIXEL(v, x, ty+5, 0); }
     for(int y=ty; y<ty+6; y++) { PUT_PIXEL(v, tx, y, 0); PUT_PIXEL(v, tx+99, y, 0); }
@@ -116,22 +118,22 @@ void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
     for(int y=hy; y<hy+14; y++) { PUT_PIXEL(v, hx, y, 11); PUT_PIXEL(v, hx+9, y, 1); }
 
     // 2. Display Settings Labels
-    font_draw_text(v, wx+8, wy+44, "Resolution:", 0);
-    draw_combo_box(v, wx+95, wy+42, 145, 16, res_names[sel_res_idx]);
+    font_draw_text(v, wx+10, wy+52, "Resolution:", 0);
+    draw_combo_box(v, wx+120, wy+50, 160, 18, res_names[sel_res_idx]);
 
-    font_draw_text(v, wx+8, wy+66, "Color Depth:", 0);
-    draw_combo_box(v, wx+95, wy+64, 145, 16, bpp_names[sel_bpp_idx]);
+    font_draw_text(v, wx+10, wy+78, "Color Depth:", 0);
+    draw_combo_box(v, wx+120, wy+76, 160, 18, bpp_names[sel_bpp_idx]);
 
     // 3. Desktop Pattern
-    font_draw_text(v, wx+8, wy+88, "Pattern:", 0);
-    draw_btn(v, wx+95, wy+86, 20, 16, "<");
-    draw_btn(v, wx+220, wy+86, 20, 16, ">");
-    font_draw_text(v, wx+120, wy+89, pat_names[g_desktop_pattern], 0);
+    font_draw_text(v, wx+10, wy+104, "Pattern:", 0);
+    draw_btn(v, wx+120, wy+102, 20, 18, "<");
+    draw_btn(v, wx+260, wy+102, 20, 18, ">");
+    font_draw_text(v, wx+144, wy+104, pat_names[g_desktop_pattern], 0);
 
     // 4. Driver Status text
     const char* drv_name = gfx_accel_get_name();
-    font_draw_text(v, wx+8, wy+110, "Driver:", 0);
-    font_draw_text(v, wx+60, wy+110, drv_name, gfx_accel_is_active() ? 10 : 8);
+    font_draw_text(v, wx+10, wy+130, "Driver:", 0);
+    font_draw_text(v, wx+76, wy+130, drv_name, gfx_accel_is_active() ? 10 : 8);
 
     // 5. Apply / OK Buttons
     if (revert_timer > 0) {
@@ -139,42 +141,44 @@ void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
         char buf[30] = "Revert in   s...";
         buf[10] = '0' + (sec / 10);
         buf[11] = '0' + (sec % 10);
-        font_draw_text(v, wx+10, wy+135, buf, 4);
-        draw_btn(v, wx+150, wy+132, 90, 20, "Keep (OK)");
+        font_draw_text(v, wx+16, wy+176, buf, 4);
+        draw_btn(v, wx+165, wy+172, 105, 22, "Keep (OK)");
     } else {
-        draw_btn(v, wx+35, wy+132, 90, 20, "Apply Mode");
-        draw_btn(v, wx+145, wy+132, 90, 20, "OK");
+        draw_btn(v, wx+40, wy+172, 105, 22, "Apply Mode");
+        draw_btn(v, wx+165, wy+172, 105, 22, "OK");
     }
 
     // 6. Draw Dropdown Menus if Open (Rendered on top)
     if (res_dropdown_open) {
-        int dx = wx+95, dy = wy+58, dw = 145, dh = 4 * 16 + 2;
+        int dx = wx+120, dy = wy+68, dw = 160, dh = 4 * 18 + 2;
         for(int y=dy; y<dy+dh; y++) for(int x=dx; x<dx+dw; x++) PUT_PIXEL(v, x, y, 15);
         for(int x=dx; x<dx+dw; x++) { PUT_PIXEL(v, x, dy, 0); PUT_PIXEL(v, x, dy+dh-1, 0); }
         for(int y=dy; y<dy+dh; y++) { PUT_PIXEL(v, dx, y, 0); PUT_PIXEL(v, dx+dw-1, y, 0); }
         for (int i = 0; i < 4; i++) {
-            int iy = dy + 1 + i * 16;
+            int iy = dy + 1 + i * 18;
             if (i == sel_res_idx) {
-                for(int y=iy; y<iy+16; y++) for(int x=dx+1; x<dx+dw-1; x++) PUT_PIXEL(v, x, y, 9);
+                for(int y=iy; y<iy+18; y++) for(int x=dx+1; x<dx+dw-1; x++) PUT_PIXEL(v, x, y, 9);
             }
-            font_draw_text(v, dx+4, iy+2, res_names[i], i==sel_res_idx ? 15 : 0);
+            font_draw_text(v, dx+6, iy+3, res_names[i], i==sel_res_idx ? 15 : 0);
         }
     } else if (bpp_dropdown_open) {
-        int dx = wx+95, dy = wy+80, dw = 145, dh = 4 * 16 + 2;
+        int dx = wx+120, dy = wy+94, dw = 160, dh = 4 * 18 + 2;
         for(int y=dy; y<dy+dh; y++) for(int x=dx; x<dx+dw; x++) PUT_PIXEL(v, x, y, 15);
         for(int x=dx; x<dx+dw; x++) { PUT_PIXEL(v, x, dy, 0); PUT_PIXEL(v, x, dy+dh-1, 0); }
         for(int y=dy; y<dy+dh; y++) { PUT_PIXEL(v, dx, y, 0); PUT_PIXEL(v, dx+dw-1, y, 0); }
         for (int i = 0; i < 4; i++) {
-            int iy = dy + 1 + i * 16;
+            int iy = dy + 1 + i * 18;
             int valid = gfx_accel_supports_bpp(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[i]);
             if (i == sel_bpp_idx && valid) {
-                for(int y=iy; y<iy+16; y++) for(int x=dx+1; x<dx+dw-1; x++) PUT_PIXEL(v, x, y, 9);
+                for(int y=iy; y<iy+18; y++) for(int x=dx+1; x<dx+dw-1; x++) PUT_PIXEL(v, x, y, 9);
             }
             int fg = !valid ? 8 : (i==sel_bpp_idx ? 15 : 0);
-            font_draw_text(v, dx+4, iy+2, bpp_names[i], fg);
+            const char* item_txt = bpp_names[i];
             if (!valid) {
-                font_draw_text(v, dx+110, iy+2, "N/A", 8);
+                if (bpp_vals[i] == 24) item_txt = "24-bit (No VRAM)";
+                else if (bpp_vals[i] == 32) item_txt = "32-bit (No VRAM)";
             }
+            font_draw_text(v, dx+6, iy+3, item_txt, fg);
         }
     }
 }
@@ -185,9 +189,9 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
 
     // Handle open Dropdown clicks first
     if (res_dropdown_open) {
-        int dx = wx+95, dy = wy+58, dw = 145;
-        if (mx >= dx && mx < dx+dw && my >= dy && my < dy + 4*16) {
-            int idx = (my - dy) / 16;
+        int dx = wx+120, dy = wy+68, dw = 160;
+        if (mx >= dx && mx < dx+dw && my >= dy && my < dy + 4*18) {
+            int idx = (my - dy) / 18;
             if (idx >= 0 && idx < 4) {
                 sel_res_idx = idx;
                 // Auto-downgrade bpp if new resolution exceeds VRAM
@@ -205,9 +209,9 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     }
 
     if (bpp_dropdown_open) {
-        int dx = wx+95, dy = wy+80, dw = 145;
-        if (mx >= dx && mx < dx+dw && my >= dy && my < dy + 4*16) {
-            int idx = (my - dy) / 16;
+        int dx = wx+120, dy = wy+94, dw = 160;
+        if (mx >= dx && mx < dx+dw && my >= dy && my < dy + 4*18) {
+            int idx = (my - dy) / 18;
             if (idx >= 0 && idx < 4) {
                 if (gfx_accel_supports_bpp(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[idx])) {
                     sel_bpp_idx = idx;
@@ -220,8 +224,8 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     }
 
     // Mouse speed slider
-    int tx = wx+95, ty = wy+22;
-    if (mx >= tx && mx < tx+100 && my >= ty-4 && my < ty+16) {
+    int tx = wx+120, ty = wy+28;
+    if (mx >= tx && mx < tx+100 && my >= ty-4 && my < ty+18) {
         int val = (mx - tx) / 20;
         if (val < 0) val = 0;
         if (val > 4) val = 4;
@@ -232,7 +236,7 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     }
 
     // Open Resolution Dropdown
-    if (mx >= wx+95 && mx < wx+240 && my >= wy+42 && my < wy+58) {
+    if (mx >= wx+120 && mx < wx+280 && my >= wy+50 && my < wy+68) {
         res_dropdown_open = 1;
         bpp_dropdown_open = 0;
         redraw = 1;
@@ -240,7 +244,7 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     }
 
     // Open Color Depth Dropdown
-    if (mx >= wx+95 && mx < wx+240 && my >= wy+64 && my < wy+80) {
+    if (mx >= wx+120 && mx < wx+280 && my >= wy+76 && my < wy+94) {
         bpp_dropdown_open = 1;
         res_dropdown_open = 0;
         redraw = 1;
@@ -248,14 +252,14 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     }
 
     // Pattern Previous '<'
-    if (mx >= wx+95 && mx < wx+115 && my >= wy+86 && my < wy+102) {
+    if (mx >= wx+120 && mx < wx+140 && my >= wy+102 && my < wy+120) {
         g_desktop_pattern = (g_desktop_pattern + 5) % 6;
         redraw = 1;
         return;
     }
 
     // Pattern Next '>'
-    if (mx >= wx+220 && mx < wx+240 && my >= wy+86 && my < wy+102) {
+    if (mx >= wx+260 && mx < wx+280 && my >= wy+102 && my < wy+120) {
         g_desktop_pattern = (g_desktop_pattern + 1) % 6;
         redraw = 1;
         return;
@@ -263,7 +267,7 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
 
     // Keep / Revert Timer Cancel
     if (revert_timer > 0) {
-        if (mx >= wx+150 && mx < wx+240 && my >= wy+132 && my < wy+152) {
+        if (mx >= wx+165 && mx < wx+270 && my >= wy+172 && my < wy+194) {
             revert_timer = 0;
             redraw = 1;
         }
@@ -271,7 +275,7 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     }
 
     // Apply Button
-    if (mx >= wx+35 && mx < wx+125 && my >= wy+132 && my < wy+152) {
+    if (mx >= wx+40 && mx < wx+145 && my >= wy+172 && my < wy+194) {
         int tw = res_w[sel_res_idx];
         int th = res_h[sel_res_idx];
         int tb = bpp_vals[sel_bpp_idx];
@@ -287,7 +291,7 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     }
 
     // OK Button
-    if (mx >= wx+145 && mx < wx+235 && my >= wy+132 && my < wy+152) {
+    if (mx >= wx+165 && mx < wx+270 && my >= wy+172 && my < wy+194) {
         int tw = res_w[sel_res_idx];
         int th = res_h[sel_res_idx];
         int tb = bpp_vals[sel_bpp_idx];
