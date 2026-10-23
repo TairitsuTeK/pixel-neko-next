@@ -2,13 +2,17 @@
 #include "mouse.h"
 #include "wm.h"
 #include "keyboard.h"
+#include "timer.h"
+#include "speaker.h"
+#include "cpu.h"
+#include "splash.h"
 
 int screen_w = 320;
 int screen_h = 200;
 int screen_bpp = 8;
 int screen_pitch = 320;
 unsigned char backbuffer[1024 * 768 * 2];
-static unsigned int lfb_ptr = 0xA0000;
+unsigned int lfb_ptr = 0xA0000;
 unsigned short palette16[256];
 
 extern int vbe_set_mode(int mode);
@@ -237,43 +241,7 @@ static void set_vga_palette_full(const struct vbe_mode_info* info, int is_direct
 }
 
 
-extern volatile int global_tick;
-
-static void timer_update(void)
-{
-    static unsigned short last_pit = 0;
-    static unsigned int pit_sub_ticks = 0;
-    static int initialized = 0;
-
-    outb(0x43, 0x00); // Latch Counter 0
-    unsigned char lo = inb(0x40);
-    unsigned char hi = inb(0x40);
-    unsigned short count = ((unsigned short)hi << 8) | lo;
-
-    if (!initialized) {
-        last_pit = count;
-        initialized = 1;
-        return;
-    }
-
-    // Counter counts downwards from 65535 to 0 at 1.193182 MHz
-    unsigned short elapsed;
-    if (count <= last_pit) {
-        elapsed = last_pit - count;
-    } else {
-        elapsed = (last_pit + 65536) - count;
-    }
-    last_pit = count;
-
-    pit_sub_ticks += elapsed;
-    // 100 Hz: 11932 PIT counts = 10.0 ms
-    while (pit_sub_ticks >= 11932) {
-        pit_sub_ticks -= 11932;
-        global_tick++;
-    }
-}
-
-static void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, int rh)
+void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, int rh)
 {
     if (rx < 0) { rw += rx; rx = 0; }
     if (ry < 0) { rh += ry; ry = 0; }
@@ -299,7 +267,7 @@ static void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, i
     }
 }
 
-static void copy_fullscreen_to_lfb(const unsigned char* s_buf)
+void copy_fullscreen_to_lfb(const unsigned char* s_buf)
 {
     int bytes_per_line = screen_w * (screen_bpp <= 8 ? 1 : 2);
     if (bytes_per_line == screen_pitch) {
@@ -448,27 +416,23 @@ void kernel_main(void)
     );
 
     idt_init();
+    timer_init();
+    cpu_detect();
     pmm_init();
     pci_scan_vga();
+    speaker_init();
     set_resolution(800, 600, 16);
+    timer_init(); // Re-verify PIT timer after real-mode VBE switch
     
+    // Play Mac OS 9 & Windows 3.1 retro boot splash animation
+    splash_run();
+
     unsigned char* v = backbuffer;
     int mx, my, mb, last_mx = -1, last_my = -1, last_mb = 0;
 
-    if (screen_bpp <= 8) {
-        for (int i = 0; i < 1024 * 768; i++) {
-            v[i] = 7;
-        }
-    } else {
-        unsigned short* v16 = (unsigned short*)v;
-        unsigned short gray = palette16[7];
-        for (int i = 0; i < 1024 * 768; i++) {
-            v16[i] = gray;
-        }
-    }
-
     wm_init();
     wm_draw(v);
+    copy_fullscreen_to_lfb(v);
     mouse_init();
 
     while (1) {

@@ -14,6 +14,10 @@ ASMFLAGS = -f elf32
 C_SOURCES = kernel/kernel.c \
             kernel/mm.c \
             kernel/idt.c \
+            kernel/timer.c \
+            kernel/cpu.c \
+            kernel/splash.c \
+            drivers/speaker.c \
             drivers/mouse.c \
             drivers/keyboard.c \
             drivers/disk.c \

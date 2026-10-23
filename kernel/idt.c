@@ -1,6 +1,8 @@
 #include "idt.h"
 #include "port.h"
 #include "mm.h"
+#include "wm.h"
+#include "font.h"
 
 extern volatile int global_tick;
 
@@ -242,20 +244,59 @@ void isr_handler(struct trap_frame* frame) {
     serial_puts(cpu_model_string);
     serial_puts("\n");
     serial_puts("System halted safely. Triple-fault reboot prevented.\n");
-    serial_puts("====================================================\n");
+    // If graphical display is active, render classic system error alert
+    extern int screen_w, screen_h;
+    extern unsigned char backbuffer[];
+    if (screen_w >= 320 && screen_h >= 200) {
+        int box_w = 340;
+        int box_h = 120;
+        int bx = (screen_w - box_w) / 2;
+        int by = (screen_h - box_h) / 2;
 
-    // Also attempt text-mode screen dump if memory is reachable
-    volatile unsigned short* text_vram = (volatile unsigned short*)0xB8000;
-    const char* panic_msg = " KERNEL PANIC: ";
-    for (int i = 0; panic_msg[i]; i++) {
-        text_vram[i] = (unsigned short)(0x4F00 | (unsigned char)panic_msg[i]); // White on Red
-    }
-    const char* name = (frame->int_no < 32) ? exception_names[frame->int_no] : "Unknown";
-    for (int i = 0; name[i]; i++) {
-        text_vram[15 + i] = (unsigned short)(0x4F00 | (unsigned char)name[i]);
+        for (int y = by; y < by + box_h; y++) {
+            for (int x = bx; x < bx + box_w; x++) {
+                PUT_PIXEL(backbuffer, x, y, 7);
+            }
+        }
+        // Black outline & double frame
+        for (int x = bx; x < bx + box_w; x++) {
+            PUT_PIXEL(backbuffer, x, by, 0);
+            PUT_PIXEL(backbuffer, x, by + box_h - 1, 0);
+            PUT_PIXEL(backbuffer, x, by + 2, 0);
+            PUT_PIXEL(backbuffer, x, by + box_h - 3, 0);
+        }
+        for (int y = by; y < by + box_h; y++) {
+            PUT_PIXEL(backbuffer, bx, y, 0);
+            PUT_PIXEL(backbuffer, bx + box_w - 1, y, 0);
+            PUT_PIXEL(backbuffer, bx + 2, y, 0);
+            PUT_PIXEL(backbuffer, bx + box_w - 3, y, 0);
+        }
+
+        // Draw alert title & details
+        font_draw_text(backbuffer, bx + 16, by + 12, "Sorry, a system error occurred.", 0);
+        const char* name = (frame->int_no < 32) ? exception_names[frame->int_no] : "Unknown Trap";
+        font_draw_text(backbuffer, bx + 16, by + 32, name, 4);
+
+        char eip_str[32] = "EIP: 0x";
+        const char hex[] = "0123456789ABCDEF";
+        for (int i = 0; i < 8; i++) {
+            eip_str[7 + i] = hex[(frame->eip >> ((7 - i) * 4)) & 0xF];
+        }
+        eip_str[15] = '\0';
+        font_draw_text(backbuffer, bx + 16, by + 52, eip_str, 0);
+        font_draw_text(backbuffer, bx + 16, by + 72, cpu_model_string, 8);
+        font_draw_text(backbuffer, bx + 16, by + 92, "Press any key to restart...", 1);
+
+        copy_fullscreen_to_lfb(backbuffer);
     }
 
+    // Wait for keypress then reboot
     while (1) {
-        asm volatile("cli; hlt");
+        if (inb(0x64) & 0x01) {
+            inb(0x60);
+            outb(0x64, 0xFE);
+            outb(0xCF9, 0x06);
+        }
+        asm volatile("pause");
     }
 }

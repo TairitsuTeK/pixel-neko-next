@@ -16,6 +16,17 @@ int mouse_speed = 2;
 void mouse_set_speed(int s) { if(s>=1 && s<=5) mouse_speed = s; }
 int mouse_get_speed(void) { return mouse_speed; }
 
+static inline void kbc_wait_write(void) {
+    int timeout = 100000;
+    while ((inb(0x64) & 0x02) && --timeout);
+}
+
+static inline int kbc_wait_read(void) {
+    int timeout = 100000;
+    while (!(inb(0x64) & 0x01) && --timeout);
+    return timeout > 0;
+}
+
 void mouse_init(void)
 {
     for (volatile int i = 0; i < 100000; i++);
@@ -27,15 +38,15 @@ void mouse_init(void)
     }
     
     // Enable second PS/2 port (auxiliary device)
-    while (inb(0x64) & 0x02);
+    kbc_wait_write();
     outb(0x64, 0xA8);
     for (volatile int i = 0; i < 50000; i++);
 
     // Read controller configuration byte
-    while (inb(0x64) & 0x02);
+    kbc_wait_write();
     outb(0x64, 0x20);
     for (volatile int i = 0; i < 50000; i++);
-    while (!(inb(0x64) & 0x01));
+    if (!kbc_wait_read()) return;
     unsigned char cfg = inb(0x60);
 
     // Enable mouse IRQ12 (bit 1) and enable mouse clock (clear bit 5)
@@ -43,18 +54,18 @@ void mouse_init(void)
     cfg &= ~0x20;
 
     // Write back controller configuration byte
-    while (inb(0x64) & 0x02);
+    kbc_wait_write();
     outb(0x64, 0x60);
     for (volatile int i = 0; i < 50000; i++);
-    while (inb(0x64) & 0x02);
+    kbc_wait_write();
     outb(0x60, cfg);
     for (volatile int i = 0; i < 50000; i++);
 
     // Tell mouse to use default settings
-    while (inb(0x64) & 0x02);
+    kbc_wait_write();
     outb(0x64, 0xD4);
     for (volatile int i = 0; i < 50000; i++);
-    while (inb(0x64) & 0x02);
+    kbc_wait_write();
     outb(0x60, 0xF6); // Set defaults
     for (volatile int i = 0; i < 50000; i++);
     for (int t = 0; t < 100000; t++) {
@@ -62,10 +73,10 @@ void mouse_init(void)
     }
 
     // Enable mouse streaming
-    while (inb(0x64) & 0x02);
+    kbc_wait_write();
     outb(0x64, 0xD4);
     for (volatile int i = 0; i < 50000; i++);
-    while (inb(0x64) & 0x02);
+    kbc_wait_write();
     outb(0x60, 0xF4);
     for (volatile int i = 0; i < 50000; i++);
     for (int t = 0; t < 100000; t++) {

@@ -10,6 +10,7 @@ disk.img
 output.txt
 __pycache__/
 *.pyc
+plan.md
 
 # Editor directories
 .vscode/

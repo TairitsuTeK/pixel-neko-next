@@ -12,6 +12,9 @@ extern void set_resolution(int w, int h, int bpp);
 extern volatile int global_tick;
 
 static unsigned char cmos_get_sec(void) {
+    int timeout = 10000;
+    outb(0x70, 0x0A);
+    while ((inb(0x71) & 0x80) && --timeout);
     outb(0x70, 0x00);
     return inb(0x71);
 }

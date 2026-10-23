@@ -7,6 +7,9 @@ void wm_draw(unsigned char* v);
 int wm_is_dragging(void);
 int wm_need_mouse_reset(void);
 
+void copy_fullscreen_to_lfb(const unsigned char* s_buf);
+void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, int rh);
+
 extern int screen_w;
 extern int screen_h;
 extern int screen_bpp;

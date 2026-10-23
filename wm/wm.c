@@ -65,7 +65,7 @@ static int icon_pressed = -1;
 static int icon_press_ox = 0, icon_press_oy = 0;
 static int icon_press_moved = 0;
 static int menu_open = 0, menu_index = -1;
-volatile int global_tick = 0;
+extern volatile int global_tick;
 static int last_click_icon = -1, last_click_time = 0, last_s = -1;
 // Track previous click release for double-click timing (separate from visual selection)
 static int last_click_icon_prev = -1, last_click_time_prev = 0;
@@ -109,7 +109,23 @@ static void icon(unsigned char* v, int x, int y, unsigned char bg, const char* l
 
 static unsigned char cmos_read(unsigned char a){outb(0x70,a);return inb(0x71);}
 static int bcd_to_int(unsigned char b){return(b>>4)*10+(b&0x0F);}
-static void get_time(int*h,int*m,int*s){*h=bcd_to_int(cmos_read(0x04));*m=bcd_to_int(cmos_read(0x02));*s=bcd_to_int(cmos_read(0x00));}
+static void get_time(int*h,int*m,int*s){
+    int timeout = 10000;
+    while ((cmos_read(0x0A) & 0x80) && --timeout);
+    unsigned char sec = cmos_read(0x00);
+    unsigned char min = cmos_read(0x02);
+    unsigned char hr  = cmos_read(0x04);
+    unsigned char regb = cmos_read(0x0B);
+    if (!(regb & 0x04)) {
+        *h = bcd_to_int(hr);
+        *m = bcd_to_int(min);
+        *s = bcd_to_int(sec);
+    } else {
+        *h = hr;
+        *m = min;
+        *s = sec;
+    }
+}
 
 static void ok_btn(unsigned char* v, int bx, int by, int p)
 {
@@ -203,7 +219,15 @@ static void about_win(unsigned char* v, int wx, int wy)
     font_draw_text(v, wx+8, wy+100, "(C) 2026 Tairitsu_tty / XNZM", 0);
     
     font_draw_text(v, wx+8, wy+120, "CPU:", 0);
-    font_draw_text(v, wx+40, wy+120, cpu_model_string, 0);
+    char cpu_disp[48];
+    int max_chars = (ww - 56) / 8;
+    int ci = 0;
+    while (cpu_model_string[ci] && ci < max_chars) {
+        cpu_disp[ci] = cpu_model_string[ci];
+        ci++;
+    }
+    cpu_disp[ci] = '\0';
+    font_draw_text(v, wx+48, wy+120, cpu_disp, 0);
     
     char mem_str[64];
     my_strcpy(mem_str, "Total RAM: ");
@@ -316,22 +340,26 @@ static void icon(unsigned char* v, int x, int y, unsigned char bg, const char* l
 
 static void draw_power_dialog(unsigned char* v)
 {
-    for(int y=70;y<150;y++)for(int x=100;x<320;x++)PUT_PIXEL(v, x, y, 8);
-    for(int y=72;y<148;y++)for(int x=102;x<318;x++)PUT_PIXEL(v, x, y, 7);
-    for(int x=102;x<318;x++){PUT_PIXEL(v, x, 72, 15);PUT_PIXEL(v, x, 147, 0);}
-    for(int y=72;y<148;y++){PUT_PIXEL(v, 102, y, 15);PUT_PIXEL(v, 317, y, 0);}
+    int dw = 220, dh = 80;
+    int dx = (screen_w - dw) / 2;
+    int dy = (screen_h - dh) / 2;
+
+    for(int y=dy;y<dy+dh;y++)for(int x=dx;x<dx+dw;x++)PUT_PIXEL(v, x, y, 8);
+    for(int y=dy+2;y<dy+dh-2;y++)for(int x=dx+2;x<dx+dw-2;x++)PUT_PIXEL(v, x, y, 7);
+    for(int x=dx+2;x<dx+dw-2;x++){PUT_PIXEL(v, x, dy+2, 15);PUT_PIXEL(v, x, dy+dh-3, 0);}
+    for(int y=dy+2;y<dy+dh-2;y++){PUT_PIXEL(v, dx+2, y, 15);PUT_PIXEL(v, dx+dw-3, y, 0);}
     if (power_confirm == 1) {
-        font_draw_text(v,160,80,"Restart?",0);font_draw_text(v,150,100,"Are you sure?",0);
+        font_draw_text(v,dx+60,dy+10,"Restart?",0);font_draw_text(v,dx+50,dy+28,"Are you sure?",0);
     } else {
-        font_draw_text(v,150,80,"Shutdown?",0);font_draw_text(v,150,100,"Are you sure?",0);
+        font_draw_text(v,dx+50,dy+10,"Shutdown?",0);font_draw_text(v,dx+50,dy+28,"Are you sure?",0);
     }
-    int bx=120,by=120;
+    int bx=dx+20,by=dy+48;
     for(int y=by;y<by+22;y++)for(int x=bx;x<bx+80;x++)PUT_PIXEL(v, x, y, power_cancel_pressed?0:7);
     for(int x=bx;x<bx+80;x++){PUT_PIXEL(v, x, by, power_cancel_pressed?0:15);PUT_PIXEL(v, x, by+21, power_cancel_pressed?15:0);}
     for(int y=by;y<by+22;y++){PUT_PIXEL(v, bx, y, power_cancel_pressed?0:15);PUT_PIXEL(v, bx+79, y, power_cancel_pressed?15:0);}
     font_draw_text(v,bx+16,by+3,"Cancel",power_cancel_pressed?15:0);
     
-    bx=210;
+    bx=dx+110;
     for(int y=by;y<by+22;y++)for(int x=bx;x<bx+80;x++)PUT_PIXEL(v, x, y, power_ok_pressed?4:4);
     for(int x=bx;x<bx+80;x++){PUT_PIXEL(v, x, by, power_ok_pressed?0:12);PUT_PIXEL(v, x, by+21, power_ok_pressed?12:0);}
     for(int y=by;y<by+22;y++){PUT_PIXEL(v, bx, y, power_ok_pressed?0:12);PUT_PIXEL(v, bx+79, y, power_ok_pressed?12:0);}
@@ -556,14 +584,30 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     }
 
     if(power_confirm){
-        if(mb_press && mx>=120 && mx<200 && my>=120 && my<142){power_cancel_pressed=1;need_mr=1;}
+        int dw = 220, dh = 80;
+        int dx = (screen_w - dw) / 2;
+        int dy = (screen_h - dh) / 2;
+        int cbx = dx + 20, oby = dy + 48, obx = dx + 110;
+
+        if(mb_press && mx>=cbx && mx<cbx+80 && my>=oby && my<oby+22){power_cancel_pressed=1;need_mr=1;}
         if(mb_release && power_cancel_pressed){power_cancel_pressed=0;
-            if(mx>=120 && mx<200 && my>=120 && my<142){power_confirm=0;redraw=1;}else{redraw=1;}}
-        if(mb_press && mx>=210 && mx<290 && my>=120 && my<142){power_ok_pressed=1;need_mr=1;}
+            if(mx>=cbx && mx<cbx+80 && my>=oby && my<oby+22){power_confirm=0;redraw=1;}else{redraw=1;}}
+        if(mb_press && mx>=obx && mx<obx+80 && my>=oby && my<oby+22){power_ok_pressed=1;need_mr=1;}
         if(mb_release && power_ok_pressed){power_ok_pressed=0;
-            if(mx>=210 && mx<290 && my>=120 && my<142){
-                if(power_confirm==1) outb(0x64,0xFE);
-                else { extern void bios_shutdown(void); bios_shutdown(); }
+            if(mx>=obx && mx<obx+80 && my>=oby && my<oby+22){
+                if(power_confirm==1) {
+                    // 1. Keyboard Controller reset
+                    outb(0x64, 0xFE);
+                    // 2. PCI reset
+                    outb(0xCF9, 0x02);
+                    outb(0xCF9, 0x06);
+                    // 3. Triple fault fallback
+                    struct { unsigned short limit; unsigned int base; } __attribute__((packed)) null_idtp = {0, 0};
+                    asm volatile("lidt %0; int3" : : "m"(null_idtp));
+                } else {
+                    extern void bios_shutdown(void);
+                    bios_shutdown();
+                }
             }else{redraw=1;}}
         if(redraw) { need_mr=1; }
         return;
@@ -624,17 +668,6 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
             redraw = 1;
         }
         key = keyboard_get_key();
-    }
-    if(mb_press && menu_open) {
-        if (menu_index == 0 && mx >= 30 && mx < 130 && my >= 20 && my < 20 + 3 * 16) {
-            int item = (my - 20) / 16;
-            if (item == 0) { wv = 1; am = 0; bring_to_top(0); } 
-            if (item == 1) { power_confirm = 1; } 
-            if (item == 2) { power_confirm = 2; } 
-            menu_open = 0; redraw = 1; return;
-        } else {
-            menu_open = 0; redraw = 1; return;
-        }
     }
     
     // Desktop icon press: record press and wait to see if it becomes a drag or a click
