@@ -64,6 +64,5 @@ void         ati_mach64_set_mode_bpp(int w, int h, int bpp);
 void         ati_mach64_fill_rect(int x, int y, int w, int h, unsigned int color);
 void         ati_mach64_screen_blt(int sx, int sy, int dx, int dy, int w, int h);
 void         ati_mach64_sync(void);
-void         ati_mach64_program_ramdac(int bpp);
 
 #endif

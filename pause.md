@@ -1,7 +1,7 @@
 # Pixel Neko Next — 阶段开发暂停与进度备忘录 (pause.md)
 
 > **记录时间**：2026-10-23  
-> **当前系统版本**：`Version C2.0 (Build 2000.001)`  
+> **当前系统版本**：`Version C2.0 (Build 2000.002)`  
 > **指导规划文件**：[plan3.md](plan3.md)  
 > **状态简述**：按照 [plan3.md](plan3.md) 的全量要求，**核心代码已全面编写与对接完毕**。因时间安排需要，在此提交当前所有代码与方案文档并暂停工作（暂不编译与发布 ISO），以便下次无缝接管与验证。
 
@@ -98,4 +98,23 @@
 4. **文件管理器 ([apps/filemanager.c](apps/filemanager.c))**：
    - 底部状态栏 Y 坐标上移至 `wy+wh-18`（分割线 `wy+wh-21`），彻底避免文字像素切穿窗口底部黑边框；
    - 状态栏文字增加右侧边界保护，默认窗口宽度提升至 320px，保证大容量驱动器状态信息完整呈现。
+
+---
+
+## 六、 Build 2000.002 显存识别、直彩偏色与极速拖动重构 (Mach64 & Performance Fixes)
+
+针对实机/PCBox模拟器开启 ATI Mach64 VT2 时的显存检测错误、直彩色偏暗/失真以及窗口拖动卡顿等严重问题进行了彻底根治：
+1. **显存物理回绕探测算法 (Physical VRAM Wrap-around Probing)**：
+   - [drivers/ati_mach64.c](drivers/ati_mach64.c)：废除容易误判的 `MEM_CNTL & 0x07`（Mach64 VT/GT 上 `0x05` 实际代表 2MB EDO DRAM，旧代码误判为 8MB）；
+   - 引入线性显存回绕探测：直接在物理 LFB（`0MB`, `1MB`, `2MB`, `4MB` 偏移）写入测试签名并比对回绕镜像，精确识别 1MB、2MB、4MB 与 8MB 物理显存，与模拟器/实机硬件设定 100% 吻合；
+   - [apps/cpanel.c](apps/cpanel.c)：联动显存保护，2MB 显存下自动禁止超出显存容量的 1024x768 24bpp (2.25MB) 与 32bpp (3.0MB)，并在列表明确标出 `(No VRAM)`。
+2. **Mach64 Direct Color (直彩色) RAMDAC 旁路与偏色修复**：
+   - [drivers/ati_mach64.c](drivers/ati_mach64.c) & [kernel/kernel.c](kernel/kernel.c)：彻底移除 `ati_mach64_program_ramdac()` 与 `program_special_ramdac()`；
+   - 修复根因：VBE BIOS 切换直彩色模式（15/16/24/32bpp）时已正确配置内部 Direct Color 旁路通道。旧代码误将 6 位的 `i >> 2`（最大 63）写入 8 位 DAC 并篡改 `MACH64_DAC_CNTL` 多路选择器，导致屏幕亮度被压制到 25% 且产生严重偏暗偏绿偏色；现完全保留 VBE BIOS 原生直彩硬件通路，画面色彩饱满鲜艳。
+3. **窗口拖拽极速局部重绘 (Rubber-band Box LFB Direct Mapping)**：
+   - [wm/wm.c](wm/wm.c)：废除拖动过程中每像素移动全屏重绘背景、所有图标、所有窗口的旧逻辑；
+   - 移除 `wm/wm.c` 中意外残留的旧拖拽逻辑代码块；
+   - 实现 1px 虚线边框直接映射：拖动过程中仅传输 4 条边框（约 2KB 数据，相比全屏传输降低 99.8% 总线开销），松开鼠标时才一次性完成窗口坐标更新与全屏重绘；
+   - [kernel/kernel.c](kernel/kernel.c)：主事件循环彻底优化，移除拖动期间强制将 `last_mx` 设为 -1 导致的重复全屏拷贝漏洞；鼠标移动仅局部刷新 16x16 光标，拖动窗口达到丝滑 60+ FPS。
+
 

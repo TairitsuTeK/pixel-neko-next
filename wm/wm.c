@@ -103,6 +103,7 @@ void bring_to_top(int id) {
     }
 }
 static int dragging=0, dgo=0, dgoy=0, dgw=0;
+static int drag_active=0, drag_bx=0, drag_by=0, drag_bw=0, drag_bh=0;
 static int owx=80, owy=52, owx2=100, owy2=70, owcx=95, owcy=50, ocpx=85, ocpy=55, ofmx=85, ofmy=50, oedx=90, oedy=60, osix=75, osiy=45, opzx=110, opzy=50;
 static int okp=0, okbx=0, okby=0;
 static int clp=0, clcx=0, clcy=0, clw=0;
@@ -255,6 +256,36 @@ static void about_win(unsigned char* v, int wx, int wy)
 
     int bx=wx+ww-50,by=wy+160;
     ok_btn(v,bx,by,0);
+}
+
+extern unsigned char* lfb;
+
+static void draw_lfb_drag_box(int x, int y, int w, int h)
+{
+    if (!lfb) return;
+    for(int i = x; i < x + w; i += 2) {
+        if(i >= 0 && i < screen_w && y >= 0 && y < screen_h) PUT_PIXEL(lfb, i, y, 0);
+        if(i >= 0 && i < screen_w && y + h - 1 >= 0 && y + h - 1 < screen_h) PUT_PIXEL(lfb, i, (y + h - 1), 0);
+    }
+    for(int i = y; i < y + h; i += 2) {
+        if(x >= 0 && x < screen_w && i >= 0 && i < screen_h) PUT_PIXEL(lfb, x, i, 0);
+        if(x + w - 1 >= 0 && x + w - 1 < screen_w && i >= 0 && i < screen_h) PUT_PIXEL(lfb, (x + w - 1), i, 0);
+    }
+}
+
+static void erase_lfb_drag_box(const unsigned char* v, int x, int y, int w, int h)
+{
+    if (!lfb || !v) return;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > screen_w) w = screen_w - x;
+    if (y + h > screen_h) h = screen_h - y;
+    if (w <= 0 || h <= 0) return;
+
+    copy_rect_to_lfb(v, x, y, w, 1);
+    copy_rect_to_lfb(v, x, y + h - 1, w, 1);
+    copy_rect_to_lfb(v, x, y, 1, h);
+    copy_rect_to_lfb(v, x + w - 1, y, 1, h);
 }
 
 static void box(unsigned char* v, int x, int y, int w, int h)
@@ -685,7 +716,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         get_time(&h, &m, &s);
         if (s != last_s) {
             last_s = s;
-            redraw = 1;
+            if (!dragging) redraw = 1;
         }
     }
 
@@ -872,14 +903,6 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         }
     }
 
-    if (dragging) {
-        int id = z_order[7];
-        if (id == 4 && fmv && !fmm) { fmx = mx - dgo; fmy = my - dgoy; if(fmy<20)fmy=20; redraw=1; }
-        if (id == 5 && edv && !edm) { edx = mx - dgo; edy = my - dgoy; if(edy<20)edy=20; redraw=1; }
-        if (id == 6 && siv && !sim) { six = mx - dgo; siy = my - dgoy; if(siy<20)siy=20; redraw=1; }
-        if (id == 7 && pzv && !pzm) { pzx = mx - dgo; pzy = my - dgoy; if(pzy<20)pzy=20; redraw=1; }
-    }
-    
     if (resizing) {
         if (dgw == 2) { wcw = mx - wcx; wch = my - wcy; if(wcw<100)wcw=100; if(wch<100)wch=100; redraw=1; }
         if (dgw == 3) { cpw = mx - cpx; cph = my - cpy; if(cpw<200)cpw=200; if(cph<150)cph=150; redraw=1; }
@@ -888,8 +911,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     }
     
     if (mb_release) {
-        if (dragging) { dragging=0; dgo=0; dgoy=0; dgw=0; }
-        if (resizing) { resizing=0; dgw=0; }
+        if (resizing) { resizing=0; dgw=0; redraw=1; }
     }
     
     if(mb_press&&!dragging&&!okp&&!clp&&!mip&&!resizing){
@@ -1001,37 +1023,32 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
             if(nwy<0) nwy=0;
             if(nwx+nww>screen_w) nwx=screen_w-nww;
             if(nwy+nwh>screen_h) nwy=screen_h-nwh;
-            int*cwx=dgw==1?&wx:dgw==2?&wx2:dgw==3?&wcx:dgw==4?&cpx:dgw==5?&fmx:dgw==6?&edx:dgw==7?&six:&pzx;
-            int*cwy=dgw==1?&wy:dgw==2?&wy2:dgw==3?&wcy:dgw==4?&cpy:dgw==5?&fmy:dgw==6?&edy:dgw==7?&siy:&pzy;
-            if(nwx!=*cwx||nwy!=*cwy){
-                int ox=dgw==1?owx:dgw==2?owx2:dgw==3?owcx:dgw==4?ocpx:dgw==5?ofmx:dgw==6?oedx:dgw==7?osix:opzx;
-                int oy=dgw==1?owy:dgw==2?owy2:dgw==3?owcy:dgw==4?ocpy:dgw==5?ofmy:dgw==6?oedy:dgw==7?osiy:opzy;
-                int ow=dgw==1?ww:dgw==2?ww2:dgw==3?wcw:dgw==4?cpw:dgw==5?fmw:dgw==6?edw:dgw==7?siw:pzw;
-                int oh=dgw==1?wh:dgw==2?wh2:dgw==3?wch:dgw==4?cph:dgw==5?fmh:dgw==6?edh:dgw==7?sih:pzh;
-                if(dgw==1&&am) oh=19; 
-                if(dgw==2&&cm) oh=19; 
-                if(dgw==3&&clm) oh=19; 
-                if(dgw==4&&cpm) oh=19; 
-                if(dgw==5&&fmm) oh=19; 
-                if(dgw==6&&edm) oh=19;
-                if(dgw==7&&sim) oh=19;
-                if(dgw==8&&pzm) oh=19;
-                for(int y2=oy;y2<oy+oh+2&&y2<screen_h;y2++)for(int x2=ox;x2<ox+ow+2&&x2<screen_w;x2++)PUT_PIXEL(v, x2, y2, 7);
-                
-                icon(v,desk_icon_x[0],desk_icon_y[0],1,"About", last_click_icon == 0);
-                icon(v,desk_icon_x[1],desk_icon_y[1],2,"Clock", last_click_icon == 1);
-                icon(v,desk_icon_x[2],desk_icon_y[2],4,"Calc", last_click_icon == 2);
-                icon(v,desk_icon_x[3],desk_icon_y[3],6,"CPanel", last_click_icon == 3);
-                icon(v,desk_icon_x[4],desk_icon_y[4],5,"Files", last_click_icon == 4);
-                icon(v,desk_icon_x[5],desk_icon_y[5],3,"Notepad", last_click_icon == 5);
-                icon(v,desk_icon_x[6],desk_icon_y[6],7,"SysInfo", last_click_icon == 6);
-                icon(v,desk_icon_x[7],desk_icon_y[7],8,"Puzzle", last_click_icon == 7);
-                draw_others(v, dgw);box(v,nwx,nwy,nww,nwh);
-                if(dgw==1){owx=nwx;owy=nwy;}else if(dgw==2){owx2=nwx;owy2=nwy;}
-                else if(dgw==3){owcx=nwx;owcy=nwy;}else if(dgw==4){ocpx=nwx;ocpy=nwy;}else if(dgw==5){ofmx=nwx;ofmy=nwy;}else if(dgw==6){oedx=nwx;oedy=nwy;}else if(dgw==7){osix=nwx;osiy=nwy;}else{opzx=nwx;opzy=nwy;}
-                *cwx=nwx;*cwy=nwy;
+
+            if(!drag_active){
+                drag_active = 1;
+                drag_bx = nwx; drag_by = nwy; drag_bw = nww; drag_bh = nwh;
+                draw_lfb_drag_box(drag_bx, drag_by, drag_bw, drag_bh);
+            } else if(nwx != drag_bx || nwy != drag_by || nww != drag_bw || nwh != drag_bh) {
+                erase_lfb_drag_box(v, drag_bx, drag_by, drag_bw, drag_bh);
+                drag_bx = nwx; drag_by = nwy; drag_bw = nww; drag_bh = nwh;
+                draw_lfb_drag_box(drag_bx, drag_by, drag_bw, drag_bh);
             }
         }
-    }else{if(dragging){dragging=0;dgw=0;redraw=1;}}
+    }else{
+        if(dragging){
+            if(drag_active){
+                erase_lfb_drag_box(v, drag_bx, drag_by, drag_bw, drag_bh);
+                drag_active = 0;
+            }
+            int*cwx=dgw==1?&wx:dgw==2?&wx2:dgw==3?&wcx:dgw==4?&cpx:dgw==5?&fmx:dgw==6?&edx:dgw==7?&six:&pzx;
+            int*cwy=dgw==1?&wy:dgw==2?&wy2:dgw==3?&wcy:dgw==4?&cpy:dgw==5?&fmy:dgw==6?&edy:dgw==7?&siy:&pzy;
+            *cwx = drag_bx;
+            *cwy = drag_by;
+            dragging = 0;
+            dgw = 0;
+            redraw = 1;
+            need_mr = 1;
+        }
+    }
     if(redraw) need_mr=1;
 }

@@ -53,7 +53,6 @@ extern void check_revert_timer(void);
 #include "mm.h"
 
 extern void bios_set_mode(int mode);
-extern void bios_set_dac_ramp(void);
 
 struct pci_vga_info {
     int found;
@@ -136,48 +135,6 @@ static unsigned short make_color16(int r, int g, int b, const struct vbe_mode_in
     return RGB16(r, g, b);
 }
 
-static void program_special_ramdac(void)
-{
-    // Real-mode VBE 4F09h & VGA BIOS 1012h identity color ramp
-    bios_set_dac_ramp();
-    
-    // ATI Mach64 specific: unlock DAC access and write ramp
-    if (pci_vga.found && pci_vga.vendor == 0x1002) {
-        // Unlock DAC_VGA_ADR_EN (bit 13) in DAC_CNTL via MMIO at 0xBFCC4 and BAR1 if available
-        *(volatile unsigned int*)0xBFCC4 |= (1 << 13);
-        if (pci_vga.bar1) {
-            *(volatile unsigned int*)(pci_vga.bar1 + 0xC4) |= (1 << 13);
-        }
-        
-        // Write identity ramp via MMIO DAC_REGS at 0xBFCC0/0xBFCC1
-        *(volatile unsigned char*)0xBFCC0 = 0;
-        for (int i = 0; i < 256; i++) {
-            unsigned char ramp = (unsigned char)(i >> 2);
-            *(volatile unsigned char*)0xBFCC1 = ramp;
-            *(volatile unsigned char*)0xBFCC1 = ramp;
-            *(volatile unsigned char*)0xBFCC1 = ramp;
-        }
-        
-        // Write identity ramp via Mach64 sparse I/O 0x5EEC / 0x5EED
-        outb(0x5EEC, 0);
-        for (int i = 0; i < 256; i++) {
-            unsigned char ramp = (unsigned char)(i >> 2);
-            outb(0x5EED, ramp);
-            outb(0x5EED, ramp);
-            outb(0x5EED, ramp);
-        }
-    }
-    
-    // Also write standard VGA DAC ports (now unblocked)
-    outb(0x3C8, 0);
-    for (int i = 0; i < 256; i++) {
-        unsigned char ramp = (unsigned char)(i >> 2);
-        outb(0x3C9, ramp);
-        outb(0x3C9, ramp);
-        outb(0x3C9, ramp);
-    }
-}
-
 static void set_vga_palette_full(const struct vbe_mode_info* info, int is_direct_color)
 {
     for (int i = 0; i < 256; i++) {
@@ -208,25 +165,6 @@ static void set_vga_palette_full(const struct vbe_mode_info* info, int is_direct
             outb(0x3C9, g);
             outb(0x3C9, b);
         }
-    }
-
-    if (is_direct_color) {
-        // Correctly detect Special / Programmable RAMDAC:
-        // 1. VBE direct_color_attributes & 1: Color ramp is programmable
-        // 2. ATI Mach64 (PCI vendor 0x1002): Hardware routes direct color through internal RAMDAC LUT
-        int is_special_ramdac = 0;
-        if (info && (info->direct_color_attributes & 1)) {
-            is_special_ramdac = 1;
-        }
-        if (pci_vga.found && pci_vga.vendor == 0x1002) {
-            is_special_ramdac = 1;
-        }
-
-        if (is_special_ramdac) {
-            program_special_ramdac();
-        }
-        // If FIXED RAMDAC (like S3 Trio64, S3 Vision968, Voodoo 3):
-        // DO NOT TOUCH 0x3C8/0x3C9! Leaving the DAC untouched prevents corruption on external RAMDACs (e.g. Bt485/TVP3026).
     }
 }
 
@@ -486,18 +424,18 @@ void kernel_main(void)
 
         int mr = wm_need_mouse_reset();
         int moved = (mx != last_mx || my != last_my);
-        int prev_drawn_x = last_mx;
-        int prev_drawn_y = last_my;
         
         if (mr || moved) {
-            if (last_mx >= 0) mouse_reset(v);
+            if (last_mx >= 0) {
+                mouse_reset(v);
+                copy_rect_to_lfb(v, last_mx, last_my, 16, 16);
+            }
         }
 
         wm_update(v, mx, my, mb, mb_press, mb_release);
         int new_mr = wm_need_mouse_reset();
         if (new_mr) {
             mr = 1;
-            if (last_mx >= 0) mouse_reset(v);
         }
         
         extern int redraw;
@@ -505,23 +443,14 @@ void kernel_main(void)
         
         wm_draw(v);
 
-        if (!wm_is_dragging() && (mr || moved || last_mx == -1 || need_full_copy)) {
-            mouse_draw(v);
-            last_mx = mx; last_my = my;
-        } else if (wm_is_dragging()) {
-            last_mx = -1;
-        }
-
         if (need_full_copy) {
+            mouse_draw(v);
             copy_fullscreen_to_lfb(v);
+            last_mx = mx; last_my = my;
         } else if (mr || moved) {
-            // Fast partial update: only copy old cursor and new cursor regions (1KB instead of 960KB)
-            if (prev_drawn_x >= 0) {
-                copy_rect_to_lfb(v, prev_drawn_x, prev_drawn_y, 16, 16);
-            }
-            if (last_mx >= 0) {
-                copy_rect_to_lfb(v, last_mx, last_my, 16, 16);
-            }
+            mouse_draw(v);
+            copy_rect_to_lfb(v, mx, my, 16, 16);
+            last_mx = mx; last_my = my;
         }
     }
 }

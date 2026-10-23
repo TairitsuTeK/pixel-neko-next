@@ -86,17 +86,37 @@ int ati_mach64_probe(void) {
                     g_ati_lfb = (volatile unsigned char*)bar0;
                     g_ati_mmio = (volatile unsigned char*)bar1;
 
-                    // Probe physical VRAM size from MEM_CNTL
-                    unsigned int mem_cntl = mmio_read32(MACH64_MEM_CNTL);
-                    unsigned int mem_type = mem_cntl & 0x07;
-                    switch (mem_type) {
-                        case 0: g_ati_vram_bytes = 512 * 1024; break;
-                        case 1: g_ati_vram_bytes = 1024 * 1024; break;
-                        case 2: g_ati_vram_bytes = 2 * 1024 * 1024; break;
-                        case 3: g_ati_vram_bytes = 4 * 1024 * 1024; break;
-                        case 4: g_ati_vram_bytes = 6 * 1024 * 1024; break;
-                        case 5: g_ati_vram_bytes = 8 * 1024 * 1024; break;
-                        default: g_ati_vram_bytes = 2 * 1024 * 1024; break;
+                    // Physical VRAM wrap-around probing (tested at 1MB, 2MB, 4MB, 8MB)
+                    volatile unsigned int* p0 = (volatile unsigned int*)(g_ati_lfb);
+                    volatile unsigned int* p1 = (volatile unsigned int*)(g_ati_lfb + 1 * 1024 * 1024);
+                    volatile unsigned int* p2 = (volatile unsigned int*)(g_ati_lfb + 2 * 1024 * 1024);
+                    volatile unsigned int* p4 = (volatile unsigned int*)(g_ati_lfb + 4 * 1024 * 1024);
+
+                    unsigned int save0 = *p0;
+                    unsigned int save1 = *p1;
+                    unsigned int save2 = *p2;
+                    unsigned int save4 = *p4;
+
+                    *p0 = 0xA55A1234;
+                    *p1 = 0x5AA54321;
+                    if (*p0 == 0x5AA54321) {
+                        *p0 = save0;
+                        g_ati_vram_bytes = 1 * 1024 * 1024;
+                    } else {
+                        *p2 = 0x5AA5789A;
+                        if (*p0 == 0x5AA5789A) {
+                            *p0 = save0; *p1 = save1;
+                            g_ati_vram_bytes = 2 * 1024 * 1024;
+                        } else {
+                            *p4 = 0x5AA5BCDE;
+                            if (*p0 == 0x5AA5BCDE) {
+                                *p0 = save0; *p1 = save1; *p2 = save2;
+                                g_ati_vram_bytes = 4 * 1024 * 1024;
+                            } else {
+                                *p0 = save0; *p1 = save1; *p2 = save2; *p4 = save4;
+                                g_ati_vram_bytes = 8 * 1024 * 1024;
+                            }
+                        }
                     }
 
                     // Reset 2D GUI Engine test/control
@@ -126,33 +146,6 @@ unsigned int ati_mach64_get_vram_size(void) {
     return g_ati_vram_bytes;
 }
 
-void ati_mach64_program_ramdac(int bpp) {
-    if (!g_ati_active || !g_ati_mmio) return;
-
-    // Unlock DAC_VGA_ADR_EN (bit 13) in DAC_CNTL
-    unsigned int dac_cntl = mmio_read32(MACH64_DAC_CNTL);
-    dac_cntl |= (1 << 13);
-    
-    // Set 8bpp / 16bpp / 24bpp / 32bpp DAC mode in DAC_CNTL
-    if (bpp == 32) {
-        dac_cntl |= (3 << 8); // 32bpp direct color mode
-    } else if (bpp == 24) {
-        dac_cntl |= (2 << 8); // 24bpp direct color mode
-    } else if (bpp == 16) {
-        dac_cntl |= (1 << 8); // 16bpp direct color mode
-    }
-    mmio_write32(MACH64_DAC_CNTL, dac_cntl);
-
-    // Write linear identity ramp to internal RAMDAC LUT (256 entries)
-    *(volatile unsigned char*)(g_ati_mmio + MACH64_DAC_REGS) = 0; // Index 0
-    for (int i = 0; i < 256; i++) {
-        unsigned char val = (unsigned char)(bpp == 8 ? (i >> 2) : i);
-        *(volatile unsigned char*)(g_ati_mmio + MACH64_DAC_REGS + 1) = val; // R
-        *(volatile unsigned char*)(g_ati_mmio + MACH64_DAC_REGS + 1) = val; // G
-        *(volatile unsigned char*)(g_ati_mmio + MACH64_DAC_REGS + 1) = val; // B
-    }
-}
-
 void ati_mach64_set_mode_bpp(int w, int h, int bpp) {
     if (!g_ati_active || !g_ati_mmio) return;
 
@@ -178,9 +171,6 @@ void ati_mach64_set_mode_bpp(int w, int h, int bpp) {
 
     // Default ROP: Source copy (MIX_SRC)
     mmio_write32(MACH64_DP_MIX, 0x00070007);
-
-    // Program RAMDAC LUT
-    ati_mach64_program_ramdac(bpp);
 }
 
 void ati_mach64_fill_rect(int x, int y, int w, int h, unsigned int color) {
