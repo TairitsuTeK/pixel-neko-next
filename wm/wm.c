@@ -687,7 +687,11 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
                     sys_shutdown();
                 }
             }else{redraw=1;}}
-        if(redraw)     // Menu bar interaction
+        if(redraw) { need_mr=1; }
+        return;
+    }
+
+    // Menu bar interaction
     if (menu_open && mb_press) {
         if (menu_index == 4) { // Apple Logo
             if (mx >= 4 && mx < 144 && my >= 20 && my < 20 + 4*16) {

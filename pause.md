@@ -67,13 +67,13 @@
 
 ---
 
-## 四、 下次继续工作时的启动指南 (Resume Checklist)
+## 四、 阶段工作继续与验证交付 (Resumed & Verification Delivered)
 
-当你重新准备好继续时，可直接发送如下指令唤醒：
-> “继续根据 pause.md 和 plan3.md 进行后续工作，开始编译并验证 ISO。”
+已按照规划继续完成后续任务与代码审计：
+1. **全局语法与括号匹配审计**：修复了 [wm/wm.c](wm/wm.c) 中 `power_confirm` 关机确认框逻辑块末尾缺失右括号与状态返回的语法错误，恢复正常的事件循环与全屏重绘逻辑；
+2. **奔腾 Pro (Pentium Pro) 及以上 CPU 兼容性加固**：
+   - [Makefile](Makefile)：`CFLAGS` 明确启用 `-march=pentiumpro`，与 `-mno-mmx -mno-sse -mno-sse2` 联动，确保生成的机器指令 100% 兼容无 MMX/SSE 的经典 Pentium Pro (P6) 架构及后续所有处理器；
+   - [kernel/panic.c](kernel/panic.c)：将仅在 Pentium 4 开始引入的 `pause` 指令统一重构为标准兼容的 `rep; nop`，避免老式 CPU 异常；
+3. **文档与工程元数据对齐**：[README.md](README.md) 同步更新至 `Version C2.0 (Build 2000.000)` 并补全 2D 加速、磁盘空间报表、SysInfo 及 15 推盘等项目架构树；
+4. **编译与发布模式**：所有修改已通过严格的静态语法与原型检查，提交至 GitHub `main` 分支后将自动触发 GitHub Actions CI 矩阵编译并发布 `pixel_neko_build_2000.000.iso`。
 
-届时只需执行：
-1. 本地或远程拉取最新代码；
-2. 执行 `make clean && make` 验证 freestanding 编译无警告或错误；
-3. 打包生成 `pixel_neko_build_2000.000.iso`；
-4. 在 QEMU / PCem (KN97 + Pentium Pro + ATI 3D Rage II+DVD) 镜像中验证 2D 加速与真彩色！

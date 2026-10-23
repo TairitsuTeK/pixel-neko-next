@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%201750.000)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202000.000)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -53,31 +53,42 @@
 │   ├── idt.c             # IDT 中断描述符表与图形崩溃处理
 │   ├── kernel.c          # 内核主入口、显示设定与主事件泵
 │   ├── mm.c              # 物理页框分配器（PMM Bitmap）
+│   ├── panic.c           # Mac 炸弹崩溃视窗与异常现场转储
+│   ├── power.c           # 阶梯式电源管理与停机画面
 │   ├── splash.c          # Mac OS 9 & Win 3.1 风格开机动画
 │   └── timer.c           # 统一 PIT 模式 2 计时器与延时驱动
 ├── drivers/              # 硬件与总线驱动
+│   ├── ati_mach64.c      # ATI 3D Rage II+ / Mach64 专有驱动与 2D 加速
+│   ├── gfx_accel.c       # 2D 硬件加速统一抽象与平滑降级调度
+│   ├── blkdev.c          # 块设备抽象层
 │   ├── disk.c            # ATA / ATAPI 存储驱动
+│   ├── fdc.c             # 原生软驱控制器驱动 (FDC 82077AA)
+│   ├── isadma.c          # ISA DMA 控制器驱动
 │   ├── font.c            # 基础字体渲染
 │   ├── keyboard.c        # PS/2 键盘与按键缓冲
-│   ├── linux_font.c      # Linux 内核字体位图
 │   ├── mouse.c           # PS/2 鼠标驱动与超时保护
 │   └── speaker.c         # PC 扬声器驱动与复古开机和弦
 ├── fs/                   # 文件系统实现
-│   └── fat.c             # FAT16 / FAT32 文件系统
+│   ├── fat.c             # FAT12 / FAT16 / FAT32 文件系统与空闲簇统计
+│   ├── iso9660.c         # CDFS 光盘文件系统
+│   ├── part.c            # MBR 分区表解析
+│   └── vfs.c             # 统一虚拟文件系统与 Windows 驱动器盘符
 ├── wm/                   # 窗口管理器核心
-│   └── wm.c              # 窗口层叠、拖拽、菜单栏与图层混合
+│   └── wm.c              # 窗口层叠、桌面图案、菜单栏与图层混合
 ├── apps/                 # 内置桌面应用程序
 │   ├── calc.c            # 简易计算器
-│   ├── cpanel.c          # 控制面板（动态切分辨率、硬件信息）
-│   ├── editor.c          # 文本编辑器
-│   └── filemanager.c     # 图形化文件管理器
+│   ├── cpanel.c          # 控制面板（动态切分辨率、真彩限制、桌面图案）
+│   ├── editor.c          # 文本编辑器与剪贴板
+│   ├── filemanager.c     # 图形化文件管理器（容量与空闲空间统计）
+│   ├── sysinfo.c         # 系统信息工具与全 PCI 总线设备浏览器
+│   └── puzzle.c          # 经典 15 数字推盘小游戏
 ├── include/              # 全局公共头文件
-│   └── *.h               # cpu.h, splash.h, timer.h, speaker.h, etc.
+│   └── *.h               # ati_mach64.h, gfx_accel.h, panic.h, sysinfo.h, puzzle.h, etc.
 ├── scripts/              # 编译与构建辅助脚本
 │   ├── build_counter.sh
 │   └── build_number.txt
 ├── link_grub.ld          # 内核 ELF 链接脚本
-├── Makefile              # 顶级 Makefile 构建规则
+├── Makefile              # 顶级 Makefile 构建规则 (-march=pentiumpro)
 └── LICENSE               # MIT 开源协议
 ```
 

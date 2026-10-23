@@ -4,7 +4,7 @@ NASM = nasm
 GRUB_MKRESCUE = grub-mkrescue
 QEMU = qemu-system-i386
 
-CFLAGS = -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin \
+CFLAGS = -m32 -march=pentiumpro -ffreestanding -nostdlib -nostartfiles -fno-builtin \
          -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 \
          -Os -Wall -Wextra -Iinclude -I.
 

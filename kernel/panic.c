@@ -164,7 +164,7 @@ void panic_show_exception(struct trap_frame* frame, const char* name) {
                 sys_reboot();
             }
         }
-        asm volatile("pause");
+        asm volatile("rep; nop");
     }
 }
 
