@@ -30,12 +30,23 @@ jobs:
 
     - name: Build Kernel and ISO
       run: |
-        make
+        set -o pipefail
+        make 2>&1 | tee make.log
         VERSION=$(grep "KERNEL_BUILD" include/version.h | head -1 | cut -d '"' -f 2)
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "TAG_NAME=v$VERSION" >> $GITHUB_ENV
         # 打包源码 zip 作为独立资产
         git archive --format=zip --output="pixel_neko_source_${VERSION}.zip" HEAD
+
+    - name: Step Summary and Diagnostics
+      if: always()
+      run: |
+        if [ -f make.log ]; then
+          echo "### 📋 Build Log Output" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          tail -n 150 make.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
 
     - name: Upload Bootable ISO Artifact
       uses: actions/upload-artifact@v4

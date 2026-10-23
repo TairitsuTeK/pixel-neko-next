@@ -297,21 +297,26 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         ly += 16;
 
         for (int letter = 'A'; letter <= 'Z'; letter++) {
-            vfs_drive_info_t info;
-            if (vfs_get_drive_info(letter, &info) == VFS_OK) {
+            vfs_drive_t* d = vfs_get_drive((char)letter);
+            if (d && d->present) {
                 char line[64];
-                line[0] = '['; line[1] = letter; line[2] = ':'; line[3] = ']';
+                line[0] = '['; line[1] = (char)letter; line[2] = ':'; line[3] = ']';
                 line[4] = ' '; line[5] = ' ';
                 int li = 6;
-                const char* fs = info.fs_type;
+                const char* fs = (d->drv_type == VFS_DRV_FLOPPY) ? "FAT12" :
+                                 ((d->drv_type == VFS_DRV_CDROM) ? "CDFS" : vfs_get_fs_name(d->fs_type));
                 while (*fs && li < 20) line[li++] = *fs++;
                 while (li < 22) line[li++] = ' ';
 
+                unsigned int tot_k = 0, fre_k = 0;
+                int is_known = 0;
+                vfs_get_drive_space((char)letter, &tot_k, &fre_k, &is_known);
+
                 char tot_buf[16], fre_buf[16];
-                format_kb_str(info.total_kb, tot_buf);
-                if (info.is_free_known) {
-                    format_kb_str(info.free_kb, fre_buf);
-                } else if (info.is_readonly) {
+                format_kb_str(tot_k, tot_buf);
+                if (is_known) {
+                    format_kb_str(fre_k, fre_buf);
+                } else if (d->is_readonly) {
                     fre_buf[0] = 'R'; fre_buf[1] = 'e'; fre_buf[2] = 'a'; fre_buf[3] = 'd';
                     fre_buf[4] = 'O'; fre_buf[5] = 'n'; fre_buf[6] = 'l'; fre_buf[7] = 'y'; fre_buf[8] = '\0';
                 } else {

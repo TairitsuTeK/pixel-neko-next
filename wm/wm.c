@@ -943,6 +943,8 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
 
     if(mb_press&&clv&&!clm&&!clp&&!mip){calc_click(v,mx,my,wcx,wcy,wcw,wch);redraw=1;}
     if(mb_press&&cpv&&!cpm&&!clp&&!mip){cpanel_click(v,mx,my,cpx,cpy,cpw,cph);redraw=1;}
+    if(mb_press&&siv&&!sim&&!clp&&!mip){sysinfo_click(mx,my,six,siy,siw,sih);redraw=1;}
+    if(mb_press&&pzv&&!pzm&&!clp&&!mip){puzzle_click(mx,my,pzx,pzy,pzw,pzh);redraw=1;}
 
     if(mb&1&&!okp&&!clp&&!mip&&!resizing){
         if(!dragging){
