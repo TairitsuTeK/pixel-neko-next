@@ -444,6 +444,8 @@ void kernel_main(void)
         wm_draw(v);
 
         if (need_full_copy) {
+            extern void mouse_invalidate(void);
+            mouse_invalidate();
             mouse_draw(v);
             copy_fullscreen_to_lfb(v);
             last_mx = mx; last_my = my;

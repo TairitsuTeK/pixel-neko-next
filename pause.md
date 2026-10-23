@@ -1,7 +1,7 @@
 # Pixel Neko Next — 阶段开发暂停与进度备忘录 (pause.md)
 
 > **记录时间**：2026-10-23  
-> **当前系统版本**：`Version C2.0 (Build 2000.002)`  
+> **当前系统版本**：`Version C2.0 (Build 2000.003)`  
 > **指导规划文件**：[plan3.md](plan3.md)  
 > **状态简述**：按照 [plan3.md](plan3.md) 的全量要求，**核心代码已全面编写与对接完毕**。因时间安排需要，在此提交当前所有代码与方案文档并暂停工作（暂不编译与发布 ISO），以便下次无缝接管与验证。
 
@@ -116,5 +116,24 @@
    - 移除 `wm/wm.c` 中意外残留的旧拖拽逻辑代码块；
    - 实现 1px 虚线边框直接映射：拖动过程中仅传输 4 条边框（约 2KB 数据，相比全屏传输降低 99.8% 总线开销），松开鼠标时才一次性完成窗口坐标更新与全屏重绘；
    - [kernel/kernel.c](kernel/kernel.c)：主事件循环彻底优化，移除拖动期间强制将 `last_mx` 设为 -1 导致的重复全屏拷贝漏洞；鼠标移动仅局部刷新 16x16 光标，拖动窗口达到丝滑 60+ FPS。
+
+---
+
+## 七、 Build 2000.003 脏矩形残留根除、显存/主频精准识别与关机重启音效
+
+针对实机/PCBox环境测试中反馈的光标/标题栏残留、显存/主频识别不准以及关机重启音效诉求进行全方位升级：
+1. **根除光标/标题栏脏矩形残留 (Dirty Rect Residue Fix)**：
+   - [drivers/mouse.c](drivers/mouse.c)：彻底移除 `mouse_draw()` 中在全屏重绘后回写过时 `saved_x` 像素的破坏性逻辑，将背景恢复职责严格限定于 `mouse_reset()`；
+   - 引入 `mouse_invalidate()`：在 [wm/wm.c](wm/wm.c) 及 [kernel/kernel.c](kernel/kernel.c) 触发全屏重绘（`redraw`）时同步失效旧光标缓存，杜绝窗口关闭或移动后旧标题栏条纹被光标回写并永久粘连在桌面上的严重缺陷。
+2. **显存容量双重权威识别 (VBE Controller Info + LFB Readback Probing)**：
+   - [boot/vbe.asm](boot/vbe.asm)：新增导出 `vbe_get_controller_info`（实模式调用 VBE 0x4F00），直接读取 BIOS 权威配置的 `total_memory`（64KB 块数）；
+   - [drivers/ati_mach64.c](drivers/ati_mach64.c)：完善 LFB 物理读写回显检测（同时检验 `*pN == val` 与 `*p0 != val`），结合 VBE 权威数据，彻底解决 PCBox 模拟器中 2MB 显存被误认为 8MB 的问题，精准呈现 2MB。
+3. **CPU 动态主频高精度测量 (PIT Channel 2 + RDTSC Calibration)**：
+   - [kernel/cpu.c](kernel/cpu.c)：废除固定 200MHz 的默认兜底，实现基于 PIT Channel 2 精确 10ms 门控时间测量 CPU 循环数（RDTSC），动态测定 CPU 真实主频（如 PCBox 配置的 Celeron 1000 MHz 精准测量并显示为 1000 MHz）；
+   - 优化 Tualatin / Coppermine 架构下 Celeron 与 Pentium III 的品牌串匹配。
+4. **关机与重启复古蜂鸣音效 (Shutdown & Reboot Sound FX)**：
+   - [drivers/speaker.c](drivers/speaker.c) & [include/speaker.h](include/speaker.h)：新增 `speaker_shutdown_chord()`（经典四音符下行和弦 C6 $\to$ G5 $\to$ E5 $\to$ C5）与 `speaker_reboot_chord()`；
+   - [kernel/power.c](kernel/power.c)：在执行软重启与关机断电前播放对应音频，赋予系统极具代入感的复古软硬件交互仪式感。
+
 
 

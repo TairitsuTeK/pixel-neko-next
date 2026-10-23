@@ -128,22 +128,6 @@ void mouse_draw(unsigned char* vga)
 {
     if (!init_done) return;
     int bpp_bytes = (screen_bpp <= 8) ? 1 : ((screen_bpp <= 16) ? 2 : ((screen_bpp <= 24) ? 3 : 4));
-    if (saved_x >= 0) {
-        for (int i = 0; i < 16; i++)
-            for (int j = 0; j < 16; j++)
-                if (saved_y+i < screen_h && saved_x+j < screen_w) {
-                    int offset = (saved_y+i) * screen_pitch + (saved_x+j) * bpp_bytes;
-                    if (screen_bpp <= 8) vga[offset] = (unsigned char)saved[i][j];
-                    else if (screen_bpp <= 16) *((unsigned short*)&vga[offset]) = (unsigned short)saved[i][j];
-                    else if (screen_bpp == 24) {
-                        vga[offset]   = (unsigned char)(saved[i][j] & 0xFF);
-                        vga[offset+1] = (unsigned char)((saved[i][j] >> 8) & 0xFF);
-                        vga[offset+2] = (unsigned char)((saved[i][j] >> 16) & 0xFF);
-                    } else {
-                        *((unsigned int*)&vga[offset]) = saved[i][j];
-                    }
-                }
-    }
     int x = mx, y = my;
     for (int i = 0; i < 16; i++)
         for (int j = 0; j < 16; j++) {
@@ -213,6 +197,12 @@ void mouse_reset(unsigned char* vga)
                     }
                 }
     }
+    saved_x = -1;
+    saved_y = -1;
+}
+
+void mouse_invalidate(void)
+{
     saved_x = -1;
     saved_y = -1;
 }

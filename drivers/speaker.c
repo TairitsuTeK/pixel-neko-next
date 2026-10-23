@@ -40,3 +40,19 @@ void speaker_beep(void)
 {
     speaker_play(880, 50); // A5 standard beep
 }
+
+void speaker_shutdown_chord(void)
+{
+    speaker_play(1046, 70); // C6
+    speaker_play(784, 70);  // G5
+    speaker_play(659, 70);  // E5
+    speaker_play(523, 150); // C5
+}
+
+void speaker_reboot_chord(void)
+{
+    speaker_play(659, 60);  // E5
+    speaker_play(784, 60);  // G5
+    speaker_play(1046, 80); // C6
+    speaker_play(1318, 140);// E6
+}

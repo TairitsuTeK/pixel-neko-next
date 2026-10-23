@@ -1,4 +1,59 @@
 #include "cpu.h"
+#include "port.h"
+
+static unsigned int measure_cpu_mhz(void) {
+    if (!(g_cpu_info.features_edx & (1 << 4))) {
+        return 200; // Fallback for CPUs without TSC
+    }
+
+    unsigned char orig_61 = inb(0x61);
+
+    // Channel 2, lobyte/hibyte, Mode 0 (interrupt on terminal count), binary
+    outb(0x43, 0xB0);
+
+    // 11932 counts at 1.193182 MHz = exactly 10.000 ms
+    outb(0x42, (unsigned char)(11932 & 0xFF));
+    outb(0x42, (unsigned char)((11932 >> 8) & 0xFF));
+
+    // Reset and enable PIT Channel 2 gate (bit 0 = 1, speaker off bit 1 = 0)
+    outb(0x61, (orig_61 & ~0x02) | 0x01);
+
+    unsigned int start_low, start_high;
+    asm volatile ("rdtsc" : "=a"(start_low), "=d"(start_high));
+
+    // Wait for PIT Channel 2 output (bit 5 of port 0x61) to go high
+    for (volatile int timeout = 0; timeout < 5000000; timeout++) {
+        if (inb(0x61) & 0x20) break;
+    }
+
+    unsigned int end_low, end_high;
+    asm volatile ("rdtsc" : "=a"(end_low), "=d"(end_high));
+
+    // Restore port 0x61
+    outb(0x61, orig_61);
+
+    unsigned long long start_tsc = ((unsigned long long)start_high << 32) | start_low;
+    unsigned long long end_tsc = ((unsigned long long)end_high << 32) | end_low;
+
+    if (end_tsc <= start_tsc) return 200;
+
+    unsigned long long elapsed = end_tsc - start_tsc;
+    unsigned int mhz = (unsigned int)((elapsed + 5000) / 10000);
+
+    // Round to standard clock boundaries for clean reporting
+    if (mhz >= 50) {
+        unsigned int rem50 = mhz % 50;
+        if (rem50 <= 4) mhz -= rem50;
+        else if (rem50 >= 46) mhz += (50 - rem50);
+        else {
+            unsigned int rem33 = (mhz + 1) % 33;
+            if (rem33 <= 3) mhz += (33 - rem33);
+            else if (rem33 >= 30) mhz -= (rem33 - 30);
+        }
+    }
+
+    return mhz > 0 ? mhz : 200;
+}
 
 cpu_info_t g_cpu_info = {
     .vendor = "Unknown",
@@ -125,6 +180,8 @@ void cpu_detect(void) {
         g_cpu_info.stepping = stepping;
         g_cpu_info.features_ecx = ecx;
         g_cpu_info.features_edx = edx;
+
+        g_cpu_info.mhz = measure_cpu_mhz();
     }
 
     // 1. Check Extended Brand String (0x80000002..0x80000004)
@@ -155,10 +212,18 @@ void cpu_detect(void) {
     // 2. Brand Index lookup for Intel (Pentium III Coppermine/Tualatin, etc.)
     if (str_equal(vendor, "GenuineIntel") && brand_idx > 0) {
         switch (brand_idx) {
-            case 0x01: str_copy_n(cpu_model_string, "Intel Celeron", sizeof(cpu_model_string)); break;
-            case 0x02: str_copy_n(cpu_model_string, "Intel Pentium III", sizeof(cpu_model_string)); break;
+            case 0x01:
+                if (family == 6 && model == 11) str_copy_n(cpu_model_string, "Intel Celeron (Tualatin)", sizeof(cpu_model_string));
+                else if (family == 6 && model == 8) str_copy_n(cpu_model_string, "Intel Celeron (Coppermine)", sizeof(cpu_model_string));
+                else str_copy_n(cpu_model_string, "Intel Celeron", sizeof(cpu_model_string));
+                break;
+            case 0x02:
+            case 0x04:
+                if (family == 6 && model == 11) str_copy_n(cpu_model_string, "Intel Pentium III (Tualatin)", sizeof(cpu_model_string));
+                else if (family == 6 && model == 8) str_copy_n(cpu_model_string, "Intel Pentium III (Coppermine)", sizeof(cpu_model_string));
+                else str_copy_n(cpu_model_string, "Intel Pentium III", sizeof(cpu_model_string));
+                break;
             case 0x03: str_copy_n(cpu_model_string, "Intel Pentium III Xeon", sizeof(cpu_model_string)); break;
-            case 0x04: str_copy_n(cpu_model_string, "Intel Pentium III", sizeof(cpu_model_string)); break;
             case 0x06: str_copy_n(cpu_model_string, "Intel Pentium III-M", sizeof(cpu_model_string)); break;
             case 0x07: str_copy_n(cpu_model_string, "Intel Celeron-M", sizeof(cpu_model_string)); break;
             case 0x08:
@@ -190,10 +255,10 @@ void cpu_detect(void) {
                 case 5:  str_copy_n(cpu_model_string, "Intel Pentium II / Celeron (Deschutes)", sizeof(cpu_model_string)); break;
                 case 6:  str_copy_n(cpu_model_string, "Intel Celeron (Mendocino)", sizeof(cpu_model_string)); break;
                 case 7:  str_copy_n(cpu_model_string, "Intel Pentium III (Katmai)", sizeof(cpu_model_string)); break;
-                case 8:  str_copy_n(cpu_model_string, "Intel Pentium III (Coppermine)", sizeof(cpu_model_string)); break;
+                case 8:  str_copy_n(cpu_model_string, "Intel Pentium III / Celeron (Coppermine)", sizeof(cpu_model_string)); break;
                 case 9:  str_copy_n(cpu_model_string, "Intel Pentium M (Banias)", sizeof(cpu_model_string)); break;
                 case 10: str_copy_n(cpu_model_string, "Intel Pentium III Xeon", sizeof(cpu_model_string)); break;
-                case 11: str_copy_n(cpu_model_string, "Intel Pentium III (Tualatin)", sizeof(cpu_model_string)); break;
+                case 11: str_copy_n(cpu_model_string, "Intel Pentium III / Celeron (Tualatin)", sizeof(cpu_model_string)); break;
                 case 13: str_copy_n(cpu_model_string, "Intel Pentium M (Dothan)", sizeof(cpu_model_string)); break;
                 case 14: str_copy_n(cpu_model_string, "Intel Core Duo / Solo (Yonah)", sizeof(cpu_model_string)); break;
                 default: str_copy_n(cpu_model_string, "Intel P6 Family CPU", sizeof(cpu_model_string)); break;

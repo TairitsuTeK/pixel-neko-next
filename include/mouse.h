@@ -6,6 +6,7 @@ void mouse_handle_byte(unsigned char d);
 void mouse_get(int* x, int* y, int* btn);
 void mouse_draw(unsigned char* vga);
 void mouse_reset(unsigned char* vga);
+void mouse_invalidate(void);
 
 extern int mouse_speed;
 void mouse_set_speed(int s);

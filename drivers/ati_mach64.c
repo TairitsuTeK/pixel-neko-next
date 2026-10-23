@@ -86,7 +86,20 @@ int ati_mach64_probe(void) {
                     g_ati_lfb = (volatile unsigned char*)bar0;
                     g_ati_mmio = (volatile unsigned char*)bar1;
 
-                    // Physical VRAM wrap-around probing (tested at 1MB, 2MB, 4MB, 8MB)
+                    // Query VBE BIOS for authoritative physical VRAM size
+                    extern int vbe_get_controller_info(void);
+                    unsigned int vbe_vram = 0;
+                    if (vbe_get_controller_info() == 0x004F) {
+                        unsigned char* vbe_block = (unsigned char*)0x8800;
+                        if (vbe_block[0] == 'V' && vbe_block[1] == 'E' && vbe_block[2] == 'S' && vbe_block[3] == 'A') {
+                            unsigned short blocks = *(unsigned short*)(vbe_block + 18);
+                            if (blocks > 0) {
+                                vbe_vram = (unsigned int)blocks * 64 * 1024;
+                            }
+                        }
+                    }
+
+                    // Physical write & readback probing on LFB (tested at 1MB, 2MB, 4MB, 8MB)
                     volatile unsigned int* p0 = (volatile unsigned int*)(g_ati_lfb);
                     volatile unsigned int* p1 = (volatile unsigned int*)(g_ati_lfb + 1 * 1024 * 1024);
                     volatile unsigned int* p2 = (volatile unsigned int*)(g_ati_lfb + 2 * 1024 * 1024);
@@ -99,24 +112,28 @@ int ati_mach64_probe(void) {
 
                     *p0 = 0xA55A1234;
                     *p1 = 0x5AA54321;
-                    if (*p0 == 0x5AA54321) {
-                        *p0 = save0;
+                    if (*p1 != 0x5AA54321 || *p0 == 0x5AA54321) {
                         g_ati_vram_bytes = 1 * 1024 * 1024;
                     } else {
                         *p2 = 0x5AA5789A;
-                        if (*p0 == 0x5AA5789A) {
-                            *p0 = save0; *p1 = save1;
+                        if (*p2 != 0x5AA5789A || *p0 == 0x5AA5789A) {
                             g_ati_vram_bytes = 2 * 1024 * 1024;
                         } else {
                             *p4 = 0x5AA5BCDE;
-                            if (*p0 == 0x5AA5BCDE) {
-                                *p0 = save0; *p1 = save1; *p2 = save2;
+                            if (*p4 != 0x5AA5BCDE || *p0 == 0x5AA5BCDE) {
                                 g_ati_vram_bytes = 4 * 1024 * 1024;
                             } else {
-                                *p0 = save0; *p1 = save1; *p2 = save2; *p4 = save4;
                                 g_ati_vram_bytes = 8 * 1024 * 1024;
                             }
                         }
+                    }
+
+                    // Restore saved memory values
+                    *p0 = save0; *p1 = save1; *p2 = save2; *p4 = save4;
+
+                    // If VBE BIOS explicitly reported total memory, trust VBE BIOS
+                    if (vbe_vram > 0 && vbe_vram <= 8 * 1024 * 1024) {
+                        g_ati_vram_bytes = vbe_vram;
                     }
 
                     // Reset 2D GUI Engine test/control

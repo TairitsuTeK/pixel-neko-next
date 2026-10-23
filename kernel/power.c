@@ -3,6 +3,7 @@
 #include "wm.h"
 #include "font.h"
 #include "disk.h"
+#include "speaker.h"
 
 extern void bios_shutdown(void);
 
@@ -13,6 +14,9 @@ static int my_strlen(const char* s) {
 }
 
 void sys_reboot(void) {
+    // Play reboot audio melody before reset
+    speaker_reboot_chord();
+
     // Flush any pending disk writes
     disk_flush_all();
 
@@ -69,6 +73,9 @@ static void draw_safe_to_turn_off_screen(void) {
 }
 
 void sys_shutdown(void) {
+    // Play shutdown audio melody before powering off
+    speaker_shutdown_chord();
+
     // 1. Flush disk caches
     disk_flush_all();
 

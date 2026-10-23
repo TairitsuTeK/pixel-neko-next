@@ -613,6 +613,8 @@ void wm_init(void){
 
 void wm_draw(unsigned char* v){
     if(redraw){
+        extern void mouse_invalidate(void);
+        mouse_invalidate();
         if (g_desktop_pattern < 0 || g_desktop_pattern > 5) g_desktop_pattern = 0;
         if (g_desktop_pattern == 5) {
             for (int y = 0; y < screen_h; y++) {

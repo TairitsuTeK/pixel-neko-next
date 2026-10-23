@@ -1,6 +1,7 @@
 bits 32
 global vbe_set_mode
 global vbe_get_mode_info
+global vbe_get_controller_info
 global bios_set_mode
 global bios_shutdown
 global bios_set_dac_ramp
@@ -32,6 +33,21 @@ vbe_get_mode_info:
     mov cx, [ebp+8]
     mov [0x7FF0], cx
     mov dword [0x7FF4], 0x4F01
+    mov [0x7FFC], esp
+    
+    mov esi, payload_start
+    mov edi, 0x8000
+    mov ecx, payload_end - payload_start
+    rep movsb
+    
+    jmp 0x18:0x8000
+
+vbe_get_controller_info:
+    push ebp
+    mov ebp, esp
+    pushad
+    
+    mov dword [0x7FF4], 0x4F00
     mov [0x7FFC], esp
     
     mov esi, payload_start
@@ -114,6 +130,8 @@ real_mode:
     mov ax, [0x7FF4]
     cmp ax, 0x0000
     je .do_bios
+    cmp ax, 0x4F00
+    je .do_controller
     cmp ax, 0x4F02
     je .do_set
     cmp ax, 0x4F01
@@ -122,6 +140,16 @@ real_mode:
     je .do_set_ramp
     cmp ax, 0x5307
     je .do_shutdown
+    jmp .done
+
+.do_controller:
+    mov di, 0x8800
+    mov byte [di], 'V'
+    mov byte [di+1], 'B'
+    mov byte [di+2], 'E'
+    mov byte [di+3], '2'
+    mov ax, 0x4F00
+    int 0x10
     jmp .done
 
 .do_bios:
