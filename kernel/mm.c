@@ -103,3 +103,57 @@ void pmm_free_page(void* ptr) {
         }
     }
 }
+
+void* pmm_alloc_pages(unsigned int count) {
+    if (count == 0) return 0;
+    unsigned int consecutive = 0;
+    unsigned int start_page = 0;
+
+    for (unsigned int i = 0; i < MAX_PAGES; i++) {
+        if (consecutive == 0 && pmm_bitmap[i / 8] == 0xFF) {
+            i = (i | 7);
+            continue;
+        }
+        if ((pmm_bitmap[i / 8] & (1 << (i % 8))) == 0) {
+            if (consecutive == 0) start_page = i;
+            consecutive++;
+            if (consecutive == count) {
+                for (unsigned int p = start_page; p < start_page + count; p++) {
+                    pmm_bitmap[p / 8] |= (1 << (p % 8));
+                }
+                return (void*)(start_page * PAGE_SIZE);
+            }
+        } else {
+            consecutive = 0;
+        }
+    }
+    return 0; // Out of memory
+}
+
+void pmm_free_pages(void* ptr, unsigned int count) {
+    if (!ptr || count == 0) return;
+    unsigned int start = (unsigned int)ptr / PAGE_SIZE;
+    for (unsigned int p = start; p < start + count && p < MAX_PAGES; p++) {
+        pmm_bitmap[p / 8] &= ~(1 << (p % 8));
+    }
+    if (start < next_free_page) {
+        next_free_page = start;
+    }
+}
+
+unsigned int pmm_get_free_pages(void) {
+    unsigned int free_count = 0;
+    unsigned int max_p = usable_ram_mb * (1024 * 1024 / PAGE_SIZE);
+    if (max_p == 0 || max_p > MAX_PAGES) max_p = MAX_PAGES;
+    for (unsigned int i = 0; i < max_p; i++) {
+        if ((pmm_bitmap[i / 8] & (1 << (i % 8))) == 0) {
+            free_count++;
+        }
+    }
+    return free_count;
+}
+
+unsigned int pmm_get_free_mb(void) {
+    return (pmm_get_free_pages() * 4) / 1024;
+}
+

@@ -217,11 +217,15 @@ static void open_file(int idx) {
         enter_dir(files[idx].name);
     } else {
         int len = my_strlen(files[idx].name);
-        if (len >= 4 && 
-            (files[idx].name[len-1] == 't' || files[idx].name[len-1] == 'T') &&
-            (files[idx].name[len-2] == 'x' || files[idx].name[len-2] == 'X') &&
-            (files[idx].name[len-3] == 't' || files[idx].name[len-3] == 'T') &&
-            (files[idx].name[len-4] == '.')) {
+        char ext[4] = {0};
+        if (len >= 4 && files[idx].name[len-4] == '.') {
+            for (int k = 0; k < 3; k++) {
+                char ch = files[idx].name[len-3+k];
+                if (ch >= 'A' && ch <= 'Z') ch += 32;
+                ext[k] = ch;
+            }
+        }
+        if (ext[0] == 't' && ext[1] == 'x' && ext[2] == 't') {
             char full[256];
             my_strcpy(full, current_path);
             int flen = my_strlen(full);
@@ -230,6 +234,18 @@ static void open_file(int idx) {
             editor_open_file(full);
             edv = 1; edm = 0;
             bring_to_top(5);
+        } else if ((ext[0] == 'b' && ext[1] == 'm' && ext[2] == 'p') ||
+                   (ext[0] == 'p' && ext[1] == 'n' && ext[2] == 'g')) {
+            char full[256];
+            my_strcpy(full, current_path);
+            int flen = my_strlen(full);
+            if (flen > 0 && full[flen-1] != '\\') my_strcat(full, "\\");
+            my_strcat(full, files[idx].name);
+            extern void imageviewer_open_file(const char* path);
+            extern int imv, imm;
+            imageviewer_open_file(full);
+            imv = 1; imm = 0;
+            bring_to_top(8);
         } else {
             show_error = 1;
             error_timer = 300;

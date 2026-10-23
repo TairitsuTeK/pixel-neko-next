@@ -19,6 +19,7 @@ unsigned int palette32[256];
 
 extern int vbe_set_mode(int mode);
 extern int vbe_get_mode_info(int mode);
+extern int vbe_get_controller_info(void);
 
 struct vbe_mode_info {
     short attributes;
@@ -273,6 +274,72 @@ static int try_set_vbe_mode(int mode, int req_w, int req_h)
     return 1;
 }
 
+int vbe_find_mode(int req_w, int req_h, int req_bpp)
+{
+    if (vbe_get_controller_info() == 0x004F) {
+        unsigned char* vbe_block = (unsigned char*)0x8800;
+        if (vbe_block[0] == 'V' && vbe_block[1] == 'E' && vbe_block[2] == 'S' && vbe_block[3] == 'A') {
+            unsigned short mode_off = *(unsigned short*)(vbe_block + 14);
+            unsigned short mode_seg = *(unsigned short*)(vbe_block + 16);
+            unsigned short* mode_list = (unsigned short*)((mode_seg << 4) + mode_off);
+            for (int i = 0; mode_list[i] != 0xFFFF; i++) {
+                int mode = mode_list[i] & 0x1FF;
+                for (int c = 0; c < 256; c++) ((unsigned char*)0x9000)[c] = 0;
+                struct vbe_mode_info* minfo = (struct vbe_mode_info*)0x9000;
+                if (vbe_get_mode_info(mode) == 0x004F) {
+                    if (minfo->x_res == req_w && minfo->y_res == req_h && minfo->bpp == req_bpp) {
+                        if (minfo->attributes & 0x01) {
+                            return mode;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+static int vbe_check_cand(int mode, int w, int h, int bpp)
+{
+    for (int c = 0; c < 256; c++) ((unsigned char*)0x9000)[c] = 0;
+    struct vbe_mode_info* minfo = (struct vbe_mode_info*)0x9000;
+    if (vbe_get_mode_info(mode) == 0x004F) {
+        if (minfo->x_res == w && minfo->y_res == h && minfo->bpp == bpp && (minfo->attributes & 0x01)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int vbe_supports_mode(int w, int h, int bpp)
+{
+    if (w <= 0 || h <= 0 || bpp <= 0) return 0;
+    if (w == 320 && h == 200 && bpp == 8) return 1;
+    extern int gfx_accel_supports_bpp(int w, int h, int bpp);
+    if (!gfx_accel_supports_bpp(w, h, bpp)) return 0;
+
+    if (vbe_find_mode(w, h, bpp) > 0) return 1;
+
+    if (bpp == 32) {
+        if (w == 800 && h == 600) return (vbe_check_cand(0x122, w, h, 32) || vbe_check_cand(0x143, w, h, 32) || vbe_check_cand(0x138, w, h, 32));
+        if (w == 640 && h == 480) return (vbe_check_cand(0x121, w, h, 32) || vbe_check_cand(0x140, w, h, 32) || vbe_check_cand(0x10F, w, h, 32));
+        if (w == 1024 && h == 768) return (vbe_check_cand(0x124, w, h, 32) || vbe_check_cand(0x145, w, h, 32) || vbe_check_cand(0x139, w, h, 32));
+    } else if (bpp == 24) {
+        if (w == 800 && h == 600) return vbe_check_cand(0x115, w, h, 24);
+        if (w == 640 && h == 480) return vbe_check_cand(0x112, w, h, 24);
+        if (w == 1024 && h == 768) return vbe_check_cand(0x118, w, h, 24);
+    } else if (bpp == 16) {
+        if (w == 800 && h == 600) return (vbe_check_cand(0x114, w, h, 16) || vbe_check_cand(0x113, w, h, 15));
+        if (w == 640 && h == 480) return (vbe_check_cand(0x111, w, h, 16) || vbe_check_cand(0x110, w, h, 15));
+        if (w == 1024 && h == 768) return (vbe_check_cand(0x117, w, h, 16) || vbe_check_cand(0x116, w, h, 15));
+    } else if (bpp == 8) {
+        if (w == 800 && h == 600) return vbe_check_cand(0x103, w, h, 8);
+        if (w == 640 && h == 480) return vbe_check_cand(0x101, w, h, 8);
+        if (w == 1024 && h == 768) return vbe_check_cand(0x105, w, h, 8);
+    }
+    return 0;
+}
+
 void set_resolution(int w, int h, int bpp)
 {
     // Bounds check to ensure resolution fits within backbuffer
@@ -308,22 +375,37 @@ void set_resolution(int w, int h, int bpp)
     int candidates[8] = {0};
     int num_candidates = 0;
     
-    if (bpp >= 24) {
+    if (bpp == 32) {
+        int m = vbe_find_mode(w, h, 32);
+        if (m > 0 && try_set_vbe_mode(m, w, h)) return;
         if (w == 800 && h == 600) {
-            candidates[0] = 0x115; // 800x600 24/32bpp
-            candidates[1] = 0x114; // 800x600 16bpp
-            candidates[2] = 0x113; // 800x600 15bpp
+            candidates[0] = 0x122; // ATI Mach64 800x600 32bpp
+            candidates[1] = 0x143; // Bochs/SeaBIOS 800x600 32bpp
+            candidates[2] = 0x138; // Standard OEM 32bpp
             num_candidates = 3;
         } else if (w == 640 && h == 480) {
-            candidates[0] = 0x112; // 640x480 24/32bpp
-            candidates[1] = 0x111; // 640x480 16bpp
-            candidates[2] = 0x110; // 640x480 15bpp
+            candidates[0] = 0x121; // ATI Mach64 640x480 32bpp
+            candidates[1] = 0x140; // Bochs/SeaBIOS 640x480 32bpp
+            candidates[2] = 0x10F;
             num_candidates = 3;
         } else if (w == 1024 && h == 768) {
-            candidates[0] = 0x118; // 1024x768 24/32bpp
-            candidates[1] = 0x117; // 1024x768 16bpp
-            candidates[2] = 0x116; // 1024x768 15bpp
+            candidates[0] = 0x124; // ATI Mach64 1024x768 32bpp
+            candidates[1] = 0x145; // Bochs/SeaBIOS 1024x768 32bpp
+            candidates[2] = 0x139;
             num_candidates = 3;
+        }
+    } else if (bpp == 24) {
+        int m = vbe_find_mode(w, h, 24);
+        if (m > 0 && try_set_vbe_mode(m, w, h)) return;
+        if (w == 800 && h == 600) {
+            candidates[0] = 0x115; // 800x600 24bpp
+            num_candidates = 1;
+        } else if (w == 640 && h == 480) {
+            candidates[0] = 0x112; // 640x480 24bpp
+            num_candidates = 1;
+        } else if (w == 1024 && h == 768) {
+            candidates[0] = 0x118; // 1024x768 24bpp
+            num_candidates = 1;
         }
     } else if (bpp <= 8) {
         if (w == 800 && h == 600) {
@@ -357,6 +439,7 @@ void set_resolution(int w, int h, int bpp)
             return;
         }
     }
+
 
     // Fallback: If requested mode failed, try 800x600 16bpp then 640x480 16bpp
     if (try_set_vbe_mode(0x114, 800, 600)) return;

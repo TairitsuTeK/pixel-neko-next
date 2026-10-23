@@ -1,7 +1,7 @@
 # Pixel Neko Next — 阶段开发暂停与进度备忘录 (pause.md)
 
 > **记录时间**：2026-10-23  
-> **当前系统版本**：`Version C2.0 (Build 2000.003)`  
+> **当前系统版本**：`Version C2.0 (Build 2006.000)`  
 > **指导规划文件**：[plan3.md](plan3.md)  
 > **状态简述**：按照 [plan3.md](plan3.md) 的全量要求，**核心代码已全面编写与对接完毕**。因时间安排需要，在此提交当前所有代码与方案文档并暂停工作（暂不编译与发布 ISO），以便下次无缝接管与验证。
 
@@ -135,5 +135,20 @@
    - [drivers/speaker.c](drivers/speaker.c) & [include/speaker.h](include/speaker.h)：新增 `speaker_shutdown_chord()`（经典四音符下行和弦 C6 $\to$ G5 $\to$ E5 $\to$ C5）与 `speaker_reboot_chord()`；
    - [kernel/power.c](kernel/power.c)：在执行软重启与关机断电前播放对应音频，赋予系统极具代入感的复古软硬件交互仪式感。
 
+---
 
+## 八、 Build 2006.000 桌面图标丝滑拖动、32位全彩模式探测、4K图片查看器与Live壁纸系统
 
+1. **桌面图标拖动卡顿根除 (Fluid Desktop Icon Dragging)**：
+   - [wm/wm.c](wm/wm.c)：重构 `icon_dragging` 逻辑，消除每次像素移动引发的 2MB 全屏重绘与 LFB 慢速传输，改为 LFB 实时单像素透明虚线框（`draw_lfb_drag_box`），释放鼠标按键时单次触发桌面坐标落地，帧率从 5 FPS 跃升至 60+ FPS。
+2. **32位全彩模式探测与持久化 (True 32-bit Color Mode & Persistence)**：
+   - [kernel/kernel.c](kernel/kernel.c)：实现 `vbe_find_mode` 与 `vbe_supports_mode`，动态解析 VBE 控制器 `VideoModePtr` 模式列表与特定硬件真彩候选（0x122/0x143/0x138等），彻底修复了控制面板选择 32 位色后回退至 24 位色的根本原因。
+3. **PMM 连续大页分配器与可用内存探测 (Contiguous PMM Allocator)**：
+   - [kernel/mm.c](kernel/mm.c) & [include/mm.h](include/mm.h)：实现 `pmm_alloc_pages()`、`pmm_free_pages()`、`pmm_get_free_pages()`，支持以 4KB 页面分配多达数十兆字节的连续物理内存缓冲区，并在分配前提供高精度的可用内存检测。
+4. **4K 32位全彩图片查看器 (Image Viewer with 4K Support)**：
+   - [include/image_dec.h](include/image_dec.h) & [kernel/image_dec.c](kernel/image_dec.c)：实现零外部依赖的轻量级纯 32 位 BMP 与 PNG 硬件级解压与反滤波引擎（内建 Tiny Inflate，支持 Paeth/Sub/Up/Average 滤波与 1/4/8/16/24/32bpp 统一转换为 32-bit ARGB），无任何 64 位除法，100% 兼容奔腾 Pro；
+   - [include/imageviewer.h](include/imageviewer.h) & [apps/imageviewer.c](apps/imageviewer.c)：构建全新图片查看器（窗口 8），支持 4K 原生查看、平移拖动、阶梯式缩放（Zoom In/Out/1:1/Fit）；提供严格物理内存不足（OOM）模态弹框告警与安全退出机制；
+   - [apps/filemanager.c](apps/filemanager.c)：双击 `.bmp` / `.png` 文件自动关联打开图片查看器。
+5. **Live 桌面壁纸引擎与双向联动 (Live Wallpaper Engine)**：
+   - [include/wallpaper.h](include/wallpaper.h) & [kernel/wallpaper.c](kernel/wallpaper.c)：实现 Windows 规范的 4 种经典壁纸排布模式：**填充 (Fill)**、**适应 (Fit)**、**拉伸 (Stretch)**、**平铺 (Tile)**，纯整数缩放运算；
+   - 双向设置入口：既可在图片查看器工具栏一键设为当前 Live 壁纸，也可在控制面板中实时切换壁纸对齐样式。

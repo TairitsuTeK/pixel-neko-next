@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202000.003)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202006.000)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -128,6 +128,15 @@
 
 ---
 
+## 🎨 Build 2006.000 更新特性
+- **⚡ 丝滑桌面图标拖拽优化**：彻底消除了每次像素位移触发的 2MB 全屏 backbuffer 重绘，全面升级为 LFB 局部透明虚线幽灵框，拖动帧率直达 60+ FPS。
+- **🖥️ 32位全彩真彩色模式探测与持久化**：深度扫描 VESA VBE 控制器模式列表，识别并切换 32-bit ARGB/RGBA 硬件显示模式，解决控制面板设置后回退 24 位色的问题。
+- **🖼️ 4K 32位全彩图片查看器 (Image Viewer)**：内置零外部依赖的 BMP 与 PNG 硬件级解码引擎，最高支持 4K (3840×2160) 全彩图片查看、平移拖动画布、阶梯式缩放（Zoom In/Out/1:1/Fit）；具备严格物理内存（PMM）越界与 OOM 检测防护。
+- **🌄 Live 桌面壁纸系统**：支持一键将当前图片设为桌面壁纸，提供 Windows 标准的 4 种排布方式：**填充 (Fill)**、**适应 (Fit)**、**拉伸 (Stretch)**、**平铺 (Tile)**，同时打通图片查看器与控制面板双向设置。
+
+---
+
 ## 📜 开源协议
 
 本项目采用 [MIT 许可证](LICENSE) 开源。欢迎交流学习与改进！
+

@@ -13,6 +13,8 @@ static int rs_dir(int mx, int my, int wx, int wy, int ww, int wh);
 #include "editor.h"
 #include "sysinfo.h"
 #include "puzzle.h"
+#include "imageviewer.h"
+#include "wallpaper.h"
 #include "speaker.h"
 #include "keyboard.h"
 #include "mm.h"
@@ -62,9 +64,10 @@ static void my_strcpy(char* dest, const char* src) {
 }
 
 static int wx=80, wy=52, ww=420, wh=200;
-static int desk_icon_x[8] = {0}, desk_icon_y[8] = {0};
+static int desk_icon_x[9] = {0}, desk_icon_y[9] = {0};
 static int icon_dragging = -1;
 static int icon_drag_ox = 0, icon_drag_oy = 0;
+static int icon_drag_active = 0, icon_drag_bx = 0, icon_drag_by = 0;
 static int icon_pressed = -1;
 static int icon_press_ox = 0, icon_press_oy = 0;
 static int icon_press_moved = 0;
@@ -93,13 +96,17 @@ static int siv=0, sim=0;
 static int pzx=110, pzy=50, pzw=180, pzh=200;
 static int pzw_def=180, pzh_def=200;
 static int pzv=0, pzm=0;
-static int z_order[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+static int imx=60, imy=35, imw=480, imh=340;
+static int imw_def=480, imh_def=340;
+static int oimx=60, oimy=35;
+
+static int z_order[9] = {0, 1, 2, 3, 4, 5, 6, 7, 8};
 void bring_to_top(int id) {
     int i;
-    for(i=0; i<8; i++) if(z_order[i] == id) break;
-    if (i < 8) {
-        for(int j=i; j<7; j++) z_order[j] = z_order[j+1];
-        z_order[7] = id;
+    for(i=0; i<9; i++) if(z_order[i] == id) break;
+    if (i < 9) {
+        for(int j=i; j<8; j++) z_order[j] = z_order[j+1];
+        z_order[8] = id;
     }
 }
 static int dragging=0, dgo=0, dgoy=0, dgw=0;
@@ -373,6 +380,20 @@ static void icon(unsigned char* v, int x, int y, unsigned char bg, const char* l
         ic[3][11]=2; ic[3][12]=2; // tile 2
         ic[11][3]=1; ic[11][4]=1; // tile 3
         ic[11][11]=8; ic[12][11]=8; // empty slot
+    }else if(bg==9){ // Image Viewer (Photo frame with sun and mountain)
+        for(int i=0;i<16;i++)for(int j=0;j<16;j++) ic[i][j]=7;
+        for(int j=1;j<15;j++) { ic[1][j]=15; ic[14][j]=0; }
+        for(int i=1;i<15;i++) { ic[i][1]=15; ic[i][14]=0; }
+        for(int i=2;i<14;i++)for(int j=2;j<14;j++) ic[i][j]=9; // blue sky
+        ic[3][10]=14; ic[3][11]=14; ic[4][10]=14; ic[4][11]=14; // sun
+        for(int j=2;j<9;j++) ic[13][j]=2;
+        for(int j=3;j<8;j++) ic[12][j]=2;
+        for(int j=4;j<7;j++) ic[11][j]=2;
+        ic[10][5]=10; ic[10][6]=10;
+        for(int j=7;j<14;j++) ic[13][j]=10;
+        for(int j=8;j<13;j++) ic[12][j]=10;
+        for(int j=9;j<12;j++) ic[11][j]=10;
+        ic[10][10]=15; ic[10][11]=15; // snow peak
     }
     
     for(int i=0;i<16;i++){
@@ -429,56 +450,62 @@ static void draw_power_dialog(unsigned char* v)
 
 static void draw_others(unsigned char* v, int dgw)
 {
-    for (int i=0; i<8; i++) {
+    for (int i=0; i<9; i++) {
         int id = z_order[i];
         if (id + 1 == dgw) continue;
         if (id == 0 && wv) {
             if (!am) about_win(v, wx, wy);
-            else window(v,wx,wy,"About",ww,20,0,(z_order[7]==0));
+            else window(v,wx,wy,"About",ww,20,0,(z_order[8]==0));
         }
         if (id == 1 && cv) {
             if (!cm) {
-                window(v,wx2,wy2,"Clock",ww2,wh2,1,(z_order[7]==1));
+                window(v,wx2,wy2,"Clock",ww2,wh2,1,(z_order[8]==1));
                 int h,m,s; get_time(&h,&m,&s); char b[9];
                 b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
                 font_draw_text(v, wx2+ww2/2-32, wy2+wh2/2-8, b, 0);
-            } else window(v,wx2,wy2,"Clock",ww2,20,0,(z_order[7]==1));
+            } else window(v,wx2,wy2,"Clock",ww2,20,0,(z_order[8]==1));
         }
         if (id == 2 && clv) {
             if (!clm) {
-                window(v,wcx,wcy,"Calculator",wcw,wch,2,(z_order[7]==2));
+                window(v,wcx,wcy,"Calculator",wcw,wch,2,(z_order[8]==2));
                 calc_draw(v, wcx, wcy, wcw, wch);
-            } else window(v,wcx,wcy,"Calculator",wcw,20,0,(z_order[7]==2));
+            } else window(v,wcx,wcy,"Calculator",wcw,20,0,(z_order[8]==2));
         }
         if (id == 3 && cpv) {
             if (!cpm) {
-                window(v,cpx,cpy,"Control Panel",cpw,cph,3,(z_order[7]==3));
+                window(v,cpx,cpy,"Control Panel",cpw,cph,3,(z_order[8]==3));
                 cpanel_draw(v, cpx, cpy, cpw, cph);
-            } else window(v,cpx,cpy,"Control Panel",cpw,20,0,(z_order[7]==3));
+            } else window(v,cpx,cpy,"Control Panel",cpw,20,0,(z_order[8]==3));
         }
         if (id == 4 && fmv) {
             if (!fmm) {
-                window(v,fmx,fmy,"File Manager",fmw,fmh,4,(z_order[7]==4));
+                window(v,fmx,fmy,"File Manager",fmw,fmh,4,(z_order[8]==4));
                 fm_draw(v, fmx, fmy, fmw, fmh);
-            } else window(v,fmx,fmy,"File Manager",fmw,20,0,(z_order[7]==4));
+            } else window(v,fmx,fmy,"File Manager",fmw,20,0,(z_order[8]==4));
         }
         if (id == 5 && edv) {
             if (!edm) {
-                window(v,edx,edy,"Notepad",edw,edh,5,(z_order[7]==5));
+                window(v,edx,edy,"Notepad",edw,edh,5,(z_order[8]==5));
                 editor_draw(v, edx, edy+20, edw, edh-20);
-            } else window(v,edx,edy,"Notepad",edw,20,0,(z_order[7]==5));
+            } else window(v,edx,edy,"Notepad",edw,20,0,(z_order[8]==5));
         }
         if (id == 6 && siv) {
             if (!sim) {
-                window(v,six,siy,"System Information",siw,sih,6,(z_order[7]==6));
+                window(v,six,siy,"System Information",siw,sih,6,(z_order[8]==6));
                 sysinfo_draw(v, six, siy, siw, sih);
-            } else window(v,six,siy,"System Information",siw,20,0,(z_order[7]==6));
+            } else window(v,six,siy,"System Information",siw,20,0,(z_order[8]==6));
         }
         if (id == 7 && pzv) {
             if (!pzm) {
-                window(v,pzx,pzy,"15-Puzzle",pzw,pzh,7,(z_order[7]==7));
+                window(v,pzx,pzy,"15-Puzzle",pzw,pzh,7,(z_order[8]==7));
                 puzzle_draw(v, pzx, pzy, pzw, pzh);
-            } else window(v,pzx,pzy,"15-Puzzle",pzw,20,0,(z_order[7]==7));
+            } else window(v,pzx,pzy,"15-Puzzle",pzw,20,0,(z_order[8]==7));
+        }
+        if (id == 8 && imv) {
+            if (!imm) {
+                window(v,imx,imy,imageviewer_get_title(),imw,imh,1,(z_order[8]==8));
+                imageviewer_draw(v, imx, imy, imw, imh);
+            } else window(v,imx,imy,imageviewer_get_title(),imw,20,0,(z_order[8]==8));
         }
     }
 }
@@ -602,36 +629,40 @@ void wm_init(void){
     edx=90;edy=60;edw=300;edh=200;edw_def=300;edh_def=200;
     six=75;siy=40;siw=420;sih=220;siw_def=420;sih_def=220;
     pzx=110;pzy=50;pzw=180;pzh=200;pzw_def=180;pzh_def=200;
-    for(int i=0;i<8;i++){
+    for(int i=0;i<9;i++){
         int col = i / 6;
         int row = i % 6;
         desk_icon_x[i] = screen_w - 60 - col * 64;
         desk_icon_y[i] = 30 + row * 52;
     }
-    calc_init();cpanel_init();fm_init();sysinfo_init();puzzle_init();redraw=1;
+    calc_init();cpanel_init();fm_init();sysinfo_init();puzzle_init();imageviewer_init();wallpaper_init();redraw=1;
 }
 
 void wm_draw(unsigned char* v){
     if(redraw){
         extern void mouse_invalidate(void);
         mouse_invalidate();
-        if (g_desktop_pattern < 0 || g_desktop_pattern > 5) g_desktop_pattern = 0;
-        if (g_desktop_pattern == 5) {
-            for (int y = 0; y < screen_h; y++) {
-                for (int x = 0; x < screen_w; x++) {
-                    PUT_PIXEL(v, x, y, 7);
-                }
-            }
+        if (wallpaper_is_active()) {
+            wallpaper_render(v, screen_w, screen_h, screen_bpp, screen_pitch);
         } else {
-            for (int y = 0; y < screen_h; y++) {
-                unsigned char row_pat = g_patterns[g_desktop_pattern][y & 7];
-                for (int x = 0; x < screen_w; x++) {
-                    unsigned char c = (row_pat & (0x80 >> (x & 7))) ? 8 : 7;
-                    PUT_PIXEL(v, x, y, c);
+            if (g_desktop_pattern < 0 || g_desktop_pattern > 5) g_desktop_pattern = 0;
+            if (g_desktop_pattern == 5) {
+                for (int y = 0; y < screen_h; y++) {
+                    for (int x = 0; x < screen_w; x++) {
+                        PUT_PIXEL(v, x, y, 7);
+                    }
+                }
+            } else {
+                for (int y = 0; y < screen_h; y++) {
+                    unsigned char row_pat = g_patterns[g_desktop_pattern][y & 7];
+                    for (int x = 0; x < screen_w; x++) {
+                        unsigned char c = (row_pat & (0x80 >> (x & 7))) ? 8 : 7;
+                        PUT_PIXEL(v, x, y, c);
+                    }
                 }
             }
         }
-        for (int i=0; i<8; i++) {
+        for (int i=0; i<9; i++) {
             if (desk_icon_x[i] == 0 || desk_icon_x[i] > screen_w - 32) desk_icon_x[i] = screen_w - 60 - (i/6)*64;
             if (desk_icon_y[i] == 0 || desk_icon_y[i] > screen_h - 32) desk_icon_y[i] = 30 + (i%6)*52;
         }
@@ -643,6 +674,7 @@ void wm_draw(unsigned char* v){
         icon(v,desk_icon_x[5],desk_icon_y[5],3,"Notepad", last_click_icon == 5);
         icon(v,desk_icon_x[6],desk_icon_y[6],7,"SysInfo", last_click_icon == 6);
         icon(v,desk_icon_x[7],desk_icon_y[7],8,"Puzzle", last_click_icon == 7);
+        icon(v,desk_icon_x[8],desk_icon_y[8],9,"Viewer", last_click_icon == 8);
         draw_all(v);
         draw_menubar(v);
         if(power_confirm) {  draw_power_dialog(v); }
@@ -671,6 +703,9 @@ static void open_icon_app(int clicked_icon) {
     }
     if(clicked_icon == 7) {
         pzv = 1; pzm = 0; pzw = pzw_def; pzh = pzh_def; puzzle_init(); show_opened("Puzzle");
+    }
+    if(clicked_icon == 8) {
+        imv = 1; imm = 0; imw = imw_def; imh = imh_def; imageviewer_init(); show_opened("Viewer");
     }
     bring_to_top(clicked_icon);
     last_click_icon = -1;
@@ -778,7 +813,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
             }
         } else if (menu_index == 2) { // View
             if (mx >= 106 && mx < 106 + 160 && my >= 20 && my < 20 + 1*18 + 4) {
-                for (int i = 0; i < 8; i++) {
+                for (int i = 0; i < 9; i++) {
                     int col = i / 6;
                     int row = i % 6;
                     desk_icon_x[i] = screen_w - 60 - col * 64;
@@ -818,20 +853,28 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         fm_update(v, mx, my, mb, fmx, fmy, fmw, fmh);
     }
     if ((mb & 1)) {
-        if (z_order[7] == 5 && edv && !edm && mx >= edx && mx < edx+edw && my >= edy+20 && my < edy+edh) {
+        if (z_order[8] == 5 && edv && !edm && mx >= edx && mx < edx+edw && my >= edy+20 && my < edy+edh) {
             editor_drag(mx, my, edx, edy+20, edw, edh-20);
             redraw=1;
+        }
+        if (z_order[8] == 8 && imv && !imm && mx >= imx && mx < imx+imw && my >= imy+20 && my < imy+imh) {
+            imageviewer_drag(mx, my, imx, imy, imw, imh);
         }
     }
     if (mb_release) {
         editor_release();
+        imageviewer_release();
     }
     
     // Keyboard input to active window
     int key = keyboard_get_key();
     while (key != 0) {
-        if (z_order[7] == 5 && edv && !edm) {
+        if (z_order[8] == 5 && edv && !edm) {
             editor_handle_key(key);
+            redraw = 1;
+        }
+        if (z_order[8] == 8 && imv && !imm) {
+            imageviewer_handle_key(key);
             redraw = 1;
         }
         key = keyboard_get_key();
@@ -840,7 +883,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     // Desktop icon press: record press and wait to see if it becomes a drag or a click
     if (mb_press && !dragging && !resizing && !power_confirm && !mip && !clp && !okp && icon_dragging == -1) {
         int clicked_icon = -1;
-        for (int i = 7; i >= 0; i--) {
+        for (int i = 8; i >= 0; i--) {
             if (in_icon(mx, my, i)) {
                 clicked_icon = i;
                 break;
@@ -865,12 +908,34 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     
     if (icon_dragging != -1) {
         if (mb) {
-            desk_icon_x[icon_dragging] = mx - icon_drag_ox;
-            desk_icon_y[icon_dragging] = my - icon_drag_oy;
-            redraw = 1;
+            int nix = mx - icon_drag_ox;
+            int niy = my - icon_drag_oy;
+            if (nix < 0) nix = 0;
+            if (nix + 36 > screen_w) nix = screen_w - 36;
+            if (niy < 20) niy = 20;
+            if (niy + 48 > screen_h) niy = screen_h - 48;
+
+            if (!icon_drag_active) {
+                icon_drag_active = 1;
+                icon_drag_bx = nix;
+                icon_drag_by = niy;
+                draw_lfb_drag_box(icon_drag_bx, icon_drag_by, 36, 48);
+            } else if (nix != icon_drag_bx || niy != icon_drag_by) {
+                erase_lfb_drag_box(v, icon_drag_bx, icon_drag_by, 36, 48);
+                icon_drag_bx = nix;
+                icon_drag_by = niy;
+                draw_lfb_drag_box(icon_drag_bx, icon_drag_by, 36, 48);
+            }
         } else {
+            if (icon_drag_active) {
+                erase_lfb_drag_box(v, icon_drag_bx, icon_drag_by, 36, 48);
+                icon_drag_active = 0;
+            }
+            desk_icon_x[icon_dragging] = icon_drag_bx;
+            desk_icon_y[icon_dragging] = icon_drag_by;
             icon_dragging = -1;
             redraw = 1;
+            need_mr = 1;
         }
         return;
     }
@@ -884,6 +949,9 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
                 icon_dragging = icon_pressed;
                 icon_drag_ox = icon_press_ox;
                 icon_drag_oy = icon_press_oy;
+                icon_drag_bx = desk_icon_x[icon_pressed];
+                icon_drag_by = desk_icon_y[icon_pressed];
+                icon_drag_active = 0;
                 icon_pressed = -1;
                 icon_press_moved = 1;
                 need_mr = 1;
@@ -910,16 +978,17 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         if (dgw == 3) { cpw = mx - cpx; cph = my - cpy; if(cpw<200)cpw=200; if(cph<150)cph=150; redraw=1; }
         if (dgw == 4) { fmw = mx - fmx; fmh = my - fmy; if(fmw<200)fmw=200; if(fmh<150)fmh=150; redraw=1; }
         if (dgw == 5) { edw = mx - edx; edh = my - edy; if(edw<200)edw=200; if(edh<150)edh=150; redraw=1; }
+        if (dgw == 9) { imw = mx - imx; imh = my - imy; if(imw<220)imw=220; if(imh<160)imh=160; redraw=1; }
     }
     
     if (mb_release) {
         if (resizing) { resizing=0; dgw=0; redraw=1; }
     }
-    
-    if(mb_press&&!dragging&&!okp&&!clp&&!mip&&!resizing){
         int hit_window = 0;
-        for (int i=7; i>=0; i--) {
+        for (int i=8; i>=0; i--) {
             int id = z_order[i];
+            if (id == 8 && imv && !imm && rs_dir(mx,my,imx,imy,imw,imh)){resizing=1;dgw=9;bring_to_top(8);redraw=1;break;}
+            if (id == 8 && imv && !imm && mx>=imx && mx<imx+imw && my>=imy && my<imy+imh) { hit_window=1; bring_to_top(8); imageviewer_click(v, mx, my, imx, imy, imw, imh); redraw=1; break; }
             if (id == 7 && pzv && !pzm && mx>=pzx && mx<pzx+pzw && my>=pzy && my<pzy+pzh) { hit_window=1; bring_to_top(7); puzzle_click(mx, my, pzx, pzy, pzw, pzh); redraw=1; break; }
             if (id == 6 && siv && !sim && mx>=six && mx<six+siw && my>=siy && my<siy+sih) { hit_window=1; bring_to_top(6); sysinfo_click(mx, my, six, siy, siw, sih); redraw=1; break; }
             if (id == 5 && edv && !edm && rs_dir(mx,my,edx,edy,edw,edh)){resizing=1;dgw=5;bring_to_top(5);redraw=1;break;}
@@ -953,9 +1022,10 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         if(!clp&&edv){int cx6=edx+4,cy6=edy+3;if(in_cl(mx,my,cx6,cy6)){clp=1;clw=6;clcx=cx6;clcy=cy6;cl_btn(v,cx6,cy6,1);need_mr=1;}}
         if(!clp&&siv){int cx7=six+4,cy7=siy+3;if(in_cl(mx,my,cx7,cy7)){clp=1;clw=7;clcx=cx7;clcy=cy7;cl_btn(v,cx7,cy7,1);need_mr=1;}}
         if(!clp&&pzv){int cx8=pzx+4,cy8=pzy+3;if(in_cl(mx,my,cx8,cy8)){clp=1;clw=8;clcx=cx8;clcy=cy8;cl_btn(v,cx8,cy8,1);need_mr=1;}}
+        if(!clp&&imv){int cx9=imx+4,cy9=imy+3;if(in_cl(mx,my,cx9,cy9)){clp=1;clw=9;clcx=cx9;clcy=cy9;cl_btn(v,cx9,cy9,1);need_mr=1;}}
     }
     if(mb_release&&clp){cl_btn(v,clcx,clcy,0);if(in_cl(mx,my,clcx,clcy)){
-        if(clw==1){wv=0;am=0;}else if(clw==2){cv=0;cm=0;}else if(clw==3){clv=0;clm=0;}else if(clw==4){cpv=0;cpm=0;}else if(clw==5){fmv=0;fmm=0;}else if(clw==6){edv=0;edm=0;}else if(clw==7){siv=0;sim=0;}else if(clw==8){pzv=0;pzm=0;}redraw=1;}else{redraw=1;}clp=0;clw=0;}
+        if(clw==1){wv=0;am=0;}else if(clw==2){cv=0;cm=0;}else if(clw==3){clv=0;clm=0;}else if(clw==4){cpv=0;cpm=0;}else if(clw==5){fmv=0;fmm=0;}else if(clw==6){edv=0;edm=0;}else if(clw==7){siv=0;sim=0;}else if(clw==8){pzv=0;pzm=0;}else if(clw==9){imv=0;imm=0;}redraw=1;}else{redraw=1;}clp=0;clw=0;}
 
     if(mb_press&&!dragging&&!okp&&!clp&&!mip&&!resizing){
         if(wv){int mx2=wx+ww-16,my2=wy+4;if(in_mi(mx,my,mx2,my2)){mip=1;miw=1;mi_btn(v,mx2,my2,1);need_mr=1;}}
@@ -966,8 +1036,9 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         if(!mip&&edv){int mx7=edx+edw-16,my7=edy+4;if(in_mi(mx,my,mx7,my7)){mip=1;miw=6;mi_btn(v,mx7,my7,1);need_mr=1;}}
         if(!mip&&siv){int mx8=six+siw-16,my8=siy+4;if(in_mi(mx,my,mx8,my8)){mip=1;miw=7;mi_btn(v,mx8,my8,1);need_mr=1;}}
         if(!mip&&pzv){int mx9=pzx+pzw-16,my9=pzy+4;if(in_mi(mx,my,mx9,my9)){mip=1;miw=8;mi_btn(v,mx9,my9,1);need_mr=1;}}
+        if(!mip&&imv){int mx10=imx+imw-16,my10=imy+4;if(in_mi(mx,my,mx10,my10)){mip=1;miw=9;mi_btn(v,mx10,my10,1);need_mr=1;}}
     }
-    if(mb_release&&mip){if(in_mi(mx,my,(miw==1?wx+ww-16:miw==2?wx2+ww2-16:miw==3?wcx+wcw-16:miw==4?cpx+cpw-16:miw==5?fmx+fmw-16:miw==6?edx+edw-16:miw==7?six+siw-16:pzx+pzw-16),(miw==1?wy+4:miw==2?wy2+4:miw==3?wcy+4:miw==4?cpy+4:miw==5?fmy+4:miw==6?edy+4:miw==7?siy+4:pzy+4))){
+    if(mb_release&&mip){if(in_mi(mx,my,(miw==1?wx+ww-16:miw==2?wx2+ww2-16:miw==3?wcx+wcw-16:miw==4?cpx+cpw-16:miw==5?fmx+fmw-16:miw==6?edx+edw-16:miw==7?six+siw-16:miw==8?pzx+pzw-16:imx+imw-16),(miw==1?wy+4:miw==2?wy2+4:miw==3?wcy+4:miw==4?cpy+4:miw==5?fmy+4:miw==6?edy+4:miw==7?siy+4:miw==8?pzy+4:imy+4))){
         if(miw==1){am=!am;}else if(miw==2){cm=!cm;}
         else if(miw==3){clm=!clm;}
         else if(miw==4){cpm=!cpm;}
@@ -975,6 +1046,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         else if(miw==6){edm=!edm;}
         else if(miw==7){sim=!sim;}
         else if(miw==8){pzm=!pzm;}
+        else if(miw==9){imm=!imm;}
         redraw=1;}else{redraw=1;}
         mip=0;
     }
@@ -1008,11 +1080,12 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
             else if(edv&&mx>=edx&&mx<edx+edw&&my>=edy&&my<edy+12){bring_to_top(5);dragging=1;dgw=6;dgo=mx-edx;dgoy=my-edy;oedx=edx;oedy=edy;}
             else if(siv&&mx>=six&&mx<six+siw&&my>=siy&&my<siy+12){bring_to_top(6);dragging=1;dgw=7;dgo=mx-six;dgoy=my-siy;osix=six;osiy=siy;}
             else if(pzv&&mx>=pzx&&mx<pzx+pzw&&my>=pzy&&my<pzy+12){bring_to_top(7);dragging=1;dgw=8;dgo=mx-pzx;dgoy=my-pzy;opzx=pzx;opzy=pzy;}
+            else if(imv&&mx>=imx&&mx<imx+imw&&my>=imy&&my<imy+12){bring_to_top(8);dragging=1;dgw=9;dgo=mx-imx;dgoy=my-imy;oimx=imx;oimy=imy;}
         }
         if(dragging){
             int nwx=mx-dgo,nwy=my-dgoy;
-            int nww=dgw==1?ww:dgw==2?ww2:dgw==3?wcw:dgw==4?cpw:dgw==5?fmw:dgw==6?edw:dgw==7?siw:pzw;
-            int nwh=dgw==1?wh:dgw==2?wh2:dgw==3?wch:dgw==4?cph:dgw==5?fmh:dgw==6?edh:dgw==7?sih:pzh;
+            int nww=dgw==1?ww:dgw==2?ww2:dgw==3?wcw:dgw==4?cpw:dgw==5?fmw:dgw==6?edw:dgw==7?siw:dgw==8?pzw:imw;
+            int nwh=dgw==1?wh:dgw==2?wh2:dgw==3?wch:dgw==4?cph:dgw==5?fmh:dgw==6?edh:dgw==7?sih:dgw==8?pzh:imh;
             if(dgw==1&&am) nwh=19; 
             if(dgw==2&&cm) nwh=19; 
             if(dgw==3&&clm) nwh=19; 
@@ -1021,6 +1094,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
             if(dgw==6&&edm) nwh=19;
             if(dgw==7&&sim) nwh=19;
             if(dgw==8&&pzm) nwh=19;
+            if(dgw==9&&imm) nwh=19;
             if(nwx<0) nwx=0;
             if(nwy<0) nwy=0;
             if(nwx+nww>screen_w) nwx=screen_w-nww;
@@ -1042,8 +1116,8 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
                 erase_lfb_drag_box(v, drag_bx, drag_by, drag_bw, drag_bh);
                 drag_active = 0;
             }
-            int*cwx=dgw==1?&wx:dgw==2?&wx2:dgw==3?&wcx:dgw==4?&cpx:dgw==5?&fmx:dgw==6?&edx:dgw==7?&six:&pzx;
-            int*cwy=dgw==1?&wy:dgw==2?&wy2:dgw==3?&wcy:dgw==4?&cpy:dgw==5?&fmy:dgw==6?&edy:dgw==7?&siy:&pzy;
+            int*cwx=dgw==1?&wx:dgw==2?&wx2:dgw==3?&wcx:dgw==4?&cpx:dgw==5?&fmx:dgw==6?&edx:dgw==7?&six:dgw==8?&pzx:&imx;
+            int*cwy=dgw==1?&wy:dgw==2?&wy2:dgw==3?&wcy:dgw==4?&cpy:dgw==5?&fmy:dgw==6?&edy:dgw==7?&siy:dgw==8?&pzy:&imy;
             *cwx = drag_bx;
             *cwy = drag_by;
             dragging = 0;
