@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202006.000)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202006.001)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -125,6 +125,14 @@
    ```bash
    make clean
    ```
+
+---
+
+## 🛠️ Build 2006.001 更新特性
+- **🖥️ 32位真彩色扫描线严密对齐**：彻底修复老式 VBE ROM（如 ATI Mach64 VT2）在 800×600 模式下因缺少原生 32 位支持导致的 $4:3$ 扫描线跨度错位与屏幕斜纹分裂问题；并在控制面板精确标注 `(Not Supported)`。
+- **🖼️ 图片查看器菜单纯净 ASCII 呈现**：修复点阵字库不支持多字节 UTF-8 中文造成的文字乱码与边框溢出问题。
+- **📁 文件管理器顶层点击事件路由修复**：重构窗口焦点与事件派发索引（`z_order[8]`），彻底恢复文件管理器条目的交互与点击。
+- **📝 记事本 60 FPS 选区优化与菜单体系**：引入字符单元格去重缓存，鼠标选中时不再产生冗余全屏重绘；提供完整的 `File`（New / Save / Save As / Quit）与 `Edit`（Cut / Copy / Paste / Select All / Clear）菜单功能，并引入保存失败模态错误弹窗提示。
 
 ---
 
