@@ -28,7 +28,7 @@ static inline void mmio_write32(unsigned int reg, unsigned int val) {
 static inline void wait_fifo(int entries) {
     if (!g_ati_mmio) return;
     int timeout = 100000;
-    while (((mmio_read32(MACH64_FIFO_STAT) & 0xFFFF) <= (0x8000 >> entries)) && --timeout);
+    while (((mmio_read32(MACH64_FIFO_STAT) & 0xFFFF) <= (unsigned int)(0x8000 >> entries)) && --timeout);
 }
 
 void ati_mach64_sync(void) {

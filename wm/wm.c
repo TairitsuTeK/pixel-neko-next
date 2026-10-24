@@ -117,7 +117,6 @@ static int mip=0, miw=0;
 static int resizing=0, rsdir=0;
 static int rsox=0, rsoy=0, rsow=0, rsoh=0;
 static int rs_active=0, rs_bx=0, rs_by=0, rs_bw=0, rs_bh=0;
-static int power_btn_pressed=0;
 static int power_confirm=0;
 static int power_cancel_pressed=0, power_ok_pressed=0;
 

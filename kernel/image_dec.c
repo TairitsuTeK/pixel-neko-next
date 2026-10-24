@@ -430,6 +430,7 @@ static int decode_png(const unsigned char* data, unsigned int size, image_t* out
             width = (int)read_be32(chunk_data);
             height = (int)read_be32(chunk_data + 4);
             bit_depth = chunk_data[8];
+            (void)bit_depth;
             color_type = chunk_data[9];
         } else if (chunk_type == 0x504C5445) { // 'PLTE'
             int entries = chunk_len / 3;

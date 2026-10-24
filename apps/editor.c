@@ -20,8 +20,7 @@ static char save_input[256] = {0};
 static int save_input_len = 0;
 static int save_error = 0;
 
-static char clipboard[16384] = {0};
-static int clipboard_len = 0;
+extern int redraw;
 
 static int sel_start = -1;
 static int sel_end = -1;
