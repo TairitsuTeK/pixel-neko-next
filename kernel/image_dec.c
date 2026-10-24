@@ -107,14 +107,14 @@ static void tinf_build_tree(tinf_tree* t, const unsigned char* lengths, unsigned
 
 // Read bits from input stream
 static unsigned int tinf_getbits(tinf_data* d, int num) {
-    unsigned int val = d->tag;
     while (d->bitcount < num) {
         d->tag |= ((unsigned int)*d->source++) << d->bitcount;
         d->bitcount += 8;
     }
+    unsigned int val = d->tag & ((1U << num) - 1);
     d->tag >>= num;
     d->bitcount -= num;
-    return val & ((1U << num) - 1);
+    return val;
 }
 
 // Decode symbol using Huffman tree
