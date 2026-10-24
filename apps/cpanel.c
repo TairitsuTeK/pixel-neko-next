@@ -200,8 +200,12 @@ void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
             int fg = !valid ? 8 : (i==sel_bpp_idx ? 15 : 0);
             const char* item_txt = bpp_names[i];
             if (!valid) {
-                if (bpp_vals[i] == 24) item_txt = "24-bit (No VRAM)";
-                else if (bpp_vals[i] == 32) item_txt = "32-bit (No VRAM)";
+                unsigned int bytes_per_pixel = (bpp_vals[i] <= 8) ? 1 : ((bpp_vals[i] <= 16) ? 2 : ((bpp_vals[i] <= 24) ? 3 : 4));
+                unsigned int vram_needed = (unsigned int)res_w[sel_res_idx] * (unsigned int)res_h[sel_res_idx] * bytes_per_pixel;
+                unsigned int max_vram = gfx_accel_get_vram_size();
+                int is_no_vram = (max_vram > 0 && vram_needed > max_vram);
+                if (bpp_vals[i] == 24) item_txt = is_no_vram ? "24-bit (No VRAM)" : "24-bit (Not Supported)";
+                else if (bpp_vals[i] == 32) item_txt = is_no_vram ? "32-bit (No VRAM)" : "32-bit (Not Supported)";
             }
             font_draw_text(v, dx+6, iy+3, item_txt, fg);
         }

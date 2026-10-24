@@ -266,8 +266,12 @@ static int try_set_vbe_mode(int mode, int req_w, int req_h, int req_bpp)
     screen_h = (info->y_res > 0) ? info->y_res : req_h;
 
     if (req_bpp == 32) {
-        screen_bpp = 32;
-        screen_pitch = (info->bytes_per_scanline >= screen_w * 4) ? info->bytes_per_scanline : (screen_w * 4);
+        if (info->bytes_per_scanline >= screen_w * 4 || info->bpp == 32) {
+            screen_bpp = 32;
+            screen_pitch = (info->bytes_per_scanline >= screen_w * 4) ? info->bytes_per_scanline : (screen_w * 4);
+        } else {
+            return 0; // Hardware mode is not 32-bit! Prevent scanline skew corruption.
+        }
     } else if (req_bpp == 24) {
         screen_bpp = 24;
         screen_pitch = (info->bytes_per_scanline >= screen_w * 3) ? info->bytes_per_scanline : (screen_w * 3);
@@ -302,9 +306,21 @@ int vbe_find_mode(int req_w, int req_h, int req_bpp)
                 for (int c = 0; c < 256; c++) ((unsigned char*)0x9000)[c] = 0;
                 struct vbe_mode_info* minfo = (struct vbe_mode_info*)0x9000;
                 if (vbe_get_mode_info(mode) == 0x004F) {
-                    if (minfo->x_res == req_w && minfo->y_res == req_h) {
-                        if (minfo->bpp == req_bpp || (req_bpp == 32 && (minfo->bpp == 24 || minfo->bytes_per_scanline >= req_w * 4))) {
-                            if (minfo->attributes & 0x01) {
+                    if (minfo->x_res == req_w && minfo->y_res == req_h && (minfo->attributes & 0x01)) {
+                        if (req_bpp == 32) {
+                            if (minfo->bpp == 32 || minfo->bytes_per_scanline >= req_w * 4) {
+                                return mode;
+                            }
+                        } else if (req_bpp == 24) {
+                            if (minfo->bpp == 24 && minfo->bytes_per_scanline < req_w * 4) {
+                                return mode;
+                            }
+                        } else if (req_bpp == 16 || req_bpp == 15) {
+                            if (minfo->bpp == 16 || minfo->bpp == 15) {
+                                return mode;
+                            }
+                        } else if (req_bpp <= 8) {
+                            if (minfo->bpp <= 8) {
                                 return mode;
                             }
                         }

@@ -163,3 +163,20 @@
    - **彻底解决**：[drivers/gfx_accel.c](drivers/gfx_accel.c) 与 [kernel/kernel.c](kernel/kernel.c) 正确识别 32 位模式别名并传递 `req_bpp`，精准将 `screen_bpp` 锁定为 32 位，消除 "(Not Supported)" 误报，彻底保障 32 位色深度持久有效。
 9. **保护模式 IDTR 隔离跳板 (Real/Protected Mode IDTR Isolation)**：
    - [boot/vbe.asm](boot/vbe.asm)：统一跳板 `common_real_call` 在进入实模式前自动通过 `sidt` 保存保护模式 IDTR，并在切回保护模式后通过 `lidt` 强制恢复，确保 BIOS 中断调用对保护模式中断系统 0 污染。
+
+---
+
+## 九、 Build 2006.001 色深硬件对齐、文件管理器事件修复、记事本菜单补全与高帧率选中文本
+
+1. **真实硬件色深扫描线对齐校验 (Strict Hardware BPP & Pitch Alignment)**：
+   - **根本原因**：ATI Mach64VT2 等老式显卡在 800×600 下 VBE BIOS 最高仅支持 24 位真彩色（模式 0x115，每行 2400 字节，3 字节/像素），未提供 800×600 32 位模式。先前逻辑误允许 24 位模式作为 32 位模式候选，导致硬件以 2400 字节扫描，而软件写入 3200 字节，产生 4:3 扫描线错位与严重花屏斜纹；
+   - **彻底修复**：在 [kernel/kernel.c](kernel/kernel.c) 与 [drivers/gfx_accel.c](drivers/gfx_accel.c) 中严格校验 `scanline >= w * 4 || bpp == 32`，不满足 32 位物理跨度的模式绝不冒充 32 位；Mach64 在 800×600 规范显示 `32-bit (Not Supported)`，防止花屏；
+2. **壁纸选择框字符显示修复 (ASCII Wallpaper Menu Labels)**：
+   - [apps/imageviewer.c](apps/imageviewer.c)：将壁纸下拉菜单项统一规范为标准 ASCII 英文（`1. Fill`, `2. Fit`, `3. Stretch`, `4. Tile`），彻底根除 8x16 点阵字库渲染 UTF-8 中文时字符重叠与超出边框缺陷；
+3. **文件管理器点击事件响应修复 (Z-Order Topmost Event Routing)**：
+   - [wm/wm.c](wm/wm.c)：修复当窗口数量增至 9 个时遗留的 `z_order[7] == 4` 判定，纠正为当前顶层窗口 `z_order[8] == 4`，并在窗口点击激活处直接分发 `fm_update()`，彻底恢复文件管理器条目点击响应；
+4. **记事本选中文本 60 FPS 流畅优化 (Text Selection Debounce & Optimization)**：
+   - [apps/editor.c](apps/editor.c) & [wm/wm.c](wm/wm.c)：为 `editor_drag()` 引入字符单元格级别去重缓存（`last_drag_tx, last_drag_ty`），仅当鼠标跨越字符分界线且选区发生实际改变时才触发单次重绘，消除冗余坐标转换与全屏刷新，达到 60 FPS 丝滑选区手感；
+5. **记事本 File / Edit 菜单栏完整联动与保存失败错误弹窗 (Notepad Menu & Error Dialog)**：
+   - [include/editor.h](include/editor.h) & [apps/editor.c](apps/editor.c)：实现 `editor_save()`、`editor_save_as()`、`editor_has_selection()`、`editor_select_all()`、`editor_clear()`，并在文件写入失败时弹出立体警告对话框 `[!] Save Error` 提示用户检查路径；
+   - [wm/wm.c](wm/wm.c)：菜单栏 `File` 补全 `New`、`Save`、`Save As...`、`Quit (Not Save)`；`Edit` 菜单项完美联动剪贴板与全选。

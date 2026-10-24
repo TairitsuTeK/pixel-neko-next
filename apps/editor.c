@@ -18,6 +18,7 @@ static int is_modified = 0;
 static int save_dialog = 0;
 static char save_input[256] = {0};
 static int save_input_len = 0;
+static int save_error = 0;
 
 static char clipboard[16384] = {0};
 static int clipboard_len = 0;
@@ -33,6 +34,7 @@ void editor_init(void) {
     current_filename[0] = 0;
     is_modified = 0;
     save_dialog = 0;
+    save_error = 0;
     sel_start = -1;
     sel_end = -1;
 }
@@ -59,29 +61,67 @@ static void save_file(const char* name) {
             current_filename[i] = name[i];
             if (!name[i]) break;
         }
+        save_dialog = 0;
+        save_error = 0;
     } else {
         speaker_beep();
+        save_error = 1;
+    }
+}
+
+void editor_save_as(void) {
+    save_dialog = 1;
+    save_error = 0;
+    save_input_len = 0;
+    for(int i = 0; i < 256; i++) {
+        save_input[i] = current_filename[i];
+        if(!current_filename[i]){ save_input_len = i; break; }
+    }
+    if (save_input_len == 0) {
+        save_input[0] = 'C';
+        save_input[1] = ':';
+        save_input[2] = '\\';
+        save_input[3] = 0;
+        save_input_len = 3;
+    }
+}
+
+void editor_save(void) {
+    if (current_filename[0] != 0) {
+        save_file(current_filename);
+    } else {
+        editor_save_as();
     }
 }
 
 void editor_start_save(void) {
-    if (current_filename[0] != 0 && is_modified) {
-        save_file(current_filename);
-    } else {
-        save_dialog = 1;
-        save_input_len = 0;
-        for(int i=0;i<256;i++) {
-            save_input[i]=current_filename[i];
-            if(!current_filename[i]){ save_input_len=i; break; }
-        }
-        if (save_input_len == 0) {
-            save_input[0] = 'C';
-            save_input[1] = ':';
-            save_input[2] = '\\';
-            save_input[3] = 0;
-            save_input_len = 3;
-        }
+    editor_save();
+}
+
+int editor_has_selection(void) {
+    return (sel_start != -1 && sel_end != -1 && sel_start != sel_end);
+}
+
+void editor_select_all(void) {
+    sel_start = 0;
+    sel_end = editor_len;
+    cursor_pos = editor_len;
+}
+
+void editor_clear(void) {
+    if (sel_start == -1 || sel_end == -1) return;
+    int s = sel_start < sel_end ? sel_start : sel_end;
+    int e = sel_start > sel_end ? sel_start : sel_end;
+    if (s == e) return;
+    int len = e - s;
+    for (int i = e; i < editor_len; i++) {
+        editor_buf[i - len] = editor_buf[i];
     }
+    editor_len -= len;
+    cursor_pos = s;
+    sel_start = -1;
+    sel_end = -1;
+    is_modified = 1;
 }
 
 static void delete_selection(void) {
@@ -250,23 +290,63 @@ void editor_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         // cursor
         for (int yy=dy+30; yy<dy+46; yy++) PUT_PIXEL(v, dx + 12 + save_input_len*8, yy, 0);
     }
+
+    // Save Error Modal
+    if (save_error) {
+        int ew = 240, eh = 84;
+        int ex = wx + (ww - ew) / 2;
+        int ey = wy + (wh - eh) / 2;
+        for (int yy = ey; yy < ey + eh; yy++)
+            for (int xx = ex; xx < ex + ew; xx++)
+                if (xx < screen_w && yy < screen_h) PUT_PIXEL(v, xx, yy, 7);
+        for (int xx = ex; xx < ex + ew; xx++) { PUT_PIXEL(v, xx, ey, 15); PUT_PIXEL(v, xx, ey + eh - 1, 0); }
+        for (int yy = ey; yy < ey + eh; yy++) { PUT_PIXEL(v, ex, yy, 15); PUT_PIXEL(v, ex + ew - 1, yy, 0); }
+
+        // Red alert box
+        for (int yy = ey + 10; yy < ey + 30; yy++)
+            for (int xx = ex + 10; xx < ex + 30; xx++) PUT_PIXEL(v, xx, yy, 4);
+        font_draw_text(v, ex + 17, ey + 12, "!", 15);
+
+        font_draw_text(v, ex + 36, ey + 10, "Save Error", 4);
+        font_draw_text(v, ex + 36, ey + 26, "Failed to save file!", 0);
+        font_draw_text(v, ex + 36, ey + 40, "Check disk or path.", 0);
+
+        // OK button
+        int bx = ex + ew / 2 - 25, by = ey + 56;
+        for (int yy = by; yy < by + 18; yy++)
+            for (int xx = bx; xx < bx + 50; xx++) PUT_PIXEL(v, xx, yy, 7);
+        for (int xx = bx; xx < bx + 50; xx++) { PUT_PIXEL(v, xx, by, 15); PUT_PIXEL(v, xx, by + 17, 0); }
+        for (int yy = by; yy < by + 18; yy++) { PUT_PIXEL(v, bx, yy, 15); PUT_PIXEL(v, bx + 49, yy, 0); }
+        font_draw_text(v, bx + 17, by + 2, "OK", 0);
+    }
 }
 
 void editor_handle_key(int key) {
+    if (save_error) {
+        if (key == 27 || key == '\n' || key == ' ') {
+            save_error = 0;
+            redraw = 1;
+        }
+        return;
+    }
     if (save_dialog) {
         if (key == 27) { // ESC
             save_dialog = 0;
+            save_error = 0;
+            redraw = 1;
         } else if (key == '\n') { // Enter
             if (save_input_len > 0) {
                 save_file(save_input);
-                save_dialog = 0;
+                redraw = 1;
             }
         } else if (key == 0x08 && save_input_len > 0) { // Backspace
             save_input_len--;
             save_input[save_input_len] = 0;
+            redraw = 1;
         } else if (key >= 32 && key <= 126 && save_input_len < 255) {
             save_input[save_input_len++] = (char)key;
             save_input[save_input_len] = 0;
+            redraw = 1;
         }
         return;
     }
@@ -274,39 +354,19 @@ void editor_handle_key(int key) {
     int ctrl = keyboard_get_ctrl();
     if (ctrl) {
         if (key == 's' || key == 'S') {
-            if (current_filename[0]) {
-                save_file(current_filename);
-            } else {
-                save_dialog = 1;
-                save_input_len = 0;
-                save_input[0] = 0;
-            }
+            editor_save();
+            redraw = 1;
         } else if (key == 'a' || key == 'A') {
-            sel_start = 0;
-            sel_end = editor_len;
-            cursor_pos = editor_len;
+            editor_select_all();
+            redraw = 1;
         } else if (key == 'c' || key == 'C') {
-            if (sel_start != -1 && sel_end != -1 && sel_start != sel_end) {
-                int s1 = sel_start < sel_end ? sel_start : sel_end;
-                int s2 = sel_start > sel_end ? sel_start : sel_end;
-                clipboard_len = s2 - s1;
-                if (clipboard_len > 16384) clipboard_len = 16384;
-                for (int i=0; i<clipboard_len; i++) clipboard[i] = editor_buf[s1+i];
-            }
+            editor_copy();
         } else if (key == 'x' || key == 'X') {
-            if (sel_start != -1 && sel_end != -1 && sel_start != sel_end) {
-                int s1 = sel_start < sel_end ? sel_start : sel_end;
-                int s2 = sel_start > sel_end ? sel_start : sel_end;
-                clipboard_len = s2 - s1;
-                if (clipboard_len > 16384) clipboard_len = 16384;
-                for (int i=0; i<clipboard_len; i++) clipboard[i] = editor_buf[s1+i];
-                delete_selection();
-            }
+            editor_cut();
+            redraw = 1;
         } else if (key == 'v' || key == 'V') {
-            delete_selection();
-            for (int i=0; i<clipboard_len; i++) {
-                insert_char(clipboard[i]);
-            }
+            editor_paste();
+            redraw = 1;
         }
         return;
     }
@@ -360,7 +420,17 @@ void editor_handle_key(int key) {
 }
 
 void editor_click(int mx, int my, int wx, int wy, int ww, int wh) {
-    (void)ww; (void)wh;
+    if (save_error) {
+        int ew = 240, eh = 84;
+        int ex = wx + (ww - ew) / 2;
+        int ey = wy + (wh - eh) / 2;
+        int bx = ex + ew / 2 - 25, by = ey + 56;
+        if (mx >= bx && mx < bx + 50 && my >= by && my < by + 18) {
+            save_error = 0;
+            redraw = 1;
+        }
+        return;
+    }
     if (save_dialog) return;
     if (my < wy + wh - 24) {
         int tx = scroll_x + (mx - wx) / 8;
@@ -371,17 +441,27 @@ void editor_click(int mx, int my, int wx, int wy, int ww, int wh) {
     }
 }
 
-void editor_drag(int mx, int my, int wx, int wy, int ww, int wh) {
+int editor_drag(int mx, int my, int wx, int wy, int ww, int wh) {
     (void)ww; (void)wh;
-    if (save_dialog) return;
-    if (my < wy + wh - 24 && sel_start != -1) {
+    if (save_error || save_dialog) return 0;
+    if (my >= wy && my < wy + wh - 24 && sel_start != -1) {
         int tx = scroll_x + (mx - wx) / 8;
         int ty = scroll_y + (my - wy) / 16;
+        if (tx < 0) tx = 0;
+        if (ty < 0) ty = 0;
+        static int last_drag_tx = -1, last_drag_ty = -1;
+        if (tx == last_drag_tx && ty == last_drag_ty) return 0;
+        last_drag_tx = tx;
+        last_drag_ty = ty;
         int p = get_pos_from_xy(tx, ty);
         if (tx < 0) p = get_line_start(get_pos_from_xy(0, ty));
-        cursor_pos = p;
-        sel_end = cursor_pos;
+        if (p != sel_end) {
+            cursor_pos = p;
+            sel_end = p;
+            return 1;
+        }
     }
+    return 0;
 }
 
 void editor_release(void) {

@@ -306,14 +306,14 @@ void imageviewer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
     // 4. Wallpaper Dropdown Menu (if open)
     if (g_wp_menu_open) {
-        int mx = g_wp_menu_x, my = g_wp_menu_y, mw = 110, mh = 4 * 18 + 4;
+        int mx = g_wp_menu_x, my = g_wp_menu_y, mw = 105, mh = 4 * 18 + 4;
         for (int y = my; y < my + mh; y++) for (int x = mx; x < mx + mw; x++) PUT_PIXEL(v, x, y, 15);
         for (int x = mx; x < mx + mw; x++) { PUT_PIXEL(v, x, my, 0); PUT_PIXEL(v, x, my + mh - 1, 0); }
         for (int y = my; y < my + mh; y++) { PUT_PIXEL(v, mx, y, 0); PUT_PIXEL(v, mx + mw - 1, y, 0); }
-        font_draw_text(v, mx + 8, my + 3 + 0 * 18, "1. Fill (填充)", 0);
-        font_draw_text(v, mx + 8, my + 3 + 1 * 18, "2. Fit (适应)", 0);
-        font_draw_text(v, mx + 8, my + 3 + 2 * 18, "3. Stretch (拉伸)", 0);
-        font_draw_text(v, mx + 8, my + 3 + 3 * 18, "4. Tile (平铺)", 0);
+        font_draw_text(v, mx + 8, my + 3 + 0 * 18, "1. Fill", 0);
+        font_draw_text(v, mx + 8, my + 3 + 1 * 18, "2. Fit", 0);
+        font_draw_text(v, mx + 8, my + 3 + 2 * 18, "3. Stretch", 0);
+        font_draw_text(v, mx + 8, my + 3 + 3 * 18, "4. Tile", 0);
     }
 
     // 5. OOM / Error Modal Dialog (if triggered)
@@ -354,7 +354,7 @@ void imageviewer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww,
     }
 
     if (g_wp_menu_open) {
-        int px = g_wp_menu_x, py = g_wp_menu_y, pw = 110;
+        int px = g_wp_menu_x, py = g_wp_menu_y, pw = 105;
         if (mx >= px && mx < px + pw && my >= py && my < py + 4 * 18 + 4) {
             int item = (my - py - 2) / 18;
             if (item >= 0 && item < 4 && g_img_loaded) {
