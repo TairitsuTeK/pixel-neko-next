@@ -13,6 +13,7 @@ static int marquee_pos = 0;
 static int marquee_timer = 0;
 static int is_dragging_seek = 0;
 static int is_dragging_vol = 0;
+static char g_last_opened_filepath[256] = {0};
 
 static void my_strcpy(char* d, const char* s) {
     while (*s) *d++ = *s++;
@@ -54,6 +55,7 @@ void audioplayer_open_file(const char* filepath) {
         }
     }
     my_strcpy(current_title, fn);
+    my_strcpy(g_last_opened_filepath, filepath);
     marquee_pos = 0;
     
     // 启动内核音频播放管线
@@ -408,8 +410,9 @@ void audioplayer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww,
                 if (audio_get_state() == AUDIO_STATE_PAUSED) {
                     audio_resume();
                 } else if (audio_get_state() == AUDIO_STATE_STOPPED) {
-                    // 若有加载曲目则重新开播
-                    audio_resume();
+                    if (g_last_opened_filepath[0]) {
+                        audio_play_file(g_last_opened_filepath);
+                    }
                 }
             }
         }
@@ -452,7 +455,7 @@ void audioplayer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww,
     }
 }
 
-void audioplayer_drag(int mx, int my, int wx, int wy, int ww, int wh) {
+int audioplayer_drag(int mx, int my, int wx, int wy, int ww, int wh) {
     (void)my; (void)wy; (void)ww; (void)wh;
     if (is_dragging_seek) {
         int sb_x = wx + 10;
@@ -465,6 +468,7 @@ void audioplayer_drag(int mx, int my, int wx, int wy, int ww, int wh) {
             unsigned int target_sec = (unsigned int)(((unsigned int)offset_x * tot) / (unsigned int)sb_w);
             audio_seek_sec(target_sec);
         }
+        return 1;
     } else if (is_dragging_vol) {
         int vol_bar_x = wx + 50;
         int vol_bar_w = 90;
@@ -473,7 +477,13 @@ void audioplayer_drag(int mx, int my, int wx, int wy, int ww, int wh) {
         if (vx > vol_bar_w) vx = vol_bar_w;
         int target_vol = (vx * 100) / vol_bar_w;
         audio_set_volume(target_vol);
+        return 1;
     }
+    return 0;
+}
+
+int audioplayer_is_dragging(void) {
+    return (is_dragging_seek || is_dragging_vol);
 }
 
 void audioplayer_release(void) {

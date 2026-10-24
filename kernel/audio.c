@@ -417,7 +417,8 @@ void audio_poll(void) {
 
     // 1. 如果内部队列有空间，从当前解码器读取新样本
     if (!g_eof_reached && g_queue_bytes < (PCM_QUEUE_SIZE / 2)) {
-        static unsigned char dec_temp_buf[4096];
+        static unsigned char dec_temp_buf[8192];
+        static int zero_read_count = 0;
         int samples_read = 0;
 
         if (g_active_dec == DEC_WAV) {
@@ -425,17 +426,22 @@ void audio_poll(void) {
         } else if (g_active_dec == DEC_FLAC) {
             samples_read = flac_dec_read_samples(dec_temp_buf, 1024);
         } else if (g_active_dec == DEC_MP3) {
-            samples_read = mp3_dec_read_samples(dec_temp_buf, 1024);
+            samples_read = mp3_dec_read_samples(dec_temp_buf, 1152);
         }
 
         if (samples_read > 0) {
+            zero_read_count = 0;
             audio_feed_raw_pcm(dec_temp_buf, (unsigned int)samples_read,
                                g_audio_info.sample_rate,
                                g_audio_info.channels,
                                g_audio_info.bit_depth,
                                g_audio_info.is_float);
         } else {
-            g_eof_reached = 1;
+            zero_read_count++;
+            if (zero_read_count >= 16) {
+                g_eof_reached = 1;
+                zero_read_count = 0;
+            }
         }
     }
 

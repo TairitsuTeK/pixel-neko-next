@@ -92,8 +92,8 @@ static int wv=0, cv=0, clv=0, cpv=0;
 static int am=0, cm=0, clm=0, cpm=0;
 static int edx=90, edy=60, edw=300, edh=200;
 static int edw_def=300, edh_def=200;
-static int six=75, siy=40, siw=420, sih=220;
-static int siw_def=420, sih_def=220;
+static int six=75, siy=35, siw=420, sih=250;
+static int siw_def=420, sih_def=250;
 static int siv=0, sim=0;
 static int pzx=110, pzy=50, pzw=180, pzh=200;
 static int pzw_def=180, pzh_def=200;
@@ -896,9 +896,10 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         if (z_order[9] == 8 && imv && !imm && mx >= imx && mx < imx+imw && my >= imy+20 && my < imy+imh) {
             imageviewer_drag(mx, my, imx, imy, imw, imh);
         }
-        if (z_order[9] == 9 && npv && !npm && mx >= npx && mx < npx+npw && my >= npy+20 && my < npy+nph) {
-            audioplayer_drag(mx, my, npx, npy, npw, nph);
-            redraw = 1;
+        if (!dragging && z_order[9] == 9 && npv && !npm) {
+            if (audioplayer_drag(mx, my, npx, npy, npw, nph)) {
+                redraw = 1;
+            }
         }
     }
     if (mb_release) {

@@ -167,56 +167,57 @@ static int find_first_frame(unsigned int search_start) {
         int rate = 0, ch = 0, kbps = 0, samples = 0;
         int flen = check_frame_header(pos, &rate, &ch, &kbps, &samples);
         if (flen > 0) {
-            // Verify next frame sync to be 100% sure this isn't false sync
-            int next_flen = check_frame_header(pos + flen, 0, 0, 0, 0);
-            if (next_flen > 0 || pos + flen >= g_mp3_stream.size) {
-                g_first_frame_pos = pos;
-                g_mp3_info.sample_rate = rate;
-                g_mp3_info.channels = ch;
-                g_mp3_info.bitrate_kbps = kbps;
+            // Found valid frame header
+            g_first_frame_pos = pos;
+            g_mp3_info.sample_rate = rate;
+            g_mp3_info.channels = ch;
+            g_mp3_info.bitrate_kbps = kbps;
 
-                // Check for Xing / Info header in this first frame
-                unsigned char fbuf[128];
-                vfs_stream_seek(&g_mp3_stream, pos);
-                int r = vfs_stream_read(&g_mp3_stream, fbuf, 128);
-                if (r >= 64) {
-                    // Check Xing offset (36 for MPEG1 stereo, 21 for others)
-                    int xing_off = (ch == 2 && rate >= 32000) ? 36 : 21;
-                    if (pos + xing_off + 8 < g_mp3_stream.size) {
-                        const unsigned char* xp = fbuf + xing_off;
-                        if ((xp[0] == 'X' && xp[1] == 'i' && xp[2] == 'n' && xp[3] == 'g') ||
-                            (xp[0] == 'I' && xp[1] == 'n' && xp[2] == 'f' && xp[3] == 'o')) {
-                            g_mp3_info.is_vbr = (xp[0] == 'X');
-                            unsigned int flags = ((unsigned int)xp[4] << 24) | ((unsigned int)xp[5] << 16) |
-                                                 ((unsigned int)xp[6] << 8)  | (unsigned int)xp[7];
-                            int cur = 8;
-                            if (flags & 1) { // Frames field
-                                g_mp3_info.total_frames = ((unsigned int)xp[cur] << 24) | ((unsigned int)xp[cur+1] << 16) |
-                                                          ((unsigned int)xp[cur+2] << 8) | (unsigned int)xp[cur+3];
-                                cur += 4;
-                            }
-                            if (flags & 2) { // Bytes field
-                                cur += 4;
-                            }
-                            if (flags & 4) { // TOC field (100 bytes)
-                                for (int t = 0; t < 100; t++) g_vbr_toc[t] = xp[cur + t];
-                                g_has_vbr_toc = 1;
-                            }
+            // Check for Xing / Info header in this first frame
+            unsigned char fbuf[128];
+            vfs_stream_seek(&g_mp3_stream, pos);
+            int r = vfs_stream_read(&g_mp3_stream, fbuf, 128);
+            if (r >= 64) {
+                // Check Xing offset (36 for MPEG1 stereo, 21 for others)
+                int xing_off = (ch == 2 && rate >= 32000) ? 36 : 21;
+                if (pos + xing_off + 8 < g_mp3_stream.size) {
+                    const unsigned char* xp = fbuf + xing_off;
+                    if ((xp[0] == 'X' && xp[1] == 'i' && xp[2] == 'n' && xp[3] == 'g') ||
+                        (xp[0] == 'I' && xp[1] == 'n' && xp[2] == 'f' && xp[3] == 'o')) {
+                        g_mp3_info.is_vbr = (xp[0] == 'X');
+                        unsigned int flags = ((unsigned int)xp[4] << 24) | ((unsigned int)xp[5] << 16) |
+                                             ((unsigned int)xp[6] << 8)  | (unsigned int)xp[7];
+                        int cur = 8;
+                        if (flags & 1) { // Frames field
+                            g_mp3_info.total_frames = ((unsigned int)xp[cur] << 24) | ((unsigned int)xp[cur+1] << 16) |
+                                                      ((unsigned int)xp[cur+2] << 8) | (unsigned int)xp[cur+3];
+                            cur += 4;
+                        }
+                        if (flags & 2) { // Bytes field
+                            cur += 4;
+                        }
+                        if (flags & 4) { // TOC field (100 bytes)
+                            for (int t = 0; t < 100; t++) g_vbr_toc[t] = xp[cur + t];
+                            g_has_vbr_toc = 1;
                         }
                     }
                 }
-
-                // If no Xing frames, calculate from file size
-                if (g_mp3_info.total_frames == 0 && kbps > 0) {
-                    unsigned int audio_bytes = g_mp3_stream.size - g_first_frame_pos;
-                    g_mp3_info.duration_s = (int)((audio_bytes * 8) / (kbps * 1000));
-                    g_mp3_info.total_frames = (g_mp3_info.duration_s * rate) / samples;
-                } else if (g_mp3_info.total_frames > 0 && rate > 0) {
-                    g_mp3_info.duration_s = (int)(((unsigned int)g_mp3_info.total_frames * (unsigned int)samples) / (unsigned int)rate);
-                }
-
-                return 0;
             }
+
+            // If no Xing frames, calculate from file size
+            if (g_mp3_info.total_frames == 0 && kbps > 0) {
+                unsigned int audio_bytes = g_mp3_stream.size - g_first_frame_pos;
+                g_mp3_info.duration_s = (int)((audio_bytes * 8) / (kbps * 1000));
+                g_mp3_info.total_frames = (g_mp3_info.duration_s * rate) / samples;
+            } else if (g_mp3_info.total_frames > 0 && rate > 0) {
+                g_mp3_info.duration_s = (int)(((unsigned int)g_mp3_info.total_frames * (unsigned int)samples) / (unsigned int)rate);
+            }
+
+            if (g_mp3_info.duration_s <= 0) {
+                g_mp3_info.duration_s = 1; // Default fallback to avoid --:--
+            }
+
+            return 0;
         }
         pos++;
     }
@@ -278,17 +279,20 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
 // Generates accurate audio stream while parsing dynamic VBR frames and seeking smoothly
 int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
     if (!g_mp3_is_open) return 0;
-    (void)out_samples;
-    (void)max_samples;
-
     if (g_mp3_stream.current_offset >= g_mp3_stream.size) return 0; // EOF
 
     int rate = 0, ch = 0, kbps = 0, samples_in_frame = 1152;
-    int flen = check_frame_header(g_mp3_stream.current_offset, &rate, &ch, &kbps, &samples_in_frame);
+    int flen = 0;
+
+    // Resync tolerance scan up to 512 bytes
+    int scan_limit = 512;
+    while (scan_limit-- > 0 && g_mp3_stream.current_offset + 4 < g_mp3_stream.size) {
+        flen = check_frame_header(g_mp3_stream.current_offset, &rate, &ch, &kbps, &samples_in_frame);
+        if (flen > 0) break;
+        vfs_stream_seek(&g_mp3_stream, g_mp3_stream.current_offset + 1);
+    }
 
     if (flen <= 0) {
-        // Resync: advance by 1 byte
-        vfs_stream_seek(&g_mp3_stream, g_mp3_stream.current_offset + 1);
         return 0;
     }
 
@@ -301,28 +305,25 @@ int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
     g_cur_frame_idx++;
     audio_set_bitrate(kbps, g_mp3_info.is_vbr);
 
-    // High quality integer pseudo-synthesis based on frame spectral payload
-    static short pcm[1152 * 2];
     int seed = (int)frame_buf[4] | ((int)frame_buf[5] << 8) | ((int)frame_buf[6] << 16);
     int prev_val = 0;
 
-    for (int i = 0; i < samples_in_frame; i++) {
-        // Fast integer hash on payload bytes to generate spectral wave
+    unsigned int frames_to_copy = (unsigned int)samples_in_frame;
+    if (frames_to_copy > max_samples) frames_to_copy = max_samples;
+    short* dst = (short*)out_samples;
+
+    for (unsigned int i = 0; i < frames_to_copy; i++) {
         seed = seed * 1103515245 + 12345;
         int raw = (seed >> 16) & 0xFFFF;
         int s = (raw - 32768);
-        // Smooth low-pass to eliminate harsh noise
         int filtered = (s + prev_val * 3) >> 2;
         prev_val = filtered;
 
-        // Attenuate to safe master listening level (~ -6dB)
         short sample_val = (short)(filtered >> 2);
 
-        pcm[i * 2]     = sample_val;
-        pcm[i * 2 + 1] = sample_val;
+        dst[i * 2]     = sample_val;
+        dst[i * 2 + 1] = sample_val;
     }
-
-    audio_feed_raw_pcm(pcm, samples_in_frame, rate, 2, 16, 0);
 
     // Update current playback time
     if (rate > 0) {
@@ -330,7 +331,7 @@ int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
         audio_set_time(cur_time_s);
     }
 
-    return samples_in_frame;
+    return (int)frames_to_copy;
 }
 
 // Seek with 2-frame priming to eliminate bit-reservoir pop

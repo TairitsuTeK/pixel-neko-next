@@ -400,9 +400,11 @@ int flac_dec_read_samples(void* out_samples, unsigned int max_samples) {
         }
     }
 
-    // Interleave into 16-bit / 24-bit PCM buffer and feed into Audio DSP
-    static short pcm_out[FLAC_MAX_BLOCK_SIZE * 2];
-    for (int i = 0; i < block_size; i++) {
+    unsigned int frames_to_copy = (unsigned int)block_size;
+    if (frames_to_copy > max_samples) frames_to_copy = max_samples;
+    short* dst = (short*)out_samples;
+
+    for (unsigned int i = 0; i < frames_to_copy; i++) {
         int sl = g_subframe_buf[0][i];
         int sr = (channels > 1) ? g_subframe_buf[1][i] : sl;
         if (bps == 24) {
@@ -411,18 +413,16 @@ int flac_dec_read_samples(void* out_samples, unsigned int max_samples) {
         }
         if (sl > 32767) sl = 32767; else if (sl < -32768) sl = -32768;
         if (sr > 32767) sr = 32767; else if (sr < -32768) sr = -32768;
-        pcm_out[i * 2]     = (short)sl;
-        pcm_out[i * 2 + 1] = (short)sr;
+        dst[i * 2]     = (short)sl;
+        dst[i * 2 + 1] = (short)sr;
     }
 
-    audio_feed_raw_pcm(pcm_out, block_size, g_flac_info.sample_rate, 2, 16, 0);
-
-    g_cur_sample_idx += block_size;
+    g_cur_sample_idx += frames_to_copy;
     if (g_flac_info.sample_rate > 0) {
         audio_set_time(g_cur_sample_idx / g_flac_info.sample_rate);
     }
 
-    return block_size;
+    return (int)frames_to_copy;
 }
 
 int flac_dec_seek(unsigned int seconds) {

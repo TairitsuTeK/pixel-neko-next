@@ -6,6 +6,7 @@
 #include "port.h"
 #include "gfx_accel.h"
 #include "vfs.h"
+#include "cmi8738.h"
 #include "version.h"
 
 static int active_tab = 0; // 0: System, 1: PCI Bus, 2: Drives
@@ -39,6 +40,7 @@ static const char* get_vendor_name(unsigned short vendor) {
         case 0x1013: return "Cirrus";
         case 0x121A: return "3dfx";
         case 0x10DE: return "NVIDIA";
+        case 0x13F6: return "C-Media";
         default:     return "Generic";
     }
 }
@@ -248,6 +250,22 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
             font_draw_text(v, lx + 125, ly, "ATI Mach64 GUI Accelerator (Active)", 2);
         } else {
             font_draw_text(v, lx + 125, ly, "Software Rasterizer (VBE Mode)", 8);
+        }
+
+        ly += 16;
+        font_draw_text(v, lx, ly, "Audio Device:", 0);
+        if (cmi8738_is_present()) {
+            font_draw_text(v, lx + 125, ly, "[PCI] C-Media CMI8738", 0);
+        } else {
+            font_draw_text(v, lx + 125, ly, "PC Speaker (No PCI Sound Card)", 8);
+        }
+
+        ly += 16;
+        font_draw_text(v, lx, ly, "Audio Engine:", 0);
+        if (cmi8738_is_present()) {
+            font_draw_text(v, lx + 125, ly, "Kernel DSP Engine (Active)", 2);
+        } else {
+            font_draw_text(v, lx + 125, ly, "Disabled", 8);
         }
 
     } else if (active_tab == 1) {

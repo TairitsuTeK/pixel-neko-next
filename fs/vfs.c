@@ -351,6 +351,8 @@ int vfs_stream_open(const char* path, vfs_stream_t* s) {
 
     s->current_offset = 0;
     s->is_open = 0;
+    s->has_cached_sec = 0;
+    s->cached_sec_lba = 0xFFFFFFFF;
     int i = 0; while (path[i] && i < 255) { s->path[i] = path[i]; i++; }
     s->path[i] = '\0';
 
@@ -385,12 +387,39 @@ int vfs_stream_read(vfs_stream_t* s, void* buf, unsigned int size) {
     if (size == 0) return 0;
 
     if (s->is_cdrom) {
-        iso_file_info_t iso_info;
-        iso_info.extent_lba = s->cdrom_extent_lba;
-        iso_info.size = s->size;
-        int n = iso_read_file(&g_iso_fs[0], &iso_info, s->current_offset, (unsigned char*)buf, size);
-        if (n > 0) s->current_offset += n;
-        return n;
+        unsigned char* dst = (unsigned char*)buf;
+        unsigned int bytes_copied = 0;
+
+        while (bytes_copied < size) {
+            unsigned int cur_pos = s->current_offset + bytes_copied;
+            unsigned int sec_idx = cur_pos / 2048;
+            unsigned int sec_off = cur_pos % 2048;
+            unsigned int lba = s->cdrom_extent_lba + sec_idx;
+
+            if (!s->has_cached_sec || s->cached_sec_lba != lba) {
+                iso_file_info_t iso_info;
+                iso_info.name[0] = '\0';
+                iso_info.is_dir = 0; // 必须为 0！杜绝栈脏数据
+                iso_info.size = s->size;
+                iso_info.extent_lba = s->cdrom_extent_lba;
+
+                int r = iso_read_file(&g_iso_fs[0], &iso_info, sec_idx * 2048, s->sec_cache, 2048);
+                if (r <= 0) break;
+                s->cached_sec_lba = lba;
+                s->has_cached_sec = 1;
+            }
+
+            unsigned int to_copy = 2048 - sec_off;
+            if (to_copy > size - bytes_copied) to_copy = size - bytes_copied;
+
+            for (unsigned int k = 0; k < to_copy; k++) {
+                dst[bytes_copied + k] = s->sec_cache[sec_off + k];
+            }
+            bytes_copied += to_copy;
+        }
+
+        s->current_offset += bytes_copied;
+        return (int)bytes_copied;
     } else {
         int n = fat_read((file_handle_t*)s->fat_handle, (unsigned char*)buf, size);
         if (n > 0) s->current_offset += n;

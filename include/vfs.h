@@ -64,6 +64,9 @@ typedef struct {
     int            is_cdrom;
     unsigned int   cdrom_extent_lba;
     void*          fat_handle;
+    unsigned int   cached_sec_lba;
+    int            has_cached_sec;
+    unsigned char  sec_cache[2048];
 } vfs_stream_t;
 
 int  vfs_stream_open(const char* path, vfs_stream_t* stream);
