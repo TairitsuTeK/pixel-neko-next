@@ -326,7 +326,7 @@ int flac_dec_read_samples(void* out_samples, unsigned int max_samples) {
                 break;
             }
         }
-        if (g_flac_stream.current_offset >= g_flac_stream.size) return 0; // EOF
+        if (g_flac_stream.current_offset >= g_flac_stream.size) return -1; // EOF
     }
 
     // Parse frame header

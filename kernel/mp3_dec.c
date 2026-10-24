@@ -2,6 +2,12 @@
 #include "vfs.h"
 #include "audio.h"
 
+#define MINIMP3_IMPLEMENTATION
+#define MINIMP3_NO_SIMD
+#include "minimp3.h"
+
+static mp3dec_t g_mp3d;
+
 // MP3 (MPEG-1/2 Audio Layer III) Decoder
 
 static vfs_stream_t g_mp3_stream;
@@ -264,6 +270,7 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
 
     g_cur_frame_idx = 0;
     vfs_stream_seek(&g_mp3_stream, g_first_frame_pos);
+    mp3dec_init(&g_mp3d);
     g_mp3_is_open = 1;
 
     if (out_info) {
@@ -275,66 +282,62 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
     return 0;
 }
 
-// Lightweight synthesized PCM frame generator (32-bit fixed-point)
-// Generates accurate audio stream while parsing dynamic VBR frames and seeking smoothly
 int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
-    if (!g_mp3_is_open) return 0;
-    if (g_mp3_stream.current_offset >= g_mp3_stream.size) return 0; // EOF
+    if (!g_mp3_is_open) return -1;
+    if (g_mp3_stream.current_offset >= g_mp3_stream.size) return -1; // EOF reached
 
-    int rate = 0, ch = 0, kbps = 0, samples_in_frame = 1152;
-    int flen = 0;
+    static unsigned char mp3_chunk[4096];
+    unsigned int cur_pos = g_mp3_stream.current_offset;
+    unsigned int rem = g_mp3_stream.size - cur_pos;
+    if (rem == 0) return -1;
 
-    // Resync tolerance scan up to 512 bytes
-    int scan_limit = 512;
-    while (scan_limit-- > 0 && g_mp3_stream.current_offset + 4 < g_mp3_stream.size) {
-        flen = check_frame_header(g_mp3_stream.current_offset, &rate, &ch, &kbps, &samples_in_frame);
-        if (flen > 0) break;
-        vfs_stream_seek(&g_mp3_stream, g_mp3_stream.current_offset + 1);
+    unsigned int to_read = rem < sizeof(mp3_chunk) ? rem : sizeof(mp3_chunk);
+    vfs_stream_seek(&g_mp3_stream, cur_pos);
+    int nread = vfs_stream_read(&g_mp3_stream, mp3_chunk, to_read);
+    if (nread <= 0) return -1;
+
+    mp3dec_frame_info_t info;
+    static short pcm_frame[MINIMP3_MAX_SAMPLES_PER_FRAME]; // 1152 * 2
+    int samples = mp3dec_decode_frame(&g_mp3d, mp3_chunk, nread, pcm_frame, &info);
+
+    if (info.frame_bytes > 0) {
+        vfs_stream_seek(&g_mp3_stream, cur_pos + (unsigned int)info.frame_bytes);
+    } else {
+        // Looking for sync word or skipping padding, advance by 1 byte
+        vfs_stream_seek(&g_mp3_stream, cur_pos + 1);
     }
 
-    if (flen <= 0) {
-        return 0;
+    if (samples > 0) {
+        g_cur_frame_idx++;
+        if (info.bitrate_kbps > 0) {
+            audio_set_bitrate(info.bitrate_kbps, g_mp3_info.is_vbr);
+        }
+        if (info.hz > 0) {
+            unsigned int cur_time_s = (g_cur_frame_idx * (unsigned int)samples) / (unsigned int)info.hz;
+            audio_set_time((int)cur_time_s);
+        }
+
+        unsigned int frames_to_copy = (unsigned int)samples;
+        if (frames_to_copy > max_samples) frames_to_copy = max_samples;
+        short* dst = (short*)out_samples;
+        int ch = info.channels;
+
+        for (unsigned int i = 0; i < frames_to_copy; i++) {
+            if (ch == 1) {
+                dst[i * 2]     = pcm_frame[i];
+                dst[i * 2 + 1] = pcm_frame[i];
+            } else {
+                dst[i * 2]     = pcm_frame[i * 2];
+                dst[i * 2 + 1] = pcm_frame[i * 2 + 1];
+            }
+        }
+
+        return (int)frames_to_copy;
     }
 
-    // Read frame payload
-    static unsigned char frame_buf[2048];
-    if (flen > 2048) flen = 2048;
-    int bytes_read = vfs_stream_read(&g_mp3_stream, frame_buf, flen);
-    if (bytes_read < flen) return 0;
-
-    g_cur_frame_idx++;
-    audio_set_bitrate(kbps, g_mp3_info.is_vbr);
-
-    int seed = (int)frame_buf[4] | ((int)frame_buf[5] << 8) | ((int)frame_buf[6] << 16);
-    int prev_val = 0;
-
-    unsigned int frames_to_copy = (unsigned int)samples_in_frame;
-    if (frames_to_copy > max_samples) frames_to_copy = max_samples;
-    short* dst = (short*)out_samples;
-
-    for (unsigned int i = 0; i < frames_to_copy; i++) {
-        seed = seed * 1103515245 + 12345;
-        int raw = (seed >> 16) & 0xFFFF;
-        int s = (raw - 32768);
-        int filtered = (s + prev_val * 3) >> 2;
-        prev_val = filtered;
-
-        short sample_val = (short)(filtered >> 2);
-
-        dst[i * 2]     = sample_val;
-        dst[i * 2 + 1] = sample_val;
-    }
-
-    // Update current playback time
-    if (rate > 0) {
-        unsigned int cur_time_s = (g_cur_frame_idx * samples_in_frame) / rate;
-        audio_set_time(cur_time_s);
-    }
-
-    return (int)frames_to_copy;
+    return 0; // In sync scan, not EOF
 }
 
-// Seek with 2-frame priming to eliminate bit-reservoir pop
 int mp3_dec_seek(unsigned int seconds) {
     if (!g_mp3_is_open) return -1;
     if (g_mp3_info.duration_s <= 0) return -1;
@@ -342,7 +345,6 @@ int mp3_dec_seek(unsigned int seconds) {
     unsigned int target_offset = g_first_frame_pos;
 
     if (g_has_vbr_toc && g_mp3_info.duration_s > 0) {
-        // Use 100-point Xing TOC table
         int percent = (seconds * 100) / g_mp3_info.duration_s;
         if (percent < 0) percent = 0;
         if (percent > 99) percent = 99;
@@ -354,27 +356,12 @@ int mp3_dec_seek(unsigned int seconds) {
         target_offset = g_first_frame_pos + (seconds * audio_size) / g_mp3_info.duration_s;
     }
 
-    // Align to nearest frame sync header
     if (target_offset >= g_mp3_stream.size) target_offset = g_mp3_stream.size - 2048;
     vfs_stream_seek(&g_mp3_stream, target_offset);
+    mp3dec_init(&g_mp3d);
 
-    // Find valid sync header near target
-    for (int k = 0; k < 4096 && g_mp3_stream.current_offset + 4 < g_mp3_stream.size; k++) {
-        if (check_frame_header(g_mp3_stream.current_offset, 0, 0, 0, 0) > 0) break;
-        vfs_stream_seek(&g_mp3_stream, g_mp3_stream.current_offset + 1);
-    }
-
-    // Silent priming: decode 2 frames quietly without feeding to DMA to prime bit reservoir
-    for (int p = 0; p < 2; p++) {
-        int flen = check_frame_header(g_mp3_stream.current_offset, 0, 0, 0, 0);
-        if (flen > 0) {
-            unsigned char dummy[2048];
-            vfs_stream_read(&g_mp3_stream, dummy, flen < 2048 ? flen : 2048);
-        }
-    }
-
-    g_cur_frame_idx = (seconds * g_mp3_info.sample_rate) / 1152;
-    audio_set_time(seconds);
+    g_cur_frame_idx = (seconds * (unsigned int)g_mp3_info.sample_rate) / 1152;
+    audio_set_time((int)seconds);
 
     return 0;
 }

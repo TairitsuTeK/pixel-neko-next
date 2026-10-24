@@ -462,12 +462,14 @@ void set_resolution(int w, int h, int bpp)
 
 void kernel_main(void)
 {
-    // Ensure CPU L1/L2 Cache is active (clear CD bit 30 and NW bit 29 in CR0)
+    // Ensure CPU L1/L2 Cache is active and x87 FPU is enabled
     asm volatile (
         "movl %%cr0, %%eax\n\t"
-        "andl $0x9FFFFFFF, %%eax\n\t"
+        "andl $0x9FFFFFF3, %%eax\n\t" // Clear CD (30), NW (29), EM (2), TS (3)
+        "orl  $0x02, %%eax\n\t"       // Set MP (1)
         "movl %%eax, %%cr0\n\t"
         "wbinvd\n\t"
+        "fninit\n\t"                  // Initialize x87 FPU
         : : : "eax"
     );
 

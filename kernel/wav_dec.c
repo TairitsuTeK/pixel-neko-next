@@ -114,7 +114,7 @@ int wav_dec_read_samples(void* out_samples, unsigned int max_samples) {
 
     unsigned int bytes_to_read = max_samples * g_wav_bytes_per_frame;
     unsigned int cur_data_bytes = g_wav_stream.current_offset - g_wav_info.data_offset;
-    if (cur_data_bytes >= g_wav_info.data_size) return 0; // EOF
+    if (cur_data_bytes >= g_wav_info.data_size) return -1; // EOF
 
     unsigned int remaining_bytes = g_wav_info.data_size - cur_data_bytes;
     if (bytes_to_read > remaining_bytes) bytes_to_read = remaining_bytes;
