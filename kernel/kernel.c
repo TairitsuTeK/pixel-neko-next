@@ -225,7 +225,7 @@ void copy_fullscreen_to_lfb(const unsigned char* s_buf)
     }
 }
 
-static int try_set_vbe_mode(int mode, int req_w, int req_h)
+static int try_set_vbe_mode(int mode, int req_w, int req_h, int req_bpp)
 {
     // Clear the 256-byte VBE buffer
     for (int i = 0; i < 256; i++) ((unsigned char*)0x9000)[i] = 0;
@@ -264,9 +264,24 @@ static int try_set_vbe_mode(int mode, int req_w, int req_h)
     lfb = (unsigned char*)found_lfb;
     screen_w = (info->x_res > 0) ? info->x_res : req_w;
     screen_h = (info->y_res > 0) ? info->y_res : req_h;
-    screen_bpp = (info->bpp > 0) ? info->bpp : 16;
-    int bpp_bytes = (screen_bpp <= 8) ? 1 : ((screen_bpp <= 16) ? 2 : ((screen_bpp <= 24) ? 3 : 4));
-    screen_pitch = (info->bytes_per_scanline > 0) ? info->bytes_per_scanline : (screen_w * bpp_bytes);
+
+    if (req_bpp == 32) {
+        screen_bpp = 32;
+        screen_pitch = (info->bytes_per_scanline >= screen_w * 4) ? info->bytes_per_scanline : (screen_w * 4);
+    } else if (req_bpp == 24) {
+        screen_bpp = 24;
+        screen_pitch = (info->bytes_per_scanline >= screen_w * 3) ? info->bytes_per_scanline : (screen_w * 3);
+    } else if (req_bpp == 16 || req_bpp == 15) {
+        screen_bpp = (info->bpp == 15) ? 15 : 16;
+        screen_pitch = (info->bytes_per_scanline >= screen_w * 2) ? info->bytes_per_scanline : (screen_w * 2);
+    } else if (req_bpp <= 8) {
+        screen_bpp = 8;
+        screen_pitch = (info->bytes_per_scanline >= screen_w) ? info->bytes_per_scanline : screen_w;
+    } else {
+        screen_bpp = (info->bpp > 0) ? info->bpp : 16;
+        int bpp_bytes = (screen_bpp <= 8) ? 1 : ((screen_bpp <= 16) ? 2 : ((screen_bpp <= 24) ? 3 : 4));
+        screen_pitch = (info->bytes_per_scanline > 0) ? info->bytes_per_scanline : (screen_w * bpp_bytes);
+    }
     
     set_vga_palette_full(info, (screen_bpp > 8));
     extern void gfx_accel_set_mode(int w, int h, int bpp);
@@ -287,25 +302,15 @@ int vbe_find_mode(int req_w, int req_h, int req_bpp)
                 for (int c = 0; c < 256; c++) ((unsigned char*)0x9000)[c] = 0;
                 struct vbe_mode_info* minfo = (struct vbe_mode_info*)0x9000;
                 if (vbe_get_mode_info(mode) == 0x004F) {
-                    if (minfo->x_res == req_w && minfo->y_res == req_h && minfo->bpp == req_bpp) {
-                        if (minfo->attributes & 0x01) {
-                            return mode;
+                    if (minfo->x_res == req_w && minfo->y_res == req_h) {
+                        if (minfo->bpp == req_bpp || (req_bpp == 32 && (minfo->bpp == 24 || minfo->bytes_per_scanline >= req_w * 4))) {
+                            if (minfo->attributes & 0x01) {
+                                return mode;
+                            }
                         }
                     }
                 }
             }
-        }
-    }
-    return 0;
-}
-
-static int vbe_check_cand(int mode, int w, int h, int bpp)
-{
-    for (int c = 0; c < 256; c++) ((unsigned char*)0x9000)[c] = 0;
-    struct vbe_mode_info* minfo = (struct vbe_mode_info*)0x9000;
-    if (vbe_get_mode_info(mode) == 0x004F) {
-        if (minfo->x_res == w && minfo->y_res == h && minfo->bpp == bpp && (minfo->attributes & 0x01)) {
-            return 1;
         }
     }
     return 0;
@@ -316,28 +321,7 @@ int vbe_supports_mode(int w, int h, int bpp)
     if (w <= 0 || h <= 0 || bpp <= 0) return 0;
     if (w == 320 && h == 200 && bpp == 8) return 1;
     extern int gfx_accel_supports_bpp(int w, int h, int bpp);
-    if (!gfx_accel_supports_bpp(w, h, bpp)) return 0;
-
-    if (vbe_find_mode(w, h, bpp) > 0) return 1;
-
-    if (bpp == 32) {
-        if (w == 800 && h == 600) return (vbe_check_cand(0x122, w, h, 32) || vbe_check_cand(0x143, w, h, 32) || vbe_check_cand(0x138, w, h, 32));
-        if (w == 640 && h == 480) return (vbe_check_cand(0x121, w, h, 32) || vbe_check_cand(0x140, w, h, 32) || vbe_check_cand(0x10F, w, h, 32));
-        if (w == 1024 && h == 768) return (vbe_check_cand(0x124, w, h, 32) || vbe_check_cand(0x145, w, h, 32) || vbe_check_cand(0x139, w, h, 32));
-    } else if (bpp == 24) {
-        if (w == 800 && h == 600) return vbe_check_cand(0x115, w, h, 24);
-        if (w == 640 && h == 480) return vbe_check_cand(0x112, w, h, 24);
-        if (w == 1024 && h == 768) return vbe_check_cand(0x118, w, h, 24);
-    } else if (bpp == 16) {
-        if (w == 800 && h == 600) return (vbe_check_cand(0x114, w, h, 16) || vbe_check_cand(0x113, w, h, 15));
-        if (w == 640 && h == 480) return (vbe_check_cand(0x111, w, h, 16) || vbe_check_cand(0x110, w, h, 15));
-        if (w == 1024 && h == 768) return (vbe_check_cand(0x117, w, h, 16) || vbe_check_cand(0x116, w, h, 15));
-    } else if (bpp == 8) {
-        if (w == 800 && h == 600) return vbe_check_cand(0x103, w, h, 8);
-        if (w == 640 && h == 480) return vbe_check_cand(0x101, w, h, 8);
-        if (w == 1024 && h == 768) return vbe_check_cand(0x105, w, h, 8);
-    }
-    return 0;
+    return gfx_accel_supports_bpp(w, h, bpp);
 }
 
 void set_resolution(int w, int h, int bpp)
@@ -377,7 +361,7 @@ void set_resolution(int w, int h, int bpp)
     
     if (bpp == 32) {
         int m = vbe_find_mode(w, h, 32);
-        if (m > 0 && try_set_vbe_mode(m, w, h)) return;
+        if (m > 0 && try_set_vbe_mode(m, w, h, 32)) return;
         if (w == 800 && h == 600) {
             candidates[0] = 0x122; // ATI Mach64 800x600 32bpp
             candidates[1] = 0x143; // Bochs/SeaBIOS 800x600 32bpp
@@ -396,7 +380,7 @@ void set_resolution(int w, int h, int bpp)
         }
     } else if (bpp == 24) {
         int m = vbe_find_mode(w, h, 24);
-        if (m > 0 && try_set_vbe_mode(m, w, h)) return;
+        if (m > 0 && try_set_vbe_mode(m, w, h, 24)) return;
         if (w == 800 && h == 600) {
             candidates[0] = 0x115; // 800x600 24bpp
             num_candidates = 1;
@@ -435,16 +419,16 @@ void set_resolution(int w, int h, int bpp)
     }
     
     for (int i = 0; i < num_candidates; i++) {
-        if (try_set_vbe_mode(candidates[i], w, h)) {
+        if (try_set_vbe_mode(candidates[i], w, h, bpp)) {
             return;
         }
     }
 
 
     // Fallback: If requested mode failed, try 800x600 16bpp then 640x480 16bpp
-    if (try_set_vbe_mode(0x114, 800, 600)) return;
-    if (try_set_vbe_mode(0x111, 640, 480)) return;
-    if (try_set_vbe_mode(0x110, 640, 480)) return;
+    if (try_set_vbe_mode(0x114, 800, 600, 16)) return;
+    if (try_set_vbe_mode(0x111, 640, 480, 16)) return;
+    if (try_set_vbe_mode(0x110, 640, 480, 15)) return;
 
     // Fallback: Standard VGA 320x200 8-bit mode 0x13
     bios_set_mode(0x13);

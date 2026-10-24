@@ -10,7 +10,6 @@ static int slider_val = 2;
 int revert_timer = 0;
 static int prev_w = 800, prev_h = 600, prev_bpp = 16;
 extern void set_resolution(int w, int h, int bpp);
-extern int vbe_supports_mode(int w, int h, int bpp);
 extern volatile int global_tick;
 extern int redraw;
 
@@ -194,15 +193,15 @@ void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
         for(int y=dy; y<dy+dh; y++) { PUT_PIXEL(v, dx, y, 0); PUT_PIXEL(v, dx+dw-1, y, 0); }
         for (int i = 0; i < 4; i++) {
             int iy = dy + 1 + i * 18;
-            int valid = vbe_supports_mode(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[i]);
+            int valid = gfx_accel_supports_bpp(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[i]);
             if (i == sel_bpp_idx && valid) {
                 for(int y=iy; y<iy+18; y++) for(int x=dx+1; x<dx+dw-1; x++) PUT_PIXEL(v, x, y, 9);
             }
             int fg = !valid ? 8 : (i==sel_bpp_idx ? 15 : 0);
             const char* item_txt = bpp_names[i];
             if (!valid) {
-                if (bpp_vals[i] == 24) item_txt = "24-bit (Not Supported)";
-                else if (bpp_vals[i] == 32) item_txt = "32-bit (Not Supported)";
+                if (bpp_vals[i] == 24) item_txt = "24-bit (No VRAM)";
+                else if (bpp_vals[i] == 32) item_txt = "32-bit (No VRAM)";
             }
             font_draw_text(v, dx+6, iy+3, item_txt, fg);
         }
@@ -221,9 +220,9 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
             if (idx >= 0 && idx < 4) {
                 sel_res_idx = idx;
                 // If current selected bpp is not valid for new resolution, fall back
-                if (!vbe_supports_mode(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[sel_bpp_idx])) {
+                if (!gfx_accel_supports_bpp(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[sel_bpp_idx])) {
                     sel_bpp_idx = 1; // Try 16-bit
-                    if (!vbe_supports_mode(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[sel_bpp_idx])) {
+                    if (!gfx_accel_supports_bpp(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[sel_bpp_idx])) {
                         sel_bpp_idx = 0; // Fallback to 8-bit
                     }
                 }
@@ -239,7 +238,7 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
         if (mx >= dx && mx < dx+dw && my >= dy && my < dy + 4*18) {
             int idx = (my - dy) / 18;
             if (idx >= 0 && idx < 4) {
-                if (vbe_supports_mode(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[idx])) {
+                if (gfx_accel_supports_bpp(res_w[sel_res_idx], res_h[sel_res_idx], bpp_vals[idx])) {
                     sel_bpp_idx = idx;
                 }
             }
@@ -333,7 +332,7 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
         int th = res_h[sel_res_idx];
         int tb = bpp_vals[sel_bpp_idx];
 
-        if (vbe_supports_mode(tw, th, tb)) {
+        if (gfx_accel_supports_bpp(tw, th, tb)) {
             prev_w = screen_w; prev_h = screen_h; prev_bpp = screen_bpp;
             set_resolution(tw, th, tb);
             gfx_accel_set_mode(tw, th, tb);
@@ -350,7 +349,7 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
         int tb = bpp_vals[sel_bpp_idx];
 
         if (tw != screen_w || th != screen_h || tb != screen_bpp) {
-            if (vbe_supports_mode(tw, th, tb)) {
+            if (gfx_accel_supports_bpp(tw, th, tb)) {
                 prev_w = screen_w; prev_h = screen_h; prev_bpp = screen_bpp;
                 set_resolution(tw, th, tb);
                 gfx_accel_set_mode(tw, th, tb);

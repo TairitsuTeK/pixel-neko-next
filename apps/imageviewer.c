@@ -65,10 +65,10 @@ static void my_int_to_str(int n, char* buf) {
 // Generate an ultra-crisp 4K procedural test pattern in memory if no file loaded
 static void generate_sample_pattern(void) {
     image_free(&g_img);
-    int w = 1920, h = 1080; // Crisp full-HD sample (fits nicely in memory, tests all zoom/pan)
+    int w = 640, h = 480; // Fast and light sample pattern (1.2MB RAM)
     unsigned int pages = ((unsigned int)w * h * 4 + 4095) / 4096;
     if (pages > pmm_get_free_pages()) {
-        w = 800; h = 600;
+        w = 320; h = 240;
         pages = ((unsigned int)w * h * 4 + 4095) / 4096;
     }
     unsigned int* pix = (unsigned int*)pmm_alloc_pages(pages);
@@ -81,7 +81,7 @@ static void generate_sample_pattern(void) {
             unsigned char g = (unsigned char)((y * 255) / h);
             unsigned char b = (unsigned char)(((w - x) * 200) / w + ((h - y) * 55) / h);
             // Checkerboard overlay
-            if (((x / 64) ^ (y / 64)) & 1) {
+            if (((x / 32) ^ (y / 32)) & 1) {
                 r = (r >> 1) + 64;
                 g = (g >> 1) + 64;
                 b = (b >> 1) + 64;
@@ -107,7 +107,10 @@ void imageviewer_init(void) {
     g_is_panning = 0;
     g_wp_menu_open = 0;
     g_error_modal = 0;
+}
 
+void imageviewer_show_sample(void) {
+    imageviewer_init();
     if (!g_img_loaded) {
         generate_sample_pattern();
     }

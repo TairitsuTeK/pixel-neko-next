@@ -116,6 +116,7 @@ static int mip=0, miw=0;
 
 static int resizing=0, rsdir=0;
 static int rsox=0, rsoy=0, rsow=0, rsoh=0;
+static int rs_active=0, rs_bx=0, rs_by=0, rs_bw=0, rs_bh=0;
 static int power_btn_pressed=0;
 static int power_confirm=0;
 static int power_cancel_pressed=0, power_ok_pressed=0;
@@ -703,7 +704,7 @@ static void open_icon_app(int clicked_icon) {
         pzv = 1; pzm = 0; pzw = pzw_def; pzh = pzh_def; puzzle_init(); show_opened("Puzzle");
     }
     if(clicked_icon == 8) {
-        imv = 1; imm = 0; imw = imw_def; imh = imh_def; imageviewer_init(); show_opened("Viewer");
+        imv = 1; imm = 0; imw = imw_def; imh = imh_def; imageviewer_show_sample(); show_opened("Viewer");
     }
     bring_to_top(clicked_icon);
     last_click_icon = -1;
@@ -973,30 +974,59 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     }
 
     if (resizing) {
-        if (dgw == 2) { wcw = mx - wcx; wch = my - wcy; if(wcw<100)wcw=100; if(wch<100)wch=100; redraw=1; }
-        if (dgw == 3) { cpw = mx - cpx; cph = my - cpy; if(cpw<200)cpw=200; if(cph<150)cph=150; redraw=1; }
-        if (dgw == 4) { fmw = mx - fmx; fmh = my - fmy; if(fmw<200)fmw=200; if(fmh<150)fmh=150; redraw=1; }
-        if (dgw == 5) { edw = mx - edx; edh = my - edy; if(edw<200)edw=200; if(edh<150)edh=150; redraw=1; }
-        if (dgw == 9) { imw = mx - imx; imh = my - imy; if(imw<220)imw=220; if(imh<160)imh=160; redraw=1; }
-    }
-    
-    if (mb_release) {
-        if (resizing) { resizing=0; dgw=0; redraw=1; }
+        if (mb) {
+            int nw = 0, nh = 0, rx = 0, ry = 0;
+            if (dgw == 2) { nw = mx - wcx; nh = my - wcy; if(nw<100)nw=100; if(nh<100)nh=100; rx = wcx; ry = wcy; }
+            else if (dgw == 3) { nw = mx - cpx; nh = my - cpy; if(nw<200)nw=200; if(nh<150)nh=150; rx = cpx; ry = cpy; }
+            else if (dgw == 4) { nw = mx - fmx; nh = my - fmy; if(nw<200)nw=200; if(nh<150)nh=150; rx = fmx; ry = fmy; }
+            else if (dgw == 5) { nw = mx - edx; nh = my - edy; if(nw<200)nw=200; if(nh<150)nh=150; rx = edx; ry = edy; }
+            else if (dgw == 9) { nw = mx - imx; nh = my - imy; if(nw<220)nw=220; if(nh<160)nh=160; rx = imx; ry = imy; }
+            
+            if (rx + nw > screen_w) nw = screen_w - rx;
+            if (ry + nh > screen_h) nh = screen_h - ry;
+
+            if (!rs_active) {
+                rs_active = 1;
+                rs_bx = rx; rs_by = ry; rs_bw = nw; rs_bh = nh;
+                draw_lfb_drag_box(rs_bx, rs_by, rs_bw, rs_bh);
+            } else if (nw != rs_bw || nh != rs_bh) {
+                erase_lfb_drag_box(v, rs_bx, rs_by, rs_bw, rs_bh);
+                rs_bw = nw; rs_bh = nh;
+                draw_lfb_drag_box(rs_bx, rs_by, rs_bw, rs_bh);
+            }
+        } else {
+            if (rs_active) {
+                erase_lfb_drag_box(v, rs_bx, rs_by, rs_bw, rs_bh);
+                rs_active = 0;
+            }
+            if (dgw == 2) { wcw = rs_bw; wch = rs_bh; }
+            else if (dgw == 3) { cpw = rs_bw; cph = rs_bh; }
+            else if (dgw == 4) { fmw = rs_bw; fmh = rs_bh; }
+            else if (dgw == 5) { edw = rs_bw; edh = rs_bh; }
+            else if (dgw == 9) { imw = rs_bw; imh = rs_bh; }
+            resizing = 0;
+            dgw = 0;
+            redraw = 1;
+            need_mr = 1;
+        }
+        return;
     }
     
     if (mb_press && !dragging && !okp && !clp && !mip && !resizing) {
         int hit_window = 0;
         for (int i=8; i>=0; i--) {
             int id = z_order[i];
-            if (id == 8 && imv && !imm && rs_dir(mx,my,imx,imy,imw,imh)){resizing=1;dgw=9;bring_to_top(8);redraw=1;break;}
+            if (id == 8 && imv && !imm && rs_dir(mx,my,imx,imy,imw,imh)){resizing=1;dgw=9;rs_active=0;bring_to_top(8);break;}
             if (id == 8 && imv && !imm && mx>=imx && mx<imx+imw && my>=imy && my<imy+imh) { hit_window=1; bring_to_top(8); imageviewer_click(v, mx, my, imx, imy, imw, imh); redraw=1; break; }
             if (id == 7 && pzv && !pzm && mx>=pzx && mx<pzx+pzw && my>=pzy && my<pzy+pzh) { hit_window=1; bring_to_top(7); puzzle_click(mx, my, pzx, pzy, pzw, pzh); redraw=1; break; }
             if (id == 6 && siv && !sim && mx>=six && mx<six+siw && my>=siy && my<siy+sih) { hit_window=1; bring_to_top(6); sysinfo_click(mx, my, six, siy, siw, sih); redraw=1; break; }
-            if (id == 5 && edv && !edm && rs_dir(mx,my,edx,edy,edw,edh)){resizing=1;dgw=5;bring_to_top(5);redraw=1;break;}
-            if (id == 4 && fmv && !fmm && rs_dir(mx,my,fmx,fmy,fmw,fmh)){resizing=1;dgw=4;bring_to_top(4);redraw=1;break;}
+            if (id == 5 && edv && !edm && rs_dir(mx,my,edx,edy,edw,edh)){resizing=1;dgw=5;rs_active=0;bring_to_top(5);break;}
             if (id == 5 && edv && !edm && mx>=edx && mx<edx+edw && my>=edy && my<edy+edh) { hit_window=1; bring_to_top(5); editor_click(mx, my, edx, edy+20, edw, edh-20); redraw=1; break; }
+            if (id == 4 && fmv && !fmm && rs_dir(mx,my,fmx,fmy,fmw,fmh)){resizing=1;dgw=4;rs_active=0;bring_to_top(4);break;}
             if (id == 4 && fmv && !fmm && mx>=fmx && mx<fmx+fmw && my>=fmy && my<fmy+fmh) { hit_window=1; bring_to_top(4); redraw=1; break; }
+            if (id == 3 && cpv && !cpm && rs_dir(mx,my,cpx,cpy,cpw,cph)){resizing=1;dgw=3;rs_active=0;bring_to_top(3);break;}
             if (id == 3 && cpv && !cpm && mx>=cpx && mx<cpx+cpw && my>=cpy && my<cpy+cph) { hit_window=1; bring_to_top(3); redraw=1; break; }
+            if (id == 2 && clv && !clm && rs_dir(mx,my,wcx,wcy,wcw,wch)){resizing=1;dgw=2;rs_active=0;bring_to_top(2);break;}
             if (id == 2 && clv && !clm && mx>=wcx && mx<wcx+wcw && my>=wcy && my<wcy+wch) { hit_window=1; bring_to_top(2); redraw=1; break; }
             if (id == 1 && cv && !cm && mx>=wx2 && mx<wx2+ww2 && my>=wy2 && my<wy2+wh2) { hit_window=1; bring_to_top(1); redraw=1; break; }
             if (id == 0 && wv && !am && mx>=wx && mx<wx+ww && my>=wy && my<wy+wh) { hit_window=1; bring_to_top(0); redraw=1; break; }

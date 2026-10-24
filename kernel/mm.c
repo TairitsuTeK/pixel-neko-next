@@ -17,6 +17,8 @@ struct multiboot_mmap_entry {
     unsigned int type;
 } __attribute__((packed));
 
+static unsigned int min_free_page = 0;
+
 void pmm_init(void) {
     // Initialize bitmap: mark all as used initially
     for (unsigned int i = 0; i < sizeof(pmm_bitmap); i++) {
@@ -75,10 +77,18 @@ void pmm_init(void) {
         }
     }
     
-    // Reserve first 4MB for safety (kernel, vbe, etc)
-    for (unsigned int p = 0; p < (0x400000 / PAGE_SIZE); p++) {
+extern unsigned char __kernel_end;
+
+    // Reserve low memory and entire kernel image (code, rodata, data, BSS, stack)
+    // plus safety margin for BIOS/VBE/BDA/DMA (at least 8MB)
+    unsigned int kend = (unsigned int)&__kernel_end;
+    if (kend < 0x800000) kend = 0x800000;
+    unsigned int reserve_pages = (kend + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (unsigned int p = 0; p < reserve_pages && p < MAX_PAGES; p++) {
         pmm_bitmap[p / 8] |= (1 << (p % 8));
     }
+    min_free_page = reserve_pages;
+    next_free_page = reserve_pages;
 }
 
 void* pmm_alloc_page(void) {
@@ -96,7 +106,7 @@ void* pmm_alloc_page(void) {
 
 void pmm_free_page(void* ptr) {
     unsigned int p = (unsigned int)ptr / PAGE_SIZE;
-    if (p < MAX_PAGES) {
+    if (p < MAX_PAGES && p >= min_free_page) {
         pmm_bitmap[p / 8] &= ~(1 << (p % 8));
         if (p < next_free_page) {
             next_free_page = p;
@@ -109,7 +119,7 @@ void* pmm_alloc_pages(unsigned int count) {
     unsigned int consecutive = 0;
     unsigned int start_page = 0;
 
-    for (unsigned int i = 0; i < MAX_PAGES; i++) {
+    for (unsigned int i = next_free_page; i < MAX_PAGES; i++) {
         if (consecutive == 0 && pmm_bitmap[i / 8] == 0xFF) {
             i = (i | 7);
             continue;
@@ -133,6 +143,7 @@ void* pmm_alloc_pages(unsigned int count) {
 void pmm_free_pages(void* ptr, unsigned int count) {
     if (!ptr || count == 0) return;
     unsigned int start = (unsigned int)ptr / PAGE_SIZE;
+    if (start < min_free_page) return;
     for (unsigned int p = start; p < start + count && p < MAX_PAGES; p++) {
         pmm_bitmap[p / 8] &= ~(1 << (p % 8));
     }
@@ -145,7 +156,7 @@ unsigned int pmm_get_free_pages(void) {
     unsigned int free_count = 0;
     unsigned int max_p = usable_ram_mb * (1024 * 1024 / PAGE_SIZE);
     if (max_p == 0 || max_p > MAX_PAGES) max_p = MAX_PAGES;
-    for (unsigned int i = 0; i < max_p; i++) {
+    for (unsigned int i = min_free_page; i < max_p; i++) {
         if ((pmm_bitmap[i / 8] & (1 << (i % 8))) == 0) {
             free_count++;
         }

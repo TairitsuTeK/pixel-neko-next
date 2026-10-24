@@ -12,96 +12,57 @@ vbe_set_mode:
     push ebp
     mov ebp, esp
     pushad
-    
     mov bx, [ebp+8]
     mov [0x7FF0], bx
     mov dword [0x7FF4], 0x4F02
-    mov [0x7FFC], esp
-    
-    mov esi, payload_start
-    mov edi, 0x8000
-    mov ecx, payload_end - payload_start
-    rep movsb
-    
-    jmp 0x18:0x8000
+    jmp common_real_call
 
 vbe_get_mode_info:
     push ebp
     mov ebp, esp
     pushad
-    
     mov cx, [ebp+8]
     mov [0x7FF0], cx
     mov dword [0x7FF4], 0x4F01
-    mov [0x7FFC], esp
-    
-    mov esi, payload_start
-    mov edi, 0x8000
-    mov ecx, payload_end - payload_start
-    rep movsb
-    
-    jmp 0x18:0x8000
+    jmp common_real_call
 
 vbe_get_controller_info:
     push ebp
     mov ebp, esp
     pushad
-    
     mov dword [0x7FF4], 0x4F00
-    mov [0x7FFC], esp
-    
-    mov esi, payload_start
-    mov edi, 0x8000
-    mov ecx, payload_end - payload_start
-    rep movsb
-    
-    jmp 0x18:0x8000
+    jmp common_real_call
 
 bios_set_mode:
     push ebp
     mov ebp, esp
     pushad
-    
     mov ax, [ebp+8]
     mov [0x7FF0], ax
     mov dword [0x7FF4], 0x0000
-    mov [0x7FFC], esp
-    
-    mov esi, payload_start
-    mov edi, 0x8000
-    mov ecx, payload_end - payload_start
-    rep movsb
-    
-    jmp 0x18:0x8000
+    jmp common_real_call
 
 bios_shutdown:
     push ebp
     mov ebp, esp
     pushad
-    
     mov dword [0x7FF4], 0x5307
-    mov [0x7FFC], esp
-    
-    mov esi, payload_start
-    mov edi, 0x8000
-    mov ecx, payload_end - payload_start
-    rep movsb
-    
-    jmp 0x18:0x8000
+    jmp common_real_call
 
 bios_set_dac_ramp:
     push ebp
     mov ebp, esp
     pushad
-    
     mov dword [0x7FF4], 0x4F09
+    jmp common_real_call
+
+common_real_call:
+    sidt [0x7FE0]
     mov [0x7FFC], esp
-    
     mov esi, payload_start
     mov edi, 0x8000
     mov ecx, payload_end - payload_start
     rep movsb
-    
     jmp 0x18:0x8000
 
 align 4
@@ -278,6 +239,7 @@ pm32:
     mov ss, ax
     
     mov esp, [0x7FFC]
+    lidt [0x7FE0]
     
     popad
     movzx eax, word [0x7FF8]

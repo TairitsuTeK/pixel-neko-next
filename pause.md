@@ -152,3 +152,14 @@
 5. **Live 桌面壁纸引擎与双向联动 (Live Wallpaper Engine)**：
    - [include/wallpaper.h](include/wallpaper.h) & [kernel/wallpaper.c](kernel/wallpaper.c)：实现 Windows 规范的 4 种经典壁纸排布模式：**填充 (Fill)**、**适应 (Fit)**、**拉伸 (Stretch)**、**平铺 (Tile)**，纯整数缩放运算；
    - 双向设置入口：既可在图片查看器工具栏一键设为当前 Live 壁纸，也可在控制面板中实时切换壁纸对齐样式。
+6. **内核物理内存保护与 BSS 防越界根治 (PMM Kernel Protection & BSS Safety)**：
+   - **根本原因**：`link_grub.ld` 中内核映像与 BSS（包含 3MB backbuffer、g_vfs_drives、pci_list 等）实际延伸至约 4.5MB 处，原 `pmm_init()` 仅保留了 4MB。冷启动调用样本图生成时，动态分配从 4MB 处覆写了内核 BSS，导致关机弹窗误触发、所有窗口最小化折叠、磁盘容量全部错乱为 4063.76GB、PCI 列表丢失；
+   - **彻底解决**：在 [kernel/mm.c](kernel/mm.c) 引入链接器导出符号 `__kernel_end`，保底保留 8MB 物理内存并设置 `min_free_page`；将 Image Viewer 开机自动生成改为桌面图标显式双击触发（[apps/imageviewer.c](apps/imageviewer.c)），杜绝冷启动内存冲突。
+7. **窗口拉大与拖动 60 FPS 丝滑优化 (Smooth Outline Resizing)**：
+   - **根本原因**：控制面板绘图循环每帧调用实模式 BIOS 中断探测，且拉伸窗口时每像素强制全屏重绘，引发数十毫秒级阻塞与严重卡顿；
+   - **彻底解决**：移除绘图中的实模式调用；在 [wm/wm.c](wm/wm.c) 引入经典系统（Mac OS 9 / Win3.1）的 LFB 虚线框透明拉伸技术（`rs_active` / `draw_lfb_drag_box`），拉伸过程 CPU 占用几乎为 0，按键释放单次重绘落地。
+8. **ATI Mach64VT2 32 位色支持与持久化修复 (Mach64 32-bit Color & Persistence)**：
+   - **根本原因**：老式 ATI Mach64 BIOS 汇报模式 0x122 的 `bpp` 为 24（表示 24 位 RGB，扫描线为 3200 字节即 4 字节/像素），原逻辑因强校验 `bpp == 32` 而误判为不支持，且在切模后直接依 `bpp` 赋值导致持久化回退至 24 位；
+   - **彻底解决**：[drivers/gfx_accel.c](drivers/gfx_accel.c) 与 [kernel/kernel.c](kernel/kernel.c) 正确识别 32 位模式别名并传递 `req_bpp`，精准将 `screen_bpp` 锁定为 32 位，消除 "(Not Supported)" 误报，彻底保障 32 位色深度持久有效。
+9. **保护模式 IDTR 隔离跳板 (Real/Protected Mode IDTR Isolation)**：
+   - [boot/vbe.asm](boot/vbe.asm)：统一跳板 `common_real_call` 在进入实模式前自动通过 `sidt` 保存保护模式 IDTR，并在切回保护模式后通过 `lidt` 强制恢复，确保 BIOS 中断调用对保护模式中断系统 0 污染。

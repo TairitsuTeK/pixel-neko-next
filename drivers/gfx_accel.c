@@ -35,7 +35,8 @@ unsigned int gfx_accel_get_vram_size(void) {
 }
 
 int gfx_accel_supports_bpp(int w, int h, int bpp) {
-    unsigned int vram_needed = (unsigned int)w * h * (bpp / 8);
+    unsigned int bytes_per_pixel = (bpp <= 8) ? 1 : ((bpp <= 16) ? 2 : ((bpp <= 24) ? 3 : 4));
+    unsigned int vram_needed = (unsigned int)w * (unsigned int)h * bytes_per_pixel;
     unsigned int max_vram = gfx_accel_get_vram_size();
 
     // VRAM physical limit check
@@ -43,13 +44,7 @@ int gfx_accel_supports_bpp(int w, int h, int bpp) {
         return 0; // Exceeds physical VRAM!
     }
 
-    if (ati_mach64_is_active()) {
-        // ATI 3D Rage driver supports 8, 16, 24, and 32-bit color
-        return (bpp == 8 || bpp == 15 || bpp == 16 || bpp == 24 || bpp == 32);
-    } else {
-        // Standard VBE fallback only supports 8-bit and 16-bit reliably
-        return (bpp == 8 || bpp == 15 || bpp == 16);
-    }
+    return (bpp == 8 || bpp == 15 || bpp == 16 || bpp == 24 || bpp == 32);
 }
 
 void gfx_accel_set_mode(int w, int h, int bpp) {
