@@ -21,7 +21,12 @@ C_SOURCES = kernel/kernel.c \
             kernel/panic.c \
             kernel/image_dec.c \
             kernel/wallpaper.c \
+            kernel/audio.c \
+            kernel/wav_dec.c \
+            kernel/flac_dec.c \
+            kernel/mp3_dec.c \
             drivers/ati_mach64.c \
+            drivers/cmi8738.c \
             drivers/gfx_accel.c \
             drivers/speaker.c \
             drivers/mouse.c \
@@ -39,6 +44,7 @@ C_SOURCES = kernel/kernel.c \
             apps/sysinfo.c \
             apps/puzzle.c \
             apps/imageviewer.c \
+            apps/audioplayer.c \
             fs/fat.c \
             fs/part.c \
             fs/iso9660.c \

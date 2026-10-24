@@ -444,6 +444,28 @@ int fat_read(file_handle_t* handle, unsigned char* buf, unsigned int size) {
     return bytes_read;
 }
 
+int fat_seek(file_handle_t* handle, unsigned int offset) {
+    if (!handle || !handle->is_open) return -1;
+    if (offset > handle->size) offset = handle->size;
+    int v_idx = handle->volume_idx;
+    if (v_idx < 0 || v_idx >= MAX_VOLUMES || g_volumes[v_idx].type == 0) v_idx = 0;
+    fat_fs_t* vol = &g_volumes[v_idx];
+    unsigned int bytes_per_cluster = vol->sectors_per_cluster * 512;
+    if (bytes_per_cluster == 0) bytes_per_cluster = 512;
+
+    unsigned int target_cluster_idx = offset / bytes_per_cluster;
+    unsigned int cur_cluster = handle->first_cluster;
+    for (unsigned int i = 0; i < target_cluster_idx; i++) {
+        unsigned int next = fat_read_entry(vol, cur_cluster);
+        if (next >= 0x0FFFFFF8 || next == 0) break;
+        cur_cluster = next;
+    }
+    handle->current_cluster = cur_cluster;
+    handle->cluster_offset = offset % bytes_per_cluster;
+    handle->current_offset = offset;
+    return 0;
+}
+
 void fat_close(file_handle_t* handle) {
     if (handle) handle->is_open = 0;
 }

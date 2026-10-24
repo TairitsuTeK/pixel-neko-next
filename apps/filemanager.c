@@ -246,6 +246,23 @@ static void open_file(int idx) {
             imageviewer_open_file(full);
             imv = 1; imm = 0;
             bring_to_top(8);
+        } else if ((ext[0] == 'w' && ext[1] == 'a' && ext[2] == 'v') ||
+                   (ext[0] == 'm' && ext[1] == 'p' && ext[2] == '3') ||
+                   (len >= 5 && files[idx].name[len-5] == '.' &&
+                    (files[idx].name[len-4] == 'f' || files[idx].name[len-4] == 'F') &&
+                    (files[idx].name[len-3] == 'l' || files[idx].name[len-3] == 'L') &&
+                    (files[idx].name[len-2] == 'a' || files[idx].name[len-2] == 'A') &&
+                    (files[idx].name[len-1] == 'c' || files[idx].name[len-1] == 'C'))) {
+            char full[256];
+            my_strcpy(full, current_path);
+            int flen = my_strlen(full);
+            if (flen > 0 && full[flen-1] != '\\') my_strcat(full, "\\");
+            my_strcat(full, files[idx].name);
+            extern void audioplayer_open_file(const char* path);
+            extern int npv, npm;
+            audioplayer_open_file(full);
+            npv = 1; npm = 0;
+            bring_to_top(9);
         } else {
             show_error = 1;
             error_timer = 300;

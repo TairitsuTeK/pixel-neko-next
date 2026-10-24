@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202006.001)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.000)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -125,6 +125,12 @@
    ```bash
    make clean
    ```
+
+## 🎵 Build 2010.000 更新特性
+- **🔊 CMI8738 PCI 原生声卡驱动与 DMA 环形缓冲**：支持 C-Media CMI8738/CMI8338 PCI 独立声卡，配置 PCI 总线主控与 64KB 连续物理页 DMA 环形双缓冲，杜绝音频爆音。
+- **🎛️ 内核级 DSP 音频处理核心**：内置双基准时钟（44.1k/48k）多相滤波抽取下采样，支持 Hi-Res 高采样率（88.2k/96k/176.4k/192k）保真播放；支持 24/32 位高位深 TPDF 三角抖动降位与纯整型 IEEE 浮点转换。
+- **🎼 纯定点数全格式音频解码引擎**：零外部库与 FPU 依赖，完整支持 WAV（PCM/IEEE Float）、FLAC（无损定点 LPC/Rice 预测）、MP3（CBR 与 VBR 动态码率，带 Seek 静默预充防爆音）。
+- **📻 NekoPlayer 复古图形音频播放器**：Winamp / QuickTime 经典复古美学，墨绿 LCD 显示屏、跑马灯曲名展示、交互式 Seek 进度条、音量控制；硬件同步的 10 段实时动态频谱仪与双声道 VU 表；未检测到声卡时智能提示“无输出设备”。
 
 ---
 

@@ -82,6 +82,7 @@ int fat_list_dir(const char* path, void (*callback)(const file_info_t*));
 int fat_find(const char* name, file_info_t* info);
 file_handle_t* fat_open(const char* name);
 int fat_read(file_handle_t* handle, unsigned char* buf, unsigned int size);
+int fat_seek(file_handle_t* handle, unsigned int offset);
 void fat_close(file_handle_t* handle);
 int fat_delete(const char* name);
 int fat_rename(const char* old_name, const char* new_name);

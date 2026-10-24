@@ -4,6 +4,7 @@
 #include "keyboard.h"
 #include "timer.h"
 #include "speaker.h"
+#include "audio.h"
 #include "cpu.h"
 #include "splash.h"
 
@@ -476,6 +477,7 @@ void kernel_main(void)
     pmm_init();
     pci_scan_vga();
     speaker_init();
+    audio_init();
     set_resolution(800, 600, 16);
     timer_init(); // Re-verify PIT timer after real-mode VBE switch
     
@@ -491,6 +493,7 @@ void kernel_main(void)
     mouse_init();
 
     while (1) {
+        audio_poll();
         timer_update();
         check_revert_timer();
         

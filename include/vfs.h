@@ -56,4 +56,19 @@ int  vfs_write_file(const char* path, const unsigned char* buf, unsigned int siz
 const char* vfs_get_fs_name(part_fs_type_t type);
 int  vfs_get_drive_space(char letter, unsigned int* total_kb, unsigned int* free_kb, int* is_known);
 
+typedef struct {
+    char           path[256];
+    unsigned int   size;
+    unsigned int   current_offset;
+    int            is_open;
+    int            is_cdrom;
+    unsigned int   cdrom_extent_lba;
+    void*          fat_handle;
+} vfs_stream_t;
+
+int  vfs_stream_open(const char* path, vfs_stream_t* stream);
+int  vfs_stream_read(vfs_stream_t* stream, void* buf, unsigned int size);
+int  vfs_stream_seek(vfs_stream_t* stream, unsigned int offset);
+void vfs_stream_close(vfs_stream_t* stream);
+
 #endif

@@ -342,3 +342,79 @@ int vfs_get_drive_space(char letter, unsigned int* total_kb, unsigned int* free_
     if (is_known) *is_known = 0;
     return 0;
 }
+
+int vfs_stream_open(const char* path, vfs_stream_t* s) {
+    if (!path || !path[0] || !s) return -1;
+    char letter = path[0];
+    vfs_drive_t* drv = vfs_get_drive(letter);
+    if (!drv || !drv->is_supported) return -1;
+
+    s->current_offset = 0;
+    s->is_open = 0;
+    int i = 0; while (path[i] && i < 255) { s->path[i] = path[i]; i++; }
+    s->path[i] = '\0';
+
+    if (drv->drv_type == VFS_DRV_CDROM) {
+        const char* subpath = path + 2;
+        if (*subpath == '\\' || *subpath == '/') subpath++;
+        iso_file_info_t iso_info;
+        if (iso_find_file(&g_iso_fs[0], subpath, &iso_info) != 0) return -1;
+        s->size = iso_info.size;
+        s->is_cdrom = 1;
+        s->cdrom_extent_lba = iso_info.extent_lba;
+        s->fat_handle = 0;
+        s->is_open = 1;
+        return 0;
+    } else {
+        file_handle_t* h = fat_open(path);
+        if (!h) return -1;
+        s->size = h->size;
+        s->is_cdrom = 0;
+        s->cdrom_extent_lba = 0;
+        s->fat_handle = (void*)h;
+        s->is_open = 1;
+        return 0;
+    }
+}
+
+int vfs_stream_read(vfs_stream_t* s, void* buf, unsigned int size) {
+    if (!s || !s->is_open) return -1;
+    if (s->current_offset >= s->size) return 0;
+    unsigned int remaining = s->size - s->current_offset;
+    if (size > remaining) size = remaining;
+    if (size == 0) return 0;
+
+    if (s->is_cdrom) {
+        iso_file_info_t iso_info;
+        iso_info.extent_lba = s->cdrom_extent_lba;
+        iso_info.size = s->size;
+        int n = iso_read_file(&g_iso_fs[0], &iso_info, s->current_offset, (unsigned char*)buf, size);
+        if (n > 0) s->current_offset += n;
+        return n;
+    } else {
+        int n = fat_read((file_handle_t*)s->fat_handle, (unsigned char*)buf, size);
+        if (n > 0) s->current_offset += n;
+        return n;
+    }
+}
+
+int vfs_stream_seek(vfs_stream_t* s, unsigned int offset) {
+    if (!s || !s->is_open) return -1;
+    if (offset > s->size) offset = s->size;
+    s->current_offset = offset;
+    if (!s->is_cdrom && s->fat_handle) {
+        fat_seek((file_handle_t*)s->fat_handle, offset);
+    }
+    return 0;
+}
+
+void vfs_stream_close(vfs_stream_t* s) {
+    if (s && s->is_open) {
+        if (!s->is_cdrom && s->fat_handle) {
+            fat_close((file_handle_t*)s->fat_handle);
+            s->fat_handle = 0;
+        }
+        s->is_open = 0;
+    }
+}
+
