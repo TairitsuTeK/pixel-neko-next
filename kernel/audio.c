@@ -92,7 +92,7 @@ void audio_init(void) {
     // 探测并初始化 C-Media CMI8738 硬件声卡
     cmi8738_init();
     if (cmi8738_is_present()) {
-        cmi8738_set_master_volume(g_master_volume);
+        cmi8738_set_volume(g_master_volume, g_master_volume);
     }
 }
 
@@ -289,16 +289,16 @@ int audio_play_file(const char* filepath) {
     int srate = g_audio_info.sample_rate;
     if (srate % 44100 == 0 || srate == 22050 || srate == 11025) {
         g_audio_info.target_rate = 44100;
-        cmi8738_set_format(CMI_RATE_44K, 16, 2);
+        cmi8738_set_format(44100, 16, 1);
     } else {
         g_audio_info.target_rate = 48000;
-        cmi8738_set_format(CMI_RATE_48K, 16, 2);
+        cmi8738_set_format(48000, 16, 1);
     }
 
     audio_flush_queue();
 
     // 启动声卡硬件 DMA 环形播放
-    cmi8738_dma_start();
+    cmi8738_start_dma();
     g_audio_state = AUDIO_STATE_PLAYING;
 
     // 先预充一次数据
@@ -309,21 +309,21 @@ int audio_play_file(const char* filepath) {
 
 void audio_pause(void) {
     if (g_audio_state == AUDIO_STATE_PLAYING) {
-        cmi8738_dma_stop();
+        cmi8738_stop_dma();
         g_audio_state = AUDIO_STATE_PAUSED;
     }
 }
 
 void audio_resume(void) {
     if (g_audio_state == AUDIO_STATE_PAUSED) {
-        cmi8738_dma_start();
+        cmi8738_start_dma();
         g_audio_state = AUDIO_STATE_PLAYING;
     }
 }
 
 void audio_stop(void) {
     if (g_audio_state != AUDIO_STATE_STOPPED) {
-        cmi8738_dma_stop();
+        cmi8738_stop_dma();
         g_audio_state = AUDIO_STATE_STOPPED;
     }
     if (g_active_dec == DEC_WAV) wav_dec_close();
@@ -374,7 +374,8 @@ void audio_set_volume(int vol) {
     if (vol > 100) vol = 100;
     g_master_volume = vol;
     if (cmi8738_is_present()) {
-        cmi8738_set_master_volume(g_is_muted ? 0 : g_master_volume);
+        int v = g_is_muted ? 0 : g_master_volume;
+        cmi8738_set_volume(v, v);
     }
 }
 
@@ -385,7 +386,8 @@ int audio_get_volume(void) {
 void audio_toggle_mute(void) {
     g_is_muted = !g_is_muted;
     if (cmi8738_is_present()) {
-        cmi8738_set_master_volume(g_is_muted ? 0 : g_master_volume);
+        int v = g_is_muted ? 0 : g_master_volume;
+        cmi8738_set_volume(v, v);
     }
 }
 
