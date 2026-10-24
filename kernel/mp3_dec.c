@@ -122,13 +122,9 @@ static void parse_id3v1(void) {
     }
 }
 
-// Check and parse MP3 frame header at given stream offset
+// Check and parse MP3 frame header from in-memory byte buffer
 // Returns frame length in bytes, or 0 if not a valid header
-static int check_frame_header(unsigned int offset, int* out_rate, int* out_ch, int* out_kbps, int* out_samples) {
-    unsigned char hdr[4];
-    vfs_stream_seek(&g_mp3_stream, offset);
-    if (vfs_stream_read(&g_mp3_stream, hdr, 4) < 4) return 0;
-
+static int parse_header_bytes(const unsigned char* hdr, int* out_rate, int* out_ch, int* out_kbps, int* out_samples) {
     // Sync word: 11 bits of 1 (0xFFE0 mask)
     if (hdr[0] != 0xFF || (hdr[1] & 0xE0) != 0xE0) return 0;
 
@@ -181,7 +177,7 @@ static int find_first_frame(unsigned int search_start) {
         for (int k = 0; k + 4 <= chunk; k++) {
             if (scan_buf[k] == 0xFF && (scan_buf[k + 1] & 0xE0) == 0xE0) {
                 int rate = 0, ch = 0, kbps = 0, samples = 0;
-                int flen = check_frame_header(pos + k, &rate, &ch, &kbps, &samples);
+                int flen = parse_header_bytes(scan_buf + k, &rate, &ch, &kbps, &samples);
                 if (flen > 0) {
                     // Found valid frame header
                     g_first_frame_pos = pos + k;
@@ -335,8 +331,8 @@ int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
 
         if (consumed > 0) {
             s_mp3_buf_pos += consumed;
-        } else if (samples == 0) {
-            // 未解析出有效帧且未消耗字节（跳过脏数据）：向后滑动 1 字节
+        } else {
+            // 兜底推进至少 1 字节，防止死循环
             if (avail > 0) {
                 s_mp3_buf_pos++;
             }

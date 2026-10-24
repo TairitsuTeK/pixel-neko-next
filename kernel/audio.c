@@ -77,44 +77,12 @@ static int my_strlen(const char* s) {
 void enable_fpu(void) {
     unsigned int cr0;
     __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
-    cr0 &= ~(1 << 2); // 清除 CR0.EM (禁止软件模拟)
+    cr0 &= ~(1 << 2); // 清除 CR0.EM (禁止软件模拟，启用硬件 x87 FPU)
     cr0 |=  (1 << 1); // 置位 CR0.MP (监控协处理器)
-    cr0 &= ~(1 << 3); // 清除 CR0.TS (任务已切换标志)
+    cr0 &= ~(1 << 3); // 清除 CR0.TS (清除任务切换标志，杜绝 #NM 异常)
     cr0 |=  (1 << 5); // 置位 CR0.NE (内部 x87 浮点错误报告)
     __asm__ volatile("mov %0, %%cr0" :: "r"(cr0));
-
-    // 使用 CPUID 检测是否支持 FXSR 和 SSE
-    unsigned int edx = 0;
-    __asm__ volatile(
-        "pushfl\n"
-        "pushfl\n"
-        "popl %%eax\n"
-        "movl %%eax, %%ecx\n"
-        "xorl $0x200000, %%eax\n"
-        "pushl %%eax\n"
-        "popfl\n"
-        "pushfl\n"
-        "popl %%eax\n"
-        "popfl\n"
-        "xorl %%ecx, %%eax\n"
-        "jz 1f\n"
-        "movl $1, %%eax\n"
-        "cpuid\n"
-        "1:\n"
-        : "=d"(edx) : : "eax", "ebx", "ecx"
-    );
-
-    unsigned int cr4;
-    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
-    if (edx & (1 << 24)) { // FXSR 支持
-        cr4 |= (1 << 9);   // OSFXSR
-    }
-    if (edx & (1 << 25)) { // SSE 支持
-        cr4 |= (1 << 10);  // OSXMMEXCPT
-    }
-    __asm__ volatile("mov %0, %%cr4" :: "r"(cr4));
-
-    __asm__ volatile("fninit");
+    __asm__ volatile("fninit"); // 初始化 x87 FPU 状态机
 }
 
 void audio_init(void) {
@@ -380,9 +348,9 @@ int audio_play_file(const char* filepath) {
     cmi8738_silence_half(0);
     cmi8738_silence_half(1);
 
-    // 2. 预充队列：在开启硬件 DMA 之前，先预充两半区 DMA + 内部队列缓冲（总计 ~96KB 缓冲）
+    // 2. 预充队列：在开启硬件 DMA 之前，先解码填充首半区（32KB）
     static unsigned char dec_temp_buf[16384];
-    while (g_queue_bytes < (CMI_DMA_BUFFER_BYTES + CMI_DMA_HALF_BYTES) && !g_eof_reached) {
+    for (int pre = 0; pre < 32 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
         int samples_read = 0;
         if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
         else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
@@ -397,23 +365,49 @@ int audio_play_file(const char* filepath) {
         } else if (samples_read < 0) {
             g_eof_reached = 1;
             break;
-        } else {
+        }
+    }
+
+    // 3. 将预充好的 PCM 复制写入 DMA 半区 0
+    if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
+        static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
+        unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
+        for (unsigned int i = 0; i < samples_needed; i++) {
+            dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
+            g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
+        }
+        g_queue_bytes -= CMI_DMA_HALF_BYTES;
+        cmi8738_write_half(0, dma_copy_buf, CMI_DMA_HALF_BYTES);
+    }
+
+    // 4. 继续预充 DMA 半区 1
+    for (int pre = 0; pre < 32 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
+        int samples_read = 0;
+        if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
+        else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
+        else if (g_active_dec == DEC_MP3) samples_read = mp3_dec_read_samples(dec_temp_buf, 1152);
+
+        if (samples_read > 0) {
+            audio_feed_raw_pcm(dec_temp_buf, (unsigned int)samples_read,
+                               g_audio_info.sample_rate,
+                               g_audio_info.channels,
+                               g_audio_info.bit_depth,
+                               g_audio_info.is_float);
+        } else if (samples_read < 0) {
+            g_eof_reached = 1;
             break;
         }
     }
 
-    // 3. 将预充好的 PCM 复制写入 DMA 半区 0 和半区 1
-    static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
-    for (int h = 0; h < 2; h++) {
-        if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
-            unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
-            for (unsigned int i = 0; i < samples_needed; i++) {
-                dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
-                g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
-            }
-            g_queue_bytes -= CMI_DMA_HALF_BYTES;
-            cmi8738_write_half(h, dma_copy_buf, CMI_DMA_HALF_BYTES);
+    if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
+        static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
+        unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
+        for (unsigned int i = 0; i < samples_needed; i++) {
+            dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
+            g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
         }
+        g_queue_bytes -= CMI_DMA_HALF_BYTES;
+        cmi8738_write_half(1, dma_copy_buf, CMI_DMA_HALF_BYTES);
     }
 
     // 4. 启动声卡硬件 DMA 环形播放
@@ -472,7 +466,7 @@ void audio_seek_sec(unsigned int seconds) {
 
     // 预充数据平滑恢复
     static unsigned char dec_temp_buf[16384];
-    while (g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached) {
+    for (int pre = 0; pre < 16 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
         int samples_read = 0;
         if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
         else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
@@ -486,8 +480,6 @@ void audio_seek_sec(unsigned int seconds) {
                                g_audio_info.is_float);
         } else if (samples_read < 0) {
             g_eof_reached = 1;
-            break;
-        } else {
             break;
         }
     }
