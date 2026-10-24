@@ -136,8 +136,10 @@ void imageviewer_open_file(const char* path) {
         g_err_msg[0] = '\0';
         my_str_cat(g_err_msg, err[0] ? err : "Failed to open image file.");
         g_err_msg2[0] = '\0';
-        my_str_cat(g_err_msg2, "Closing application to protect system.");
+        my_str_cat(g_err_msg2, "Click OK to dismiss.");
         speaker_beep();
+        g_title[0] = '\0';
+        my_str_cat(g_title, "Image Viewer - Error");
         redraw = 1;
         return;
     }
@@ -235,71 +237,70 @@ void imageviewer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
     if (!g_img_loaded || !g_img.pixels || g_img.width <= 0 || g_img.height <= 0) {
         font_draw_text(v, vp_x + vp_w / 2 - 40, vp_y + vp_h / 2 - 8, "(No Image)", 15);
-        return;
-    }
-
-    // Calculate display dimensions
-    int dw, dh;
-    if (g_zoom_percent == 0) { // Fit mode
-        if ((unsigned int)g_img.width * (unsigned int)vp_h > (unsigned int)vp_w * (unsigned int)g_img.height) {
-            dw = vp_w;
-            dh = (int)(((unsigned int)g_img.height * (unsigned int)vp_w) / (unsigned int)g_img.width);
-        } else {
-            dh = vp_h;
-            dw = (int)(((unsigned int)g_img.width * (unsigned int)vp_h) / (unsigned int)g_img.height);
-        }
-        if (dw <= 0) dw = 1;
-        if (dh <= 0) dh = 1;
-        g_pan_x = (vp_w - dw) / 2;
-        g_pan_y = (vp_h - dh) / 2;
     } else {
-        dw = (int)(((unsigned int)g_img.width * (unsigned int)g_zoom_percent) / 100);
-        dh = (int)(((unsigned int)g_img.height * (unsigned int)g_zoom_percent) / 100);
-        if (dw <= 0) dw = 1;
-        if (dh <= 0) dh = 1;
-    }
-
-    int img_start_x = vp_x + g_pan_x;
-    int img_start_y = vp_y + g_pan_y;
-
-    // Clip rendering to viewport bounds
-    int render_x0 = img_start_x < vp_x ? vp_x : img_start_x;
-    int render_y0 = img_start_y < vp_y ? vp_y : img_start_y;
-    int render_x1 = img_start_x + dw > vp_x + vp_w ? vp_x + vp_w : img_start_x + dw;
-    int render_y1 = img_start_y + dh > vp_y + vp_h ? vp_y + vp_h : img_start_y + dh;
-
-    // Render scaled image scanlines
-    for (int y = render_y0; y < render_y1; y++) {
-        int sy = (int)(((unsigned int)(y - img_start_y) * (unsigned int)g_img.height) / (unsigned int)dh);
-        if (sy >= g_img.height) sy = g_img.height - 1;
-        const unsigned int* src_row = &g_img.pixels[sy * g_img.width];
-
-        for (int x = render_x0; x < render_x1; x++) {
-            int sx = (int)(((unsigned int)(x - img_start_x) * (unsigned int)g_img.width) / (unsigned int)dw);
-            if (sx >= g_img.width) sx = g_img.width - 1;
-            unsigned int argb = src_row[sx];
-
-            // Render pixel to screen backbuffer
-            if (screen_bpp == 32) {
-                *(unsigned int*)&v[y * screen_pitch + x * 4] = argb;
-            } else if (screen_bpp == 24) {
-                unsigned char* p = &v[y * screen_pitch + x * 3];
-                p[0] = (unsigned char)(argb & 0xFF);
-                p[1] = (unsigned char)((argb >> 8) & 0xFF);
-                p[2] = (unsigned char)((argb >> 16) & 0xFF);
-            } else if (screen_bpp == 16) {
-                unsigned short c16 = (unsigned short)((((argb >> 16) & 0xF8) << 8) | (((argb >> 8) & 0xFC) << 3) | ((argb & 0xF8) >> 3));
-                *(unsigned short*)&v[y * screen_pitch + x * 2] = c16;
+        // Calculate display dimensions
+        int dw, dh;
+        if (g_zoom_percent == 0) { // Fit mode
+            if ((unsigned int)g_img.width * (unsigned int)vp_h > (unsigned int)vp_w * (unsigned int)g_img.height) {
+                dw = vp_w;
+                dh = (int)(((unsigned int)g_img.height * (unsigned int)vp_w) / (unsigned int)g_img.width);
             } else {
-                unsigned char r = (argb >> 16) & 0xFF;
-                unsigned char g = (argb >> 8) & 0xFF;
-                unsigned char b = argb & 0xFF;
-                unsigned char c = 0;
-                if (r > 128) c |= 4;
-                if (g > 128) c |= 2;
-                if (b > 128) c |= 1;
-                if (r > 200 || g > 200 || b > 200) c |= 8;
-                v[y * screen_pitch + x] = c;
+                dh = vp_h;
+                dw = (int)(((unsigned int)g_img.width * (unsigned int)vp_h) / (unsigned int)g_img.height);
+            }
+            if (dw <= 0) dw = 1;
+            if (dh <= 0) dh = 1;
+            g_pan_x = (vp_w - dw) / 2;
+            g_pan_y = (vp_h - dh) / 2;
+        } else {
+            dw = (int)(((unsigned int)g_img.width * (unsigned int)g_zoom_percent) / 100);
+            dh = (int)(((unsigned int)g_img.height * (unsigned int)g_zoom_percent) / 100);
+            if (dw <= 0) dw = 1;
+            if (dh <= 0) dh = 1;
+        }
+
+        int img_start_x = vp_x + g_pan_x;
+        int img_start_y = vp_y + g_pan_y;
+
+        // Clip rendering to viewport bounds
+        int render_x0 = img_start_x < vp_x ? vp_x : img_start_x;
+        int render_y0 = img_start_y < vp_y ? vp_y : img_start_y;
+        int render_x1 = img_start_x + dw > vp_x + vp_w ? vp_x + vp_w : img_start_x + dw;
+        int render_y1 = img_start_y + dh > vp_y + vp_h ? vp_y + vp_h : img_start_y + dh;
+
+        // Render scaled image scanlines
+        for (int y = render_y0; y < render_y1; y++) {
+            int sy = (int)(((unsigned int)(y - img_start_y) * (unsigned int)g_img.height) / (unsigned int)dh);
+            if (sy >= g_img.height) sy = g_img.height - 1;
+            const unsigned int* src_row = &g_img.pixels[sy * g_img.width];
+
+            for (int x = render_x0; x < render_x1; x++) {
+                int sx = (int)(((unsigned int)(x - img_start_x) * (unsigned int)g_img.width) / (unsigned int)dw);
+                if (sx >= g_img.width) sx = g_img.width - 1;
+                unsigned int argb = src_row[sx];
+
+                // Render pixel to screen backbuffer
+                if (screen_bpp == 32) {
+                    *(unsigned int*)&v[y * screen_pitch + x * 4] = argb;
+                } else if (screen_bpp == 24) {
+                    unsigned char* p = &v[y * screen_pitch + x * 3];
+                    p[0] = (unsigned char)(argb & 0xFF);
+                    p[1] = (unsigned char)((argb >> 8) & 0xFF);
+                    p[2] = (unsigned char)((argb >> 16) & 0xFF);
+                } else if (screen_bpp == 16) {
+                    unsigned short c16 = (unsigned short)((((argb >> 16) & 0xF8) << 8) | (((argb >> 8) & 0xFC) << 3) | ((argb & 0xF8) >> 3));
+                    *(unsigned short*)&v[y * screen_pitch + x * 2] = c16;
+                } else {
+                    unsigned char r = (argb >> 16) & 0xFF;
+                    unsigned char g = (argb >> 8) & 0xFF;
+                    unsigned char b = argb & 0xFF;
+                    unsigned char c = 0;
+                    if (r > 128) c |= 4;
+                    if (g > 128) c |= 2;
+                    if (b > 128) c |= 1;
+                    if (r > 200 || g > 200 || b > 200) c |= 8;
+                    v[y * screen_pitch + x] = c;
+                }
             }
         }
     }
@@ -318,7 +319,7 @@ void imageviewer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
     // 5. OOM / Error Modal Dialog (if triggered)
     if (g_error_modal) {
-        int dw = 280, dh = 90;
+        int dw = 320, dh = 90;
         int dx = wx + (ww - dw) / 2;
         int dy = wy + (wh - dh) / 2;
         for (int y = dy; y < dy + dh; y++) for (int x = dx; x < dx + dw; x++) PUT_PIXEL(v, x, y, 7);
@@ -340,14 +341,13 @@ void imageviewer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 void imageviewer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh) {
     (void)v;
     if (g_error_modal) {
-        int dw = 280, dh = 90;
+        int dw = 320, dh = 90;
         int dx = wx + (ww - dw) / 2;
         int dy = wy + (wh - dh) / 2;
         int bx = dx + dw / 2 - 30, by = dy + 60;
         if (mx >= bx && mx < bx + 60 && my >= by && my < by + 20) {
-            // Dismiss error and close app
+            // Dismiss error modal
             g_error_modal = 0;
-            imv = 0;
             redraw = 1;
         }
         return;
@@ -451,9 +451,8 @@ void imageviewer_release(void) {
 
 void imageviewer_handle_key(int key) {
     if (g_error_modal) {
-        if (key == 10 || key == 13 || key == 27) { // Enter or Esc
+        if (key == 10 || key == 13 || key == 27 || key == ' ') {
             g_error_modal = 0;
-            imv = 0;
             redraw = 1;
         }
         return;

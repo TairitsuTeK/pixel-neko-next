@@ -27,6 +27,29 @@ static void my_str_copy(char* dest, const char* src, int max_len) {
     dest[i] = '\0';
 }
 
+static void my_str_cat(char* dest, const char* src, int max_len) {
+    int d = 0;
+    while (dest[d] && d < max_len - 1) d++;
+    int s = 0;
+    while (src[s] && d < max_len - 1) {
+        dest[d++] = src[s++];
+    }
+    dest[d] = '\0';
+}
+
+static void my_int_to_str(unsigned int n, char* buf) {
+    if (n == 0) { buf[0] = '0'; buf[1] = '\0'; return; }
+    char tmp[16];
+    int p = 0;
+    while (n > 0) {
+        tmp[p++] = '0' + (n % 10);
+        n /= 10;
+    }
+    int d = 0;
+    while (p > 0) buf[d++] = tmp[--p];
+    buf[d] = '\0';
+}
+
 void image_init(image_t* img) {
     if (!img) return;
     img->width = 0;
@@ -480,7 +503,17 @@ static int decode_png(const unsigned char* data, unsigned int size, image_t* out
     unsigned int total_pages_needed = out_pages + raw_pages;
 
     if (total_pages_needed > pmm_get_free_pages()) {
-        my_str_copy(err_msg, "Out of Memory: 4K PNG requires more RAM", err_msg_len);
+        unsigned int need_mb = (total_pages_needed * 4) / 1024;
+        unsigned int free_mb = (pmm_get_free_pages() * 4) / 1024;
+        char nbuf[16], fbuf[16];
+        my_int_to_str(need_mb, nbuf);
+        my_int_to_str(free_mb, fbuf);
+        err_msg[0] = '\0';
+        my_str_copy(err_msg, "Out of Memory: Needs ", err_msg_len);
+        my_str_cat(err_msg, nbuf, err_msg_len);
+        my_str_cat(err_msg, "MB (Free: ", err_msg_len);
+        my_str_cat(err_msg, fbuf, err_msg_len);
+        my_str_cat(err_msg, "MB)", err_msg_len);
         return -2;
     }
 
@@ -672,7 +705,17 @@ int image_load_from_file(const char* path, image_t* out_img, char* err_msg, int 
 
     unsigned int pages = (file_size + 4095) / 4096;
     if (pages > pmm_get_free_pages()) {
-        my_str_copy(err_msg, "Out of Memory: File exceeds available RAM", err_msg_len);
+        unsigned int need_mb = (pages * 4) / 1024;
+        unsigned int free_mb = (pmm_get_free_pages() * 4) / 1024;
+        char nbuf[16], fbuf[16];
+        my_int_to_str(need_mb, nbuf);
+        my_int_to_str(free_mb, fbuf);
+        err_msg[0] = '\0';
+        my_str_copy(err_msg, "OOM: File needs ", err_msg_len);
+        my_str_cat(err_msg, nbuf, err_msg_len);
+        my_str_cat(err_msg, "MB (Free: ", err_msg_len);
+        my_str_cat(err_msg, fbuf, err_msg_len);
+        my_str_cat(err_msg, "MB)", err_msg_len);
         return -2;
     }
 
