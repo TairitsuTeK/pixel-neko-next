@@ -59,14 +59,14 @@ typedef struct {
 } fat_fs_t;
 
 typedef struct {
-    char           name[32];
+    char           name[128];
     unsigned char  attr;
     unsigned int   size;
     unsigned int   first_cluster;
 } file_info_t;
 
 typedef struct {
-    char           name[13];
+    char           name[128];
     unsigned int   size;
     unsigned int   first_cluster;
     unsigned int   current_cluster;

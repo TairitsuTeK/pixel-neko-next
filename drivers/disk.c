@@ -54,64 +54,171 @@ static void ata_select_drive(unsigned int port, int drive_idx, unsigned int lba)
     inb(port + 7); inb(port + 7); inb(port + 7); inb(port + 7);
 }
 
+typedef struct {
+    unsigned int base;
+    unsigned int ctrl;
+} ide_channel_t;
+
 int disk_detect_all(void)
 {
-    for (int i=0; i<MAX_DRIVES; i++) g_drives[i].present = 0;
-    
-    unsigned int ports[2] = { 0x1F0, 0x170 };
+    for (int i = 0; i < MAX_DRIVES; i++) {
+        g_drives[i].present = 0;
+        g_drives[i].is_atapi = 0;
+        g_drives[i].base_port = 0;
+        g_drives[i].ctrl_port = 0;
+        g_drives[i].drive_idx = 0;
+        g_drives[i].lba_offset = 0;
+        g_drives[i].total_sectors = 0;
+    }
+
+    #define MAX_IDE_CHANNELS 8
+    ide_channel_t channels[MAX_IDE_CHANNELS];
+    int num_channels = 0;
+
+    // Helper to add channel without duplicates
+    #define ADD_CHANNEL(b, c) do { \
+        unsigned int _b = (b); \
+        unsigned int _c = (c); \
+        if (_b >= 0x100 && _b <= 0xFFF0 && num_channels < MAX_IDE_CHANNELS) { \
+            int _dup = 0; \
+            for (int _k = 0; _k < num_channels; _k++) { \
+                if (channels[_k].base == _b) { _dup = 1; break; } \
+            } \
+            if (!_dup) { \
+                channels[num_channels].base = _b; \
+                channels[num_channels].ctrl = _c ? _c : (_b + 0x206); \
+                num_channels++; \
+            } \
+        } \
+    } while (0)
+
+    // 1. Standard legacy IDE channels
+    ADD_CHANNEL(0x1F0, 0x3F6);
+    ADD_CHANNEL(0x170, 0x376);
+
+    // 2. Scan PCI bus for PCI IDE & SATA Native Controllers (Intel H55, ICH, etc.)
+    for (int bus = 0; bus < 8; bus++) {
+        for (int dev = 0; dev < 32; dev++) {
+            unsigned int id0 = pci_read_config(bus, dev, 0, 0);
+            if (id0 == 0xFFFFFFFF || id0 == 0) continue;
+
+            unsigned int hdr = pci_read_config(bus, dev, 0, 0x0C);
+            int is_multi = (hdr & 0x00800000) ? 1 : 0;
+            int max_func = is_multi ? 8 : 1;
+
+            for (int func = 0; func < max_func; func++) {
+                unsigned int id = pci_read_config(bus, dev, func, 0);
+                if (id == 0xFFFFFFFF || id == 0) continue;
+
+                unsigned int class_rev = pci_read_config(bus, dev, func, 0x08);
+                unsigned char pci_class = (class_rev >> 24) & 0xFF;
+
+                // Mass storage controllers: IDE, SATA in IDE mode, RAID in IDE mode
+                if (pci_class == 0x01) {
+                    // Enable I/O Space (bit 0), Memory Space (bit 1), Bus Master (bit 2)
+                    unsigned int cmd = pci_read_config(bus, dev, func, 0x04);
+                    pci_write_config(bus, dev, func, 0x04, cmd | 0x07);
+
+                    // BAR0 & BAR1: Primary Channel
+                    unsigned int bar0 = pci_read_config(bus, dev, func, 0x10);
+                    unsigned int bar1 = pci_read_config(bus, dev, func, 0x14);
+                    if (bar0 & 1) {
+                        unsigned int b0 = bar0 & 0xFFFC;
+                        unsigned int c0 = (bar1 & 1) ? (bar1 & 0xFFFC) : (b0 + 0x206);
+                        ADD_CHANNEL(b0, c0);
+                    }
+
+                    // BAR2 & BAR3: Secondary Channel
+                    unsigned int bar2 = pci_read_config(bus, dev, func, 0x18);
+                    unsigned int bar3 = pci_read_config(bus, dev, func, 0x1C);
+                    if (bar2 & 1) {
+                        unsigned int b2 = bar2 & 0xFFFC;
+                        unsigned int c2 = (bar3 & 1) ? (bar3 & 0xFFFC) : (b2 + 0x206);
+                        ADD_CHANNEL(b2, c2);
+                    }
+                }
+            }
+        }
+    }
+
     int drive_count = 0;
-    
-    for (int p=0; p<2; p++) {
-        for (int d=0; d<2; d++) {
-            if (drive_count >= MAX_DRIVES) break;
-            unsigned int port = ports[p];
+
+    for (int p = 0; p < num_channels && drive_count < MAX_DRIVES; p++) {
+        unsigned int port = channels[p].base;
+        unsigned int ctrl = channels[p].ctrl;
+
+        for (int d = 0; d < 2 && drive_count < MAX_DRIVES; d++) {
+            // Select drive
             outb(port + 6, 0xA0 | (d << 4));
             inb(port + 7); inb(port + 7); inb(port + 7); inb(port + 7);
-            
+
+            unsigned char st = inb(port + 7);
+            if (st == 0xFF) continue; // Floating bus
+
+            if (st == 0x00) {
+                for (int w = 0; w < 1000 && st == 0x00; w++) {
+                    st = inb(port + 7);
+                }
+                if (st == 0x00 || st == 0xFF) continue;
+            }
+
             outb(port + 2, 0);
             outb(port + 3, 0);
             outb(port + 4, 0);
             outb(port + 5, 0);
             outb(port + 7, ATA_CMD_IDENTIFY);
-            
-            unsigned char status = inb(port + 7);
-            if (status == 0) continue; // No device
-            
-            int is_atapi = 0;
-            while (1) {
-                status = inb(port + 7);
-                if ((status & ATA_SR_ERR) != 0) {
-                    // Could be ATAPI
-                    unsigned char cl = inb(port + 4);
-                    unsigned char ch = inb(port + 5);
-                    if (cl == 0x14 && ch == 0xEB) {
-                        is_atapi = 1;
-                        outb(port + 7, ATA_CMD_IDENTIFY_PACKET);
-                        break;
-                    } else {
-                        break;
-                    }
+            inb(port + 7); inb(port + 7); inb(port + 7); inb(port + 7);
+
+            st = inb(port + 7);
+            if (st == 0) {
+                for (int w = 0; w < 1000 && st == 0; w++) {
+                    st = inb(port + 7);
                 }
-                if ((status & ATA_SR_DRQ) != 0) break;
+                if (st == 0 || st == 0xFF) continue;
             }
-            
-            if (status & ATA_SR_ERR && !is_atapi) continue;
-            
+
+            int timeout = 100000;
+            while (timeout > 0) {
+                st = inb(port + 7);
+                if ((st & ATA_SR_BSY) == 0) break;
+                timeout--;
+            }
+            if (timeout == 0) continue;
+
+            unsigned char cl = inb(port + 4);
+            unsigned char ch = inb(port + 5);
+            int is_atapi = 0;
+            if ((cl == 0x14 && ch == 0xEB) || (cl == 0x69 && ch == 0x96) || ((st & ATA_SR_ERR) && (cl != 0 || ch != 0))) {
+                is_atapi = 1;
+                outb(port + 7, ATA_CMD_IDENTIFY_PACKET);
+                inb(port + 7); inb(port + 7); inb(port + 7); inb(port + 7);
+
+                timeout = 100000;
+                while (timeout > 0) {
+                    st = inb(port + 7);
+                    if ((st & ATA_SR_BSY) == 0) break;
+                    timeout--;
+                }
+            }
+
+            if (st & ATA_SR_ERR && !is_atapi) continue;
+
             if (is_atapi || ata_wait_drq(port) == 0) {
                 unsigned short buf[256];
-                for (int i=0; i<256; i++) buf[i] = inw(port + 0);
-                
+                for (int i = 0; i < 256; i++) buf[i] = inw(port + 0);
+
                 g_drives[drive_count].present = 1;
                 g_drives[drive_count].is_atapi = is_atapi;
                 g_drives[drive_count].base_port = port;
+                g_drives[drive_count].ctrl_port = ctrl;
                 g_drives[drive_count].drive_idx = d;
                 g_drives[drive_count].lba_offset = 0;
-                
+
                 if (is_atapi) {
-                    g_drives[drive_count].total_sectors = 0; // Unknown for now
+                    g_drives[drive_count].total_sectors = 0;
                 } else {
                     unsigned int sectors = (unsigned int)buf[60] | ((unsigned int)buf[61] << 16);
-                    if (sectors == 0) sectors = (unsigned int)buf[100] | ((unsigned int)buf[101] << 16); // LBA48
+                    if (sectors == 0) sectors = (unsigned int)buf[100] | ((unsigned int)buf[101] << 16);
                     g_drives[drive_count].total_sectors = sectors;
                 }
                 drive_count++;

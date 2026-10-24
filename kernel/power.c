@@ -4,6 +4,7 @@
 #include "font.h"
 #include "disk.h"
 #include "speaker.h"
+#include "audio.h"
 
 extern void bios_shutdown(void);
 
@@ -14,6 +15,9 @@ static int my_strlen(const char* s) {
 }
 
 void sys_reboot(void) {
+    // 0. Stop and silence audio engine and sound card DMA
+    audio_stop();
+
     // Play reboot audio melody before reset
     speaker_reboot_chord();
 
@@ -73,6 +77,9 @@ static void draw_safe_to_turn_off_screen(void) {
 }
 
 void sys_shutdown(void) {
+    // 0. Stop and silence audio engine and sound card DMA
+    audio_stop();
+
     // Play shutdown audio melody before powering off
     speaker_shutdown_chord();
 

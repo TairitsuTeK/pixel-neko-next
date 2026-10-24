@@ -10,6 +10,7 @@
 #include "vfs.h"
 #include "mouse.h"
 #include "gfx_accel.h"
+#include "version.h"
 
 #ifndef NULL
 #define NULL ((void*)0)
@@ -362,7 +363,7 @@ void splash_run(void)
 
     // Title and system info
     font_draw_text(v, win_x + 68, win_y + 16, "Pixel Neko Next", 0);
-    font_draw_text(v, win_x + 68, win_y + 32, "Version C2.0 (Build 2000.000)", 0);
+    font_draw_text(v, win_x + 68, win_y + 32, "Version C2.0 (Build " KERNEL_BUILD ")", 0);
     font_draw_text(v, win_x + 68, win_y + 48, "32-Bit Graphical Operating System", 8);
     font_draw_text(v, win_x + 68, win_y + 64, "(C) 2026 Tairitsu_tty / XNZM", 8);
 

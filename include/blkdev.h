@@ -31,7 +31,7 @@ typedef struct blkdev {
     media_state_t (*check_media)(struct blkdev* dev);
 } blkdev_t;
 
-#define MAX_BLKDEV 8
+#define MAX_BLKDEV 16
 extern blkdev_t g_blkdevs[MAX_BLKDEV];
 
 void blkdev_init(void);

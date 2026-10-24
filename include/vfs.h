@@ -22,7 +22,7 @@ typedef enum {
 } vfs_drv_type_t;
 
 typedef struct {
-    char           name[64];
+    char           name[128];
     unsigned char  is_dir;
     unsigned int   size;
     unsigned int   first_cluster;

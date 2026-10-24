@@ -89,14 +89,14 @@ static fat_fs_t* get_vol(const char** path) {
 }
 
 // Split next path component: "dir\file.txt" -> comp="dir", returns "file.txt"
-// Returns NULL if no more components
+// Returns pointer to next component, or end of string
 static const char* split_path(const char* path, char* comp) {
     int i = 0;
     while (path[i] && path[i] != '\\' && path[i] != '/') {
-        if (i < 12) comp[i] = path[i];
+        if (i < 127) comp[i] = path[i];
         i++;
     }
-    comp[i < 12 ? i : 12] = '\0';
+    comp[i < 127 ? i : 127] = '\0';
     if (path[i] == '\\' || path[i] == '/') return path + i + 1;
     return path + i;
 }
@@ -252,17 +252,96 @@ static void set_first_cluster(dir_entry_t* entry, unsigned int cluster) {
     entry->first_cluster_high = (cluster >> 16) & 0xFFFF;
 }
 
-typedef int (*dir_callback_t)(fat_fs_t* vol, dir_entry_t* entry, unsigned int sector, unsigned int offset, void* user_data);
+typedef struct {
+    unsigned char  order;
+    unsigned short name1[5];
+    unsigned char  attr;
+    unsigned char  type;
+    unsigned char  checksum;
+    unsigned short name2[6];
+    unsigned short first_cluster;
+    unsigned short name3[2];
+} __attribute__((packed)) fat_lfn_entry_t;
+
+static unsigned char calc_lfn_checksum(const unsigned char* short_name_11) {
+    unsigned char sum = 0;
+    for (int i = 0; i < 11; i++) {
+        sum = ((sum & 1) ? 0x80 : 0) + (sum >> 1) + short_name_11[i];
+    }
+    return sum;
+}
+
+typedef int (*dir_callback_t)(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, unsigned int sector, unsigned int offset, void* user_data);
 
 static int traverse_dir(fat_fs_t* vol, unsigned int start_cluster, dir_callback_t cb, void* user_data) {
     unsigned char buf[512];
+    char lfn_buf[256];
+    int lfn_valid = 0;
+    unsigned char lfn_chksum = 0;
+    int lfn_last_seq = 0;
+    for (int k = 0; k < 256; k++) lfn_buf[k] = 0;
     
     if (start_cluster == 0 && (vol->type == 12 || vol->type == 16)) {
         unsigned int root_start = vol->reserved_sectors + vol->num_fats * vol->sectors_per_fat;
         for (unsigned int i = 0; i < vol->root_dir_sectors; i++) {
             if (disk_read_drive(vol->drive_idx, vol->partition_lba + root_start + i, buf) != 0) return -1;
             for (int j = 0; j < 16; j++) {
-                int ret = cb(vol, (dir_entry_t*)&buf[j * 32], root_start + i, j * 32, user_data);
+                dir_entry_t* entry = (dir_entry_t*)&buf[j * 32];
+                if (entry->name[0] == 0x00) return 0;
+                if (entry->name[0] == 0xE5) {
+                    lfn_valid = 0;
+                    lfn_buf[0] = 0;
+                    continue;
+                }
+                if (entry->attr == 0x0F) {
+                    fat_lfn_entry_t* lfn = (fat_lfn_entry_t*)entry;
+                    int seq = lfn->order & 0x1F;
+                    if (seq >= 1 && seq <= 20) {
+                        if (lfn->order & 0x40) {
+                            lfn_valid = 1;
+                            lfn_chksum = lfn->checksum;
+                            lfn_last_seq = seq;
+                            for (int k = 0; k < 256; k++) lfn_buf[k] = 0;
+                        }
+                        if (lfn_valid && lfn->checksum == lfn_chksum && seq <= lfn_last_seq) {
+                            lfn_last_seq = seq;
+                            int base_char = (seq - 1) * 13;
+                            unsigned short ucs[13];
+                            for (int k = 0; k < 5; k++) ucs[k] = lfn->name1[k];
+                            for (int k = 0; k < 6; k++) ucs[5 + k] = lfn->name2[k];
+                            for (int k = 0; k < 2; k++) ucs[11 + k] = lfn->name3[k];
+
+                            for (int k = 0; k < 13; k++) {
+                                unsigned short c = ucs[k];
+                                int pos = base_char + k;
+                                if (pos < 255) {
+                                    if (c == 0x0000 || c == 0xFFFF) {
+                                        lfn_buf[pos] = 0;
+                                    } else if (c < 0x80) {
+                                        lfn_buf[pos] = (char)c;
+                                    } else {
+                                        lfn_buf[pos] = (char)(c & 0xFF);
+                                    }
+                                }
+                            }
+                        } else {
+                            lfn_valid = 0;
+                        }
+                    }
+                    continue;
+                }
+
+                const char* lfn_to_pass = 0;
+                if (lfn_valid && lfn_buf[0] != 0) {
+                    if (calc_lfn_checksum(entry->name) == lfn_chksum) {
+                        lfn_to_pass = lfn_buf;
+                    }
+                }
+
+                int ret = cb(vol, entry, lfn_to_pass, root_start + i, j * 32, user_data);
+                lfn_valid = 0;
+                lfn_buf[0] = 0;
+
                 if (ret == 1) return 0;
                 if (ret == 2) { disk_write_drive(vol->drive_idx, vol->partition_lba + root_start + i, buf); return 0; }
             }
@@ -280,7 +359,62 @@ static int traverse_dir(fat_fs_t* vol, unsigned int start_cluster, dir_callback_
         for (unsigned int i = 0; i < vol->sectors_per_cluster; i++) {
             if (disk_read_drive(vol->drive_idx, vol->partition_lba + start_sector + i, buf) != 0) return -1;
             for (int j = 0; j < 16; j++) {
-                int ret = cb(vol, (dir_entry_t*)&buf[j * 32], start_sector + i, j * 32, user_data);
+                dir_entry_t* entry = (dir_entry_t*)&buf[j * 32];
+                if (entry->name[0] == 0x00) return 0;
+                if (entry->name[0] == 0xE5) {
+                    lfn_valid = 0;
+                    lfn_buf[0] = 0;
+                    continue;
+                }
+                if (entry->attr == 0x0F) {
+                    fat_lfn_entry_t* lfn = (fat_lfn_entry_t*)entry;
+                    int seq = lfn->order & 0x1F;
+                    if (seq >= 1 && seq <= 20) {
+                        if (lfn->order & 0x40) {
+                            lfn_valid = 1;
+                            lfn_chksum = lfn->checksum;
+                            lfn_last_seq = seq;
+                            for (int k = 0; k < 256; k++) lfn_buf[k] = 0;
+                        }
+                        if (lfn_valid && lfn->checksum == lfn_chksum && seq <= lfn_last_seq) {
+                            lfn_last_seq = seq;
+                            int base_char = (seq - 1) * 13;
+                            unsigned short ucs[13];
+                            for (int k = 0; k < 5; k++) ucs[k] = lfn->name1[k];
+                            for (int k = 0; k < 6; k++) ucs[5 + k] = lfn->name2[k];
+                            for (int k = 0; k < 2; k++) ucs[11 + k] = lfn->name3[k];
+
+                            for (int k = 0; k < 13; k++) {
+                                unsigned short c = ucs[k];
+                                int pos = base_char + k;
+                                if (pos < 255) {
+                                    if (c == 0x0000 || c == 0xFFFF) {
+                                        lfn_buf[pos] = 0;
+                                    } else if (c < 0x80) {
+                                        lfn_buf[pos] = (char)c;
+                                    } else {
+                                        lfn_buf[pos] = (char)(c & 0xFF);
+                                    }
+                                }
+                            }
+                        } else {
+                            lfn_valid = 0;
+                        }
+                    }
+                    continue;
+                }
+
+                const char* lfn_to_pass = 0;
+                if (lfn_valid && lfn_buf[0] != 0) {
+                    if (calc_lfn_checksum(entry->name) == lfn_chksum) {
+                        lfn_to_pass = lfn_buf;
+                    }
+                }
+
+                int ret = cb(vol, entry, lfn_to_pass, start_sector + i, j * 32, user_data);
+                lfn_valid = 0;
+                lfn_buf[0] = 0;
+
                 if (ret == 1) return 0;
                 if (ret == 2) { disk_write_drive(vol->drive_idx, vol->partition_lba + start_sector + i, buf); return 0; }
             }
@@ -296,21 +430,54 @@ static int traverse_dir(fat_fs_t* vol, unsigned int start_cluster, dir_callback_
 // Find file in specific dir
 // ---------------------------------------------------------
 struct find_cb_data {
-    const char* fat_name;
-    const char* fat_ext;
+    const char* target_name;
     file_info_t* info;
     int found;
 };
 
-static int find_cb(fat_fs_t* vol, dir_entry_t* entry, unsigned int sector, unsigned int offset, void* ud) {
+static int find_cb(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, unsigned int sector, unsigned int offset, void* ud) {
     (void)vol; (void)sector; (void)offset;
     if (entry->name[0] == 0x00) return 1;
-    if (entry->name[0] == 0xE5 || entry->attr == 0x0F || (entry->attr & 0x08)) return 0;
+    if (entry->name[0] == 0xE5 || (entry->attr & 0x08)) return 0;
     
     struct find_cb_data* data = (struct find_cb_data*)ud;
-    if (str_casecmp((const char*)entry->name, data->fat_name, 8) == 0 &&
-        str_casecmp((const char*)&entry->name[8], data->fat_ext, 3) == 0) {
-        fat_name_to_str(entry->name, data->info->name);
+    int target_len = str_len(data->target_name);
+
+    int matched = 0;
+    // 1. Match against Long File Name
+    if (lfn_name && lfn_name[0]) {
+        int lfn_len = str_len(lfn_name);
+        if (lfn_len == target_len && str_casecmp(lfn_name, data->target_name, target_len) == 0) {
+            matched = 1;
+        }
+    }
+
+    // 2. Match against 8.3 formatted string (e.g. "FILE.TXT")
+    if (!matched) {
+        char short_str[16];
+        fat_name_to_str(entry->name, short_str);
+        int short_len = str_len(short_str);
+        if (short_len == target_len && str_casecmp(short_str, data->target_name, target_len) == 0) {
+            matched = 1;
+        }
+    }
+
+    // 3. Match against 8.3 raw name
+    if (!matched) {
+        unsigned char fat_name[8], fat_ext[3];
+        str_to_fat_name(data->target_name, fat_name, fat_ext);
+        if (str_casecmp((const char*)entry->name, (const char*)fat_name, 8) == 0 &&
+            str_casecmp((const char*)&entry->name[8], (const char*)fat_ext, 3) == 0) {
+            matched = 1;
+        }
+    }
+
+    if (matched) {
+        if (lfn_name && lfn_name[0]) {
+            str_copy(data->info->name, lfn_name, sizeof(data->info->name));
+        } else {
+            fat_name_to_str(entry->name, data->info->name);
+        }
         data->info->attr = entry->attr;
         data->info->size = entry->file_size;
         data->info->first_cluster = get_first_cluster(entry);
@@ -321,9 +488,7 @@ static int find_cb(fat_fs_t* vol, dir_entry_t* entry, unsigned int sector, unsig
 }
 
 static int fat_find_in_dir(fat_fs_t* vol, unsigned int dir_cluster, const char* comp, file_info_t* info) {
-    unsigned char fat_name[8], fat_ext[3];
-    str_to_fat_name(comp, fat_name, fat_ext);
-    struct find_cb_data data = { (const char*)fat_name, (const char*)fat_ext, info, 0 };
+    struct find_cb_data data = { comp, info, 0 };
     if (traverse_dir(vol, dir_cluster, find_cb, &data) != 0) return -1;
     return data.found ? 0 : -1;
 }
@@ -334,7 +499,7 @@ int fat_find(const char* name, file_info_t* info) {
     if (!vol) return -1;
     
     unsigned int cluster = 0;
-    char comp[16];
+    char comp[128];
     while (*path) {
         path = split_path(path, comp);
         if (comp[0] == 0) break;
@@ -351,16 +516,17 @@ struct list_cb_data {
     void (*callback)(const file_info_t*);
 };
 
-static int list_cb(fat_fs_t* vol, dir_entry_t* entry, unsigned int sector, unsigned int offset, void* ud) {
+static int list_cb(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, unsigned int sector, unsigned int offset, void* ud) {
     (void)vol; (void)sector; (void)offset;
-    if (entry->name[0] == 0x00) return 1; 
-    if (entry->name[0] == 0xE5) return 0; 
-    if (entry->attr == 0x0F) return 0;
     if (entry->attr & 0x08) return 0;
     
     struct list_cb_data* data = (struct list_cb_data*)ud;
     file_info_t info;
-    fat_name_to_str(entry->name, info.name);
+    if (lfn_name && lfn_name[0]) {
+        str_copy(info.name, lfn_name, sizeof(info.name));
+    } else {
+        fat_name_to_str(entry->name, info.name);
+    }
     info.attr = entry->attr;
     info.size = entry->file_size;
     info.first_cluster = get_first_cluster(entry);
@@ -373,7 +539,7 @@ int fat_list_dir(const char* path, void (*callback)(const file_info_t*)) {
     if (!vol) return -1;
     
     unsigned int cluster = 0;
-    char comp[16];
+    char comp[128];
     file_info_t info;
     
     while (*path) {
@@ -401,7 +567,7 @@ file_handle_t* fat_open(const char* name) {
 
     if (fat_find(name, &info) != 0) return 0;
     if (info.attr & 0x10) return 0;
-    str_copy(g_handle.name, info.name, 13);
+    str_copy(g_handle.name, info.name, sizeof(g_handle.name));
     g_handle.size = info.size;
     g_handle.first_cluster = info.first_cluster;
     g_handle.current_cluster = info.first_cluster;
@@ -483,20 +649,31 @@ static void free_chain(fat_fs_t* vol, unsigned int cluster) {
 // Deletion
 // ---------------------------------------------------------
 struct del_cb_data {
+    const char* target_name;
     const char* fat_name;
     const char* fat_ext;
     int found;
 };
 
-static int del_cb(fat_fs_t* vol, dir_entry_t* entry, unsigned int sector, unsigned int offset, void* ud) {
+static int del_cb(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, unsigned int sector, unsigned int offset, void* ud) {
     (void)sector; (void)offset;
     if (entry->name[0] == 0x00) return 1;
-    if (entry->name[0] == 0xE5 || entry->attr == 0x0F || (entry->attr & 0x08)) return 0;
+    if (entry->name[0] == 0xE5 || (entry->attr & 0x08)) return 0;
     
     struct del_cb_data* data = (struct del_cb_data*)ud;
-    if (str_casecmp((const char*)entry->name, data->fat_name, 8) == 0 &&
+    int matched = 0;
+    if (lfn_name && lfn_name[0] && data->target_name) {
+        int tlen = str_len(data->target_name);
+        if (str_len(lfn_name) == tlen && str_casecmp(lfn_name, data->target_name, tlen) == 0) {
+            matched = 1;
+        }
+    }
+    if (!matched && str_casecmp((const char*)entry->name, data->fat_name, 8) == 0 &&
         str_casecmp((const char*)&entry->name[8], data->fat_ext, 3) == 0) {
-        
+        matched = 1;
+    }
+
+    if (matched) {
         unsigned int cluster = get_first_cluster(entry);
         entry->name[0] = 0xE5;
         if (!(entry->attr & 0x10)) {
@@ -515,7 +692,7 @@ int fat_delete(const char* name) {
     if (!vol) return -1;
     
     unsigned int cluster = 0;
-    char comp[16];
+    char comp[128];
     file_info_t info;
     
     // traverse to parent directory
@@ -529,7 +706,7 @@ int fat_delete(const char* name) {
     
     unsigned char fat_name[8], fat_ext[3];
     str_to_fat_name(comp, fat_name, fat_ext);
-    struct del_cb_data data = { (const char*)fat_name, (const char*)fat_ext, 0 };
+    struct del_cb_data data = { comp, (const char*)fat_name, (const char*)fat_ext, 0 };
     if (traverse_dir(vol, cluster, del_cb, &data) != 0) return -1;
     return data.found ? 0 : -1;
 }
@@ -545,10 +722,10 @@ struct ren_cb_data {
     int found;
 };
 
-static int ren_cb(fat_fs_t* vol, dir_entry_t* entry, unsigned int sector, unsigned int offset, void* ud) {
-    (void)vol; (void)sector; (void)offset;
+static int ren_cb(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, unsigned int sector, unsigned int offset, void* ud) {
+    (void)vol; (void)sector; (void)offset; (void)lfn_name;
     if (entry->name[0] == 0x00) return 1;
-    if (entry->name[0] == 0xE5 || entry->attr == 0x0F || (entry->attr & 0x08)) return 0;
+    if (entry->name[0] == 0xE5 || (entry->attr & 0x08)) return 0;
     
     struct ren_cb_data* data = (struct ren_cb_data*)ud;
     if (str_casecmp((const char*)entry->name, data->old_fat_name, 8) == 0 &&
@@ -572,7 +749,7 @@ int fat_rename(const char* old_name, const char* new_name) {
     if (!vol) return -1;
     
     unsigned int cluster = 0;
-    char comp[16];
+    char comp[128];
     while (*path) {
         const char* next_path = split_path(path, comp);
         if (*next_path == 0) break; 
@@ -582,7 +759,7 @@ int fat_rename(const char* old_name, const char* new_name) {
     }
     
     const char* new_path = new_name;
-    char new_comp[16];
+    char new_comp[128];
     while (*new_path) {
         const char* next_path = split_path(new_path, new_comp);
         if (*next_path == 0) break; 
@@ -662,8 +839,8 @@ struct cre_cb_data {
     int found;
 };
 
-static int cre_cb(fat_fs_t* vol, dir_entry_t* entry, unsigned int sector, unsigned int offset, void* ud) {
-    (void)vol; (void)sector; (void)offset;
+static int cre_cb(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, unsigned int sector, unsigned int offset, void* ud) {
+    (void)vol; (void)sector; (void)offset; (void)lfn_name;
     if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
         struct cre_cb_data* data = (struct cre_cb_data*)ud;
         
@@ -723,7 +900,7 @@ int fat_create_ext(const char* name, int is_dir) {
     if (!vol) return -1;
     
     unsigned int cluster = 0;
-    char comp[16];
+    char comp[128];
     while (*path) {
         const char* next_path = split_path(path, comp);
         if (*next_path == 0) break;
@@ -744,6 +921,7 @@ int fat_create(const char* name) { return fat_create_ext(name, 0); }
 int fat_create_dir(const char* name) { return fat_create_ext(name, 1); }
 
 struct update_cb_data {
+    const char* target_name;
     const char* fat_name;
     const char* fat_ext;
     unsigned int size;
@@ -751,15 +929,25 @@ struct update_cb_data {
     int found;
 };
 
-static int update_cb(fat_fs_t* vol, dir_entry_t* entry, unsigned int sector, unsigned int offset, void* ud) {
+static int update_cb(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, unsigned int sector, unsigned int offset, void* ud) {
     (void)vol; (void)sector; (void)offset;
     if (entry->name[0] == 0x00) return 1;
-    if (entry->name[0] == 0xE5 || entry->attr == 0x0F || (entry->attr & 0x08)) return 0;
+    if (entry->name[0] == 0xE5 || (entry->attr & 0x08)) return 0;
     
     struct update_cb_data* data = (struct update_cb_data*)ud;
-    if (str_casecmp((const char*)entry->name, data->fat_name, 8) == 0 &&
+    int matched = 0;
+    if (lfn_name && lfn_name[0] && data->target_name) {
+        int tlen = str_len(data->target_name);
+        if (str_len(lfn_name) == tlen && str_casecmp(lfn_name, data->target_name, tlen) == 0) {
+            matched = 1;
+        }
+    }
+    if (!matched && str_casecmp((const char*)entry->name, data->fat_name, 8) == 0 &&
         str_casecmp((const char*)&entry->name[8], data->fat_ext, 3) == 0) {
-        
+        matched = 1;
+    }
+
+    if (matched) {
         entry->file_size = data->size;
         set_first_cluster(entry, data->first_cluster);
         data->found = 1;
@@ -781,7 +969,7 @@ int fat_write_file(const char* name, const unsigned char* buf, unsigned int size
     const char* path = name;
     fat_fs_t* vol = get_vol(&path);
     unsigned int cluster = 0;
-    char comp[16];
+    char comp[128];
     while (*path) {
         const char* next_path = split_path(path, comp);
         if (*next_path == 0) break;
@@ -821,7 +1009,7 @@ int fat_write_file(const char* name, const unsigned char* buf, unsigned int size
     
     unsigned char fat_name[8], fat_ext[3];
     str_to_fat_name(comp, fat_name, fat_ext);
-    struct update_cb_data data = { (const char*)fat_name, (const char*)fat_ext, size, first_cluster, 0 };
+    struct update_cb_data data = { comp, (const char*)fat_name, (const char*)fat_ext, size, first_cluster, 0 };
     traverse_dir(vol, cluster, update_cb, &data);
     
     return 0;

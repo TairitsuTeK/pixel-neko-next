@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.000)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.010)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -125,6 +125,15 @@
    ```bash
    make clean
    ```
+
+## 🚀 Build 2010.010 更新特性
+- **📁 FAT16/FAT32 长文件名（LFN / VFAT）全栈支持**：实现 VFAT 0x0F 长目录项双向解析与校验合成，突破 8.3 格式限制，文件管理器与应用全线支持长文件名无缝浏览与打开。
+- **🎛️ CMI8738 声卡 48kHz 硬件 DAC 采样率同步**：修复 `FUNCTRL1` 中仅设置 `ASFC` 未配置 `DSFC` 导致 DAC 始终运行在 44.1kHz 的硬件分频抖动与卡顿缺陷，实现 48kHz MP3 / 96kHz 降采样极致流畅回放。
+- **🔇 关机停机画面静音与 DMA 彻底停止**：在退出系统进入经典 Safe to Turn Off 画面及重启前立即切断声卡 DMA 环形缓冲与静音输出，彻底消除关机停机时的硬件残余卡碟循环循环。
+- **💽 Intel H55 (ASUS P7H55-M LE) SATA / IDE Native PCI 驱动器自适应探测**：新增 PCI 存储控制器（Class 0101）全面枚举与 BAR0~BAR3 Native PCI I/O 端口识别，解决现代与近现代主板兼容 IDE 模式下找不到硬盘与光驱的问题。
+- **🏷️ 开机画面与系统内核版本号迭代同步**：开机 Boot Splash 及系统关于视窗全面联动动态版本号，正式迭代至 `Build 2010.010`。
+
+---
 
 ## 🎵 Build 2010.000 更新特性
 - **🔊 CMI8738 PCI 原生声卡驱动与 DMA 环形缓冲**：支持 C-Media CMI8738/CMI8338 PCI 独立声卡，配置 PCI 总线主控与 64KB 连续物理页 DMA 环形双缓冲，杜绝音频爆音。

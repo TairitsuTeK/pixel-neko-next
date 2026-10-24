@@ -343,10 +343,6 @@ int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
             if (info.bitrate_kbps > 0) {
                 audio_set_bitrate(info.bitrate_kbps, g_mp3_info.is_vbr);
             }
-            if (info.hz > 0) {
-                unsigned int cur_time_s = (g_cur_frame_idx * (unsigned int)samples) / (unsigned int)info.hz;
-                audio_set_time((int)cur_time_s);
-            }
 
             unsigned int frames_to_copy = (unsigned int)samples;
             if (frames_to_copy > max_samples) frames_to_copy = max_samples;

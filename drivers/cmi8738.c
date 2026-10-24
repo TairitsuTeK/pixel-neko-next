@@ -121,10 +121,10 @@ int cmi8738_init(void) {
     f0 &= ~(1 << 4); // Clear PAUSE0
     cmi_write32(CMI_REG_FUNCTRL0, f0);
 
-    // Default: 44.1 kHz (ASFC = 011b, bits 12:10 in FUNCTRL1)
+    // Default: 44.1 kHz (ASFC = 011b, bits 12:10; DSFC = 011b, bits 15:13 in FUNCTRL1)
     unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
-    f1 &= ~(7 << 10);
-    f1 |= (3 << 10); // 011b = 44100 Hz
+    f1 &= ~((7 << 10) | (7 << 13));
+    f1 |= ((3 << 10) | (3 << 13)); // 011b = 44100 Hz
     cmi_write32(CMI_REG_FUNCTRL1, f1);
 
     // Format: 16-bit Stereo (CH0FMT = 11b, bits 1:0 in CHFORMAT)
@@ -161,7 +161,7 @@ unsigned short cmi8738_get_io_base(void) {
 void cmi8738_set_format(int rate, int bits, int stereo) {
     if (!g_cmi_present || !g_cmi_io_base) return;
 
-    // Rate selection in FUNCTRL1 (bits 12:10 for Channel A)
+    // Rate selection in FUNCTRL1 (bits 15:13 DSFC for DAC, bits 12:10 ASFC for ADC)
     unsigned int asfc = 3; // 44100 default
     if (rate >= 48000) asfc = 4;      // 100b = 48000
     else if (rate >= 44100) asfc = 3; // 011b = 44100
@@ -170,8 +170,8 @@ void cmi8738_set_format(int rate, int bits, int stereo) {
     else asfc = 0;                    // 000b = 5512
 
     unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
-    f1 &= ~(7 << 10);
-    f1 |= (asfc << 10);
+    f1 &= ~((7 << 10) | (7 << 13));
+    f1 |= ((asfc << 10) | (asfc << 13));
     cmi_write32(CMI_REG_FUNCTRL1, f1);
 
     // Format in CHFORMAT (bits 1:0 for Channel A)

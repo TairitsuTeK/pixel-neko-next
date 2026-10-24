@@ -101,7 +101,7 @@ static void format_kb(unsigned int kb, char* buf) {
 static void vfs_fm_callback(const vfs_dirent_t* ent) {
     if (file_count < 64) {
         int i;
-        for (i = 0; i < 31 && ent->name[i]; i++) {
+        for (i = 0; i < 127 && ent->name[i]; i++) {
             files[file_count].name[i] = ent->name[i];
         }
         files[file_count].name[i] = '\0';
@@ -420,13 +420,25 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         }
         int fg = (idx == selected) ? 15 : 0;
         
-        char dname[32] = {0};
+        char dname[128] = {0};
         if (files[idx].attr & 0x10) {
             dname[0] = '['; dname[1] = 0;
             my_strcat(dname, files[idx].name);
             my_strcat(dname, "]");
         } else {
             my_strcpy(dname, files[idx].name);
+        }
+        int max_chars = (ww - 95) / 8;
+        if (max_chars > 0 && max_chars < 127) {
+            int dlen = my_strlen(dname);
+            if (dlen > max_chars) {
+                dname[max_chars] = '\0';
+                if (max_chars > 3) {
+                    dname[max_chars - 1] = '.';
+                    dname[max_chars - 2] = '.';
+                    dname[max_chars - 3] = '.';
+                }
+            }
         }
         font_draw_text(v, wx+8, y, dname, fg);
         

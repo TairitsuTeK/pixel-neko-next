@@ -1,12 +1,13 @@
 #ifndef DISK_H
 #define DISK_H
 
-#define MAX_DRIVES 4
+#define MAX_DRIVES 8
 
 typedef struct {
     int present;
     int is_atapi;
     unsigned int base_port;
+    unsigned int ctrl_port;
     int drive_idx;
     unsigned int lba_offset;
     unsigned int total_sectors;
