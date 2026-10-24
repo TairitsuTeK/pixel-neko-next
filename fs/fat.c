@@ -75,14 +75,20 @@ static void str_to_fat_name(const char* input, unsigned char* name, unsigned cha
 
 // Drive parser: e.g. "C:\dir\file.txt" -> volume 0, returns "dir\file.txt"
 static fat_fs_t* get_vol(const char** path) {
-    int v = 0; // Default C:
-    if (*path && (*path)[0] >= 'A' && (*path)[0] <= 'Z' && (*path)[1] == ':') {
-        v = (*path)[0] - 'C';
-        if (v < 0 || v >= MAX_VOLUMES) v = 0;
+    if (!path || !*path) return 0;
+    int v = -1;
+    if ((*path)[0] >= 'A' && (*path)[0] <= 'Z' && (*path)[1] == ':') {
+        char letter = (*path)[0];
         *path += 2;
         if ((*path)[0] == '\\' || (*path)[0] == '/') (*path)++;
-    } else if (*path && ((*path)[0] == '\\' || (*path)[0] == '/')) {
+        if (letter >= 'C') {
+            v = letter - 'C';
+        } else {
+            return 0; // A: and B: are floppy drives, not ATA volumes
+        }
+    } else if ((*path)[0] == '\\' || (*path)[0] == '/') {
         (*path)++;
+        v = 0; // Default C:
     }
     if (v >= 0 && v < MAX_VOLUMES && g_volumes[v].type != 0) return &g_volumes[v];
     return 0;

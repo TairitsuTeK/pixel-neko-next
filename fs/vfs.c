@@ -48,36 +48,28 @@ void vfs_init(void) {
     part_scan_all();
 
     // 1. Floppy drives: fixed assignment to A: and B:
-    if (fdc_has_drive(0)) {
-        vfs_drive_t* d = &g_vfs_drives[0]; // A:
-        d->present = 1;
-        d->drv_type = VFS_DRV_FLOPPY;
-        d->fs_type = PART_FS_FAT12;
-        d->is_supported = 1;
-        d->is_readonly = 0;
-        d->dev = blkdev_get(0);
-        d->start_lba = 0;
-        d->total_sectors = fdc_get_total_sectors(0);
-        d->total_kb = 1440;
-        d->free_kb = 0;
-        d->is_free_known = 0;
-        my_strcpy(d->label, "3.5\" Floppy (A:)", sizeof(d->label));
-    }
-
-    if (fdc_has_drive(1)) {
-        vfs_drive_t* d = &g_vfs_drives[1]; // B:
-        d->present = 1;
-        d->drv_type = VFS_DRV_FLOPPY;
-        d->fs_type = PART_FS_FAT12;
-        d->is_supported = 1;
-        d->is_readonly = 0;
-        d->dev = blkdev_get(1);
-        d->start_lba = 0;
-        d->total_sectors = fdc_get_total_sectors(1);
-        d->total_kb = 1440;
-        d->free_kb = 0;
-        d->is_free_known = 0;
-        my_strcpy(d->label, "3.5\" Floppy (B:)", sizeof(d->label));
+    int blk_total = blkdev_count();
+    for (int i = 0; i < blk_total; i++) {
+        blkdev_t* bdev = blkdev_get(i);
+        if (bdev && bdev->type == BLK_TYPE_FLOPPY) {
+            int unit = bdev->unit;
+            if (unit == 0 || unit == 1) {
+                vfs_drive_t* d = &g_vfs_drives[unit]; // 0 -> A:, 1 -> B:
+                d->present = 1;
+                d->drv_type = VFS_DRV_FLOPPY;
+                d->fs_type = PART_FS_FAT12;
+                d->is_supported = 1;
+                d->is_readonly = 0;
+                d->dev = bdev;
+                d->start_lba = 0;
+                d->total_sectors = 2880;
+                d->total_kb = 1440;
+                d->free_kb = 0;
+                d->is_free_known = 0;
+                if (unit == 0) my_strcpy(d->label, "3.5\" Floppy (A:)", sizeof(d->label));
+                else my_strcpy(d->label, "3.5\" Floppy (B:)", sizeof(d->label));
+            }
+        }
     }
 
     // 2. Hard disk partitions: assigned starting from C:
@@ -305,21 +297,10 @@ int vfs_get_drive_space(char letter, unsigned int* total_kb, unsigned int* free_
     }
 
     if (drv->drv_type == VFS_DRV_FLOPPY) {
-        unsigned int tot = 1440, fre = 0;
-        if (fat_get_volume_space(letter, &tot, &fre) == 0) {
-            drv->total_kb = tot;
-            drv->free_kb = fre;
-            drv->is_free_known = 1;
-            if (total_kb) *total_kb = tot;
-            if (free_kb) *free_kb = fre;
-            if (is_known) *is_known = 1;
-            return 0;
-        } else {
-            if (total_kb) *total_kb = 1440;
-            if (free_kb) *free_kb = 0;
-            if (is_known) *is_known = 0;
-            return 0;
-        }
+        if (total_kb) *total_kb = 1440;
+        if (free_kb) *free_kb = 0;
+        if (is_known) *is_known = 0;
+        return 0;
     }
 
     // Hard disk partition

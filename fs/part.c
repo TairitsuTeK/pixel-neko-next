@@ -97,6 +97,73 @@ static void probe_filesystem(blkdev_t* dev, unsigned int lba, partition_entry_t*
     my_strcpy(part->label, "Unformatted / Unknown", sizeof(part->label));
 }
 
+static void scan_gpt_partitions(blkdev_t* dev) {
+    unsigned char hdr_buf[512];
+    if (dev->read_sectors(dev, 1, 1, hdr_buf) != 0) return; // Read LBA 1
+
+    // Check "EFI PART" signature: 0x54524150 ("TRAP") and 0x20494645 (" IFE")
+    if (*(unsigned int*)&hdr_buf[0] != 0x54524150 || *(unsigned int*)&hdr_buf[4] != 0x20494645) {
+        return;
+    }
+
+    unsigned int part_lba = *(unsigned int*)&hdr_buf[72]; // PartitionEntryLBA (low 32 bits)
+    unsigned int num_parts = *(unsigned int*)&hdr_buf[80]; // NumberOfPartitionEntries
+    unsigned int part_size = *(unsigned int*)&hdr_buf[84]; // SizeOfPartitionEntry (usually 128)
+
+    if (part_lba == 0 || num_parts == 0 || part_size < 128) return;
+    if (num_parts > 128) num_parts = 128; // Cap at 128 entries
+
+    unsigned int entries_per_sector = 512 / part_size;
+    if (entries_per_sector == 0) return;
+    unsigned int sectors_to_read = (num_parts + entries_per_sector - 1) / entries_per_sector;
+    if (sectors_to_read > 32) sectors_to_read = 32;
+
+    for (unsigned int s = 0; s < sectors_to_read; s++) {
+        unsigned char sec_buf[512];
+        if (dev->read_sectors(dev, part_lba + s, 1, sec_buf) != 0) break;
+
+        for (unsigned int e = 0; e < entries_per_sector; e++) {
+            unsigned int idx = s * entries_per_sector + e;
+            if (idx >= num_parts) break;
+
+            unsigned char* pent = &sec_buf[e * part_size];
+
+            // Check if Type GUID is all zeros (unused entry)
+            int all_zero = 1;
+            for (int k = 0; k < 16; k++) {
+                if (pent[k] != 0) { all_zero = 0; break; }
+            }
+            if (all_zero) continue;
+
+            unsigned int start_lba = *(unsigned int*)&pent[32];
+            unsigned int end_lba = *(unsigned int*)&pent[40];
+            if (start_lba == 0 || end_lba < start_lba) continue;
+
+            unsigned int sectors = end_lba - start_lba + 1;
+
+            if (g_partition_count < MAX_PARTITIONS) {
+                partition_entry_t* part = &g_partitions[g_partition_count++];
+                part->dev = dev;
+                part->start_lba = start_lba;
+                part->total_sectors = sectors;
+                part->sys_id = 0xEE;
+
+                // Extract UTF-16LE partition name (pent[56..127]) to ASCII
+                int nlen = 0;
+                for (int c = 0; c < 30; c++) {
+                    unsigned short ch = *(unsigned short*)&pent[56 + c * 2];
+                    if (ch == 0) break;
+                    if (ch >= 32 && ch <= 126) part->label[nlen++] = (char)ch;
+                    else part->label[nlen++] = '_';
+                }
+                part->label[nlen] = '\0';
+
+                probe_filesystem(dev, start_lba, part);
+            }
+        }
+    }
+}
+
 static void scan_drive_partitions(blkdev_t* dev) {
     unsigned char mbr[512];
     if (dev->read_sectors(dev, 0, 1, mbr) != 0) return;
@@ -124,6 +191,12 @@ static void scan_drive_partitions(blkdev_t* dev) {
         unsigned int sectors = *(unsigned int*)&ent[12];
 
         if (sectors == 0) continue;
+
+        // If GPT Protective MBR (0xEE), scan GPT partition table
+        if (type == 0xEE) {
+            scan_gpt_partitions(dev);
+            return;
+        }
 
         if (type == 0x05 || type == 0x0F || type == 0x85) {
             ext_lba = start_lba;
