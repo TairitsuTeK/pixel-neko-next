@@ -47,6 +47,33 @@ int mp3dec_decode_frame(mp3dec_t *dec, const uint8_t *mp3, int mp3_bytes, mp3d_s
 #define NULL ((void*)0)
 #endif
 
+static inline void* mp3_memcpy(void* d, const void* s, unsigned int n) {
+    char* cd = (char*)d;
+    const char* cs = (const char*)s;
+    while (n--) *cd++ = *cs++;
+    return d;
+}
+static inline void* mp3_memset(void* d, int c, unsigned int n) {
+    char* cd = (char*)d;
+    while (n--) *cd++ = (char)c;
+    return d;
+}
+static inline void* mp3_memmove(void* d, const void* s, unsigned int n) {
+    char* cd = (char*)d;
+    const char* cs = (const char*)s;
+    if (cd < cs) {
+        while (n--) *cd++ = *cs++;
+    } else {
+        cd += n;
+        cs += n;
+        while (n--) *--cd = *--cs;
+    }
+    return d;
+}
+#define memcpy  mp3_memcpy
+#define memset  mp3_memset
+#define memmove mp3_memmove
+
 #define MAX_FREE_FORMAT_FRAME_SIZE  2304    /* more than ISO spec's */
 #ifndef MAX_FRAME_SYNC_MATCHES
 #define MAX_FRAME_SYNC_MATCHES      10
