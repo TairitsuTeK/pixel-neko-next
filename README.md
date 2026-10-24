@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.012)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.013)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -125,6 +125,16 @@
    ```bash
    make clean
    ```
+
+## 🚀 Build 2010.013 更新特性
+- **🔊 CMI8738 物理实体声卡绿色音频孔（Front Out）发声与硬件寄存器修正**：
+  - **混音器端口反转修复**：更正 SB16 兼容混音器地址端口（0x23）与数据端口（0x22）的颠倒定义，解决实卡开机音量默认被硬件置零（静音）且音量调节无法写入硬件的致命问题。
+  - **PCM 硬件静音位彻底解除**：在 `CM_REG_MIXER1` (0x24) 中主动清除 `CM_WSMUTE` (Bit 6, 0x40)，打通物理 DAC 的 PCM 模拟输出通路。
+  - **声道路由与前置放大增强**：在 `CM_REG_MISC_CTRL` (0x18) 中启用 Double DAC (`CM_ENDBDAC`)、四声道同步复制 (`CM_N4SPK3D`) 以及模拟输出 +6dB 前级放大 (`CM_VMGAIN`)，强制将 CH0 映射至绿色 Line-Out/耳机孔（`CM_XCHGDAC = 0`），并关闭节电休眠（`CM_PWD = 0`）。
+  - **PCI 总线主控请求（BREQ）激活**：在 `FUNCTRL1` (0x04) 中置位 `CM_BREQ` (Bit 4)，使物理声卡在实机 PCI 总线上能够正常发起 DMA 内存拉取。
+  - **扬声器开关解闭**：在混音器 0xF0 扩展寄存器中清除 `CM_VSPKM`，在 0x3C 输出开关中开启全通道通路，保证耳机与桌面音箱纯净出声。
+
+---
 
 ## 🚀 Build 2010.010 更新特性
 - **📁 FAT16/FAT32 长文件名（LFN / VFAT）全栈支持**：实现 VFAT 0x0F 长目录项双向解析与校验合成，突破 8.3 格式限制，文件管理器与应用全线支持长文件名无缝浏览与打开。

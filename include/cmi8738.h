@@ -16,10 +16,29 @@
 #define CMI_REG_INT_STATUS     0x10
 #define CMI_REG_LEGACY_CTRL    0x14
 #define CMI_REG_MISC_CTRL      0x18
-#define CMI_REG_SB_INDEX       0x22
-#define CMI_REG_SB_DATA        0x23
+#define CMI_REG_SB_DATA        0x22
+#define CMI_REG_SB_INDEX       0x23
+#define CMI_REG_MIXER1         0x24
+#define CMI_REG_MIXER2         0x25
 #define CMI_REG_CH0_FRAME1     0x80
 #define CMI_REG_CH0_FRAME2     0x84
+#define CMI_REG_EXT_MISC       0x90
+
+// FUNCTRL1 Bits
+#define CMI_BREQ               0x00000010 // PCI Bus Master Enable
+
+// MISC_CTRL Bits
+#define CMI_MISC_PWD           0x80000000 // Power Down (0 = normal, 1 = powered down)
+#define CMI_MISC_RESET         0x40000000 // Codec Reset
+#define CMI_MISC_VMGAIN        0x10000000 // Analog Master Amp +6dB Gain
+#define CMI_MISC_TXVX          0x08000000 // Chipset Compatibility
+#define CMI_MISC_N4SPK3D       0x04000000 // Copy Front to Rear (4-Speaker mode)
+#define CMI_MISC_ENDBDAC       0x00800000 // Enable Double DAC
+#define CMI_MISC_XCHGDAC       0x00400000 // 0: Front = CH0, 1: Front = CH1
+
+// MIXER1 (0x24) Bits
+#define CMI_MIXER1_FMMUTE      0x80       // FM Mute
+#define CMI_MIXER1_WSMUTE      0x40       // PCM Wave Mute (1 = Mute, 0 = Unmute)
 
 // DMA Ring Buffer Dimensions: 64KB total, two 32KB halves
 #define CMI_DMA_BUFFER_BYTES   65536

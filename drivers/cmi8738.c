@@ -77,7 +77,7 @@ int cmi8738_init(void) {
 
                 // Enable PCI Bus Mastering, Memory Space, and I/O Space
                 unsigned int cmd = pci_read_config(bus, slot, 0, 0x04);
-                pci_write_config(bus, slot, 0, 0x04, cmd | 0x05); // Bus Master (0x04) + I/O Space (0x01)
+                pci_write_config(bus, slot, 0, 0x04, cmd | 0x07); // Bus Master (0x04) + Mem (0x02) + I/O Space (0x01)
 
                 g_cmi_present = 1;
                 break;
@@ -107,40 +107,77 @@ int cmi8738_init(void) {
     g_half_filled[0] = 0;
     g_half_filled[1] = 0;
 
-    // Reset Channel A (Bit 18: RST_CH0)
+    // 1. Codec Reset via MISC_CTRL (Bit 30)
+    cmi_write32(CMI_REG_MISC_CTRL, CMI_MISC_RESET);
+    for (volatile int d = 0; d < 2000; d++);
+    cmi_write32(CMI_REG_MISC_CTRL, 0);
+
+    // 2. Disable interrupts
+    cmi_write32(CMI_REG_INT_HLDCLR, 0);
+
+    // 3. Reset Channel A (Bit 18: RST_CH0)
     unsigned int f0 = cmi_read32(CMI_REG_FUNCTRL0);
     f0 |= (1 << 18);
     cmi_write32(CMI_REG_FUNCTRL0, f0);
-    // Short delay and clear reset
     for (volatile int d = 0; d < 2000; d++);
     f0 &= ~(1 << 18);
-    // Ensure ADC0 = 0 (Playback mode)
-    f0 &= ~(1 << 2);
-    // Stop DMA initially
-    f0 &= ~(1 << 16);
-    f0 &= ~(1 << 4); // Clear PAUSE0
+    f0 &= ~(1 << 2);  // ADC0 = 0 (Playback mode)
+    f0 &= ~(1 << 16); // CHEN0 = 0 (Stop DMA initially)
+    f0 &= ~(1 << 4);  // Clear PAUSE0
     cmi_write32(CMI_REG_FUNCTRL0, f0);
 
-    // Default: 44.1 kHz (ASFC = 011b, bits 12:10; DSFC = 011b, bits 15:13 in FUNCTRL1)
+    // 4. Configure MISC_CTRL (Routing & Master Amp):
+    // - Double DAC enabled (CMI_MISC_ENDBDAC)
+    // - Copy Front to Rear / 4-Speaker (CMI_MISC_N4SPK3D) -> green (front) & rear jacks both output!
+    // - Analog Master Amp +6dB gain (CMI_MISC_VMGAIN)
+    // - Chipset compat (CMI_MISC_TXVX)
+    // - Explicitly clear CM_XCHGDAC (Front = CH0, green jack!) and CM_PWD (Power Down)
+    unsigned int misc = cmi_read32(CMI_REG_MISC_CTRL);
+    misc &= ~(CMI_MISC_PWD | CMI_MISC_XCHGDAC | CMI_MISC_RESET);
+    misc |= (CMI_MISC_ENDBDAC | CMI_MISC_N4SPK3D | CMI_MISC_VMGAIN | CMI_MISC_TXVX);
+    cmi_write32(CMI_REG_MISC_CTRL, misc);
+
+    // 5. Extended misc initialization magic for CMI8738
+    outb(g_cmi_io_base + CMI_REG_EXT_MISC, 0x20);
+    outb(g_cmi_io_base + CMI_REG_EXT_MISC + 1, 0x09);
+
+    // 6. Ensure CM_NXCHG = 0 in LEGACY_CTRL
+    unsigned int leg = cmi_read32(CMI_REG_LEGACY_CTRL);
+    leg &= ~0x80000000;
+    cmi_write32(CMI_REG_LEGACY_CTRL, leg);
+
+    // 7. Configure FUNCTRL1:
+    // Default 44.1 kHz (ASFC = 011b, DSFC = 011b) AND Bus Master Request (CMI_BREQ, bit 4)!
     unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
     f1 &= ~((7 << 10) | (7 << 13));
-    f1 |= ((3 << 10) | (3 << 13)); // 011b = 44100 Hz
+    f1 |= ((3 << 10) | (3 << 13));
+    f1 |= CMI_BREQ;
     cmi_write32(CMI_REG_FUNCTRL1, f1);
 
-    // Format: 16-bit Stereo (CH0FMT = 11b, bits 1:0 in CHFORMAT)
+    // 8. Format: 16-bit Stereo (CH0FMT = 11b in CHFORMAT)
     unsigned int fmt = cmi_read32(CMI_REG_CHFORMAT);
     fmt &= ~0x03;
-    fmt |= 0x03; // 11b = 16-bit Stereo
+    fmt |= 0x03;
     cmi_write32(CMI_REG_CHFORMAT, fmt);
 
-    // Set DMA Base Address
-    cmi_write32(CMI_REG_CH0_FRAME1, g_dma_phys);
+    // 9. Unmute Native MIXER1 (0x24) and MIXER2 (0x25)
+    // Writing 0x00 clears CMI_MIXER1_WSMUTE (0x40) to unmute PCM wave playback!
+    outb(g_cmi_io_base + CMI_REG_MIXER1, 0x00);
+    outb(g_cmi_io_base + CMI_REG_MIXER2, 0x00);
 
-    // Set DMA Frame Counts:
-    // Low 16 bits = 16383 (0x3FFF), High 16 bits = 8191 (0x1FFF)
+    // 10. Reset SB16 Mixer
+    cmi_write_mixer(0x00, 0x00);
+
+    // 11. Unmute Speaker in mixer register 0xF0
+    unsigned char ext = cmi_read_mixer(0xF0);
+    ext &= ~0x08; // Clear bit 3 (CM_VSPKM: Speaker mute)
+    cmi_write_mixer(0xF0, ext);
+
+    // 12. Set DMA Base Address and Frame Counts
+    cmi_write32(CMI_REG_CH0_FRAME1, g_dma_phys);
     cmi_write32(CMI_REG_CH0_FRAME2, ((unsigned int)0x1FFF << 16) | 0x3FFF);
 
-    // Setup Mixer: Master volume and Voice volume to 85%
+    // 13. Setup Mixer: Master volume and Voice volume to 85%
     cmi8738_set_volume(85, 85);
 
     return 0;
@@ -172,6 +209,7 @@ void cmi8738_set_format(int rate, int bits, int stereo) {
     unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
     f1 &= ~((7 << 10) | (7 << 13));
     f1 |= ((asfc << 10) | (asfc << 13));
+    f1 |= CMI_BREQ; // Always preserve / assert Bus Master Request
     cmi_write32(CMI_REG_FUNCTRL1, f1);
 
     // Format in CHFORMAT (bits 1:0 for Channel A)
@@ -194,6 +232,18 @@ void cmi8738_start_dma(void) {
     // Re-program base address and buffer size
     cmi_write32(CMI_REG_CH0_FRAME1, g_dma_phys);
     cmi_write32(CMI_REG_CH0_FRAME2, ((unsigned int)0x1FFF << 16) | 0x3FFF);
+
+    // Ensure Bus Master Request (CMI_BREQ) is enabled in FUNCTRL1
+    unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
+    if (!(f1 & CMI_BREQ)) {
+        cmi_write32(CMI_REG_FUNCTRL1, f1 | CMI_BREQ);
+    }
+
+    // Ensure PCM Wave output is unmuted in MIXER1 (0x24)
+    unsigned char m1 = inb(g_cmi_io_base + CMI_REG_MIXER1);
+    if (m1 & CMI_MIXER1_WSMUTE) {
+        outb(g_cmi_io_base + CMI_REG_MIXER1, m1 & ~CMI_MIXER1_WSMUTE);
+    }
 
     // Enable DMA on Channel A (FUNCTRL0 Bit 16) and unpause
     unsigned int f0 = cmi_read32(CMI_REG_FUNCTRL0);
@@ -241,23 +291,36 @@ void cmi8738_set_volume(int master_vol, int pcm_vol) {
     if (pcm_vol < 0) pcm_vol = 0;
     if (pcm_vol > 100) pcm_vol = 100;
 
-    // Scale 0..100 to 5-bit (0..31) for CMI mixer
+    // Unmute PCM Wave Playback in MIXER1 (Port 0x24, Bit 6)
+    unsigned char m1 = inb(g_cmi_io_base + CMI_REG_MIXER1);
+    m1 &= ~CMI_MIXER1_WSMUTE;
+    outb(g_cmi_io_base + CMI_REG_MIXER1, m1);
+
+    // Scale 0..100 to 5-bit (0..31) for SB16 mixer registers
     unsigned char m5 = (unsigned char)((master_vol * 31) / 100);
     unsigned char p5 = (unsigned char)((pcm_vol * 31) / 100);
 
-    // CMI8738 Native Master Volume (Reg 0x30 Left, 0x31 Right, upper 5 bits)
+    // SB16 Master Volume (0x30 Left, 0x31 Right: upper 5 bits [D7:D3])
     cmi_write_mixer(0x30, (m5 << 3));
     cmi_write_mixer(0x31, (m5 << 3));
 
-    // CMI8738 Native PCM Voice Volume (Reg 0x32 Left, 0x33 Right, upper 5 bits)
+    // SB16 Voice/PCM Volume (0x32 Left, 0x33 Right: upper 5 bits [D7:D3])
     cmi_write_mixer(0x32, (p5 << 3));
     cmi_write_mixer(0x33, (p5 << 3));
 
-    // Also set legacy SB16 Mixer registers (0x22 Master, 0x04 Voice, 4 bits per channel)
+    // Also set legacy SB Pro Master (0x22) and Voice (0x04): 4 bits per channel
     unsigned char m4 = (unsigned char)((master_vol * 15) / 100);
     unsigned char p4 = (unsigned char)((pcm_vol * 15) / 100);
     cmi_write_mixer(0x22, (m4 << 4) | m4);
     cmi_write_mixer(0x04, (p4 << 4) | p4);
+
+    // Output switch (0x3C): enable all outputs
+    cmi_write_mixer(0x3C, 0x1F);
+
+    // Speaker mute control (0xF0): clear bit 3 (CM_VSPKM: 0 = unmuted)
+    unsigned char ext = cmi_read_mixer(0xF0);
+    ext &= ~0x08;
+    cmi_write_mixer(0xF0, ext);
 }
 
 unsigned int cmi8738_get_dma_frame_pos(void) {
