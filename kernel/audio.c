@@ -296,13 +296,48 @@ int audio_play_file(const char* filepath) {
     }
 
     audio_flush_queue();
+    g_total_frames_played = 0;
+    g_eof_reached = 0;
 
-    // 启动声卡硬件 DMA 环形播放
+    // 1. 静音 DMA 双半区，消除开机或切歌瞬间物理内存脏数据导致的 "si" 杂音
+    cmi8738_silence_half(0);
+    cmi8738_silence_half(1);
+
+    // 2. 预充队列：在开启硬件 DMA 之前，先解码填充首半区（32KB）
+    for (int pre = 0; pre < 32 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
+        static unsigned char dec_temp_buf[8192];
+        int samples_read = 0;
+        if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 1024);
+        else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 1024);
+        else if (g_active_dec == DEC_MP3) samples_read = mp3_dec_read_samples(dec_temp_buf, 1152);
+
+        if (samples_read > 0) {
+            audio_feed_raw_pcm(dec_temp_buf, (unsigned int)samples_read,
+                               g_audio_info.sample_rate,
+                               g_audio_info.channels,
+                               g_audio_info.bit_depth,
+                               g_audio_info.is_float);
+        } else if (samples_read < 0) {
+            g_eof_reached = 1;
+            break;
+        }
+    }
+
+    // 3. 将预充好的 PCM 复制写入 DMA 半区 0
+    if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
+        static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
+        unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
+        for (unsigned int i = 0; i < samples_needed; i++) {
+            dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
+            g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
+        }
+        g_queue_bytes -= CMI_DMA_HALF_BYTES;
+        cmi8738_write_half(0, dma_copy_buf, CMI_DMA_HALF_BYTES);
+    }
+
+    // 4. 启动声卡硬件 DMA 环形播放
     cmi8738_start_dma();
     g_audio_state = AUDIO_STATE_PLAYING;
-
-    // 先预充一次数据
-    audio_poll();
 
     return 0;
 }
@@ -351,6 +386,26 @@ void audio_seek_sec(unsigned int seconds) {
     g_audio_info.current_time_s = (int)seconds;
     g_total_frames_played = (unsigned int)seconds * (unsigned int)g_audio_info.target_rate;
     g_eof_reached = 0;
+
+    // 预充少量数据，平滑恢复
+    for (int pre = 0; pre < 16 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
+        static unsigned char dec_temp_buf[8192];
+        int samples_read = 0;
+        if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 1024);
+        else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 1024);
+        else if (g_active_dec == DEC_MP3) samples_read = mp3_dec_read_samples(dec_temp_buf, 1152);
+
+        if (samples_read > 0) {
+            audio_feed_raw_pcm(dec_temp_buf, (unsigned int)samples_read,
+                               g_audio_info.sample_rate,
+                               g_audio_info.channels,
+                               g_audio_info.bit_depth,
+                               g_audio_info.is_float);
+        } else if (samples_read < 0) {
+            g_eof_reached = 1;
+            break;
+        }
+    }
 }
 
 audio_state_t audio_get_state(void) {

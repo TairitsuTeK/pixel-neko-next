@@ -271,6 +271,7 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
     g_cur_frame_idx = 0;
     vfs_stream_seek(&g_mp3_stream, g_first_frame_pos);
     mp3dec_init(&g_mp3d);
+    s_mp3_buf_len = 0;
     g_mp3_is_open = 1;
 
     if (out_info) {
@@ -282,29 +283,42 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
     return 0;
 }
 
+static unsigned char s_mp3_buf[8192];
+static int s_mp3_buf_len = 0;
+
 int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
     if (!g_mp3_is_open) return -1;
-    if (g_mp3_stream.current_offset >= g_mp3_stream.size) return -1; // EOF reached
 
-    static unsigned char mp3_chunk[4096];
-    unsigned int cur_pos = g_mp3_stream.current_offset;
-    unsigned int rem = g_mp3_stream.size - cur_pos;
-    if (rem == 0) return -1;
+    // 顺序预充流式滑动窗口，完全规避反向 seek 和频繁零散读盘
+    while (s_mp3_buf_len < 4096 && g_mp3_stream.current_offset < g_mp3_stream.size) {
+        int space = (int)sizeof(s_mp3_buf) - s_mp3_buf_len;
+        if (space <= 0) break;
+        int nread = vfs_stream_read(&g_mp3_stream, s_mp3_buf + s_mp3_buf_len, space);
+        if (nread <= 0) break;
+        s_mp3_buf_len += nread;
+    }
 
-    unsigned int to_read = rem < sizeof(mp3_chunk) ? rem : sizeof(mp3_chunk);
-    vfs_stream_seek(&g_mp3_stream, cur_pos);
-    int nread = vfs_stream_read(&g_mp3_stream, mp3_chunk, to_read);
-    if (nread <= 0) return -1;
+    if (s_mp3_buf_len <= 0) {
+        return -1; // EOF reached and buffer drained
+    }
 
     mp3dec_frame_info_t info;
+    info.frame_bytes = 0;
     static short pcm_frame[MINIMP3_MAX_SAMPLES_PER_FRAME]; // 1152 * 2
-    int samples = mp3dec_decode_frame(&g_mp3d, mp3_chunk, nread, pcm_frame, &info);
+    int samples = mp3dec_decode_frame(&g_mp3d, s_mp3_buf, s_mp3_buf_len, pcm_frame, &info);
 
-    if (info.frame_bytes > 0) {
-        vfs_stream_seek(&g_mp3_stream, cur_pos + (unsigned int)info.frame_bytes);
-    } else {
-        // Looking for sync word or skipping padding, advance by 1 byte
-        vfs_stream_seek(&g_mp3_stream, cur_pos + 1);
+    int consumed = info.frame_bytes;
+    if (consumed > s_mp3_buf_len) consumed = s_mp3_buf_len;
+
+    if (consumed > 0) {
+        mp3_memmove(s_mp3_buf, s_mp3_buf + consumed, s_mp3_buf_len - consumed);
+        s_mp3_buf_len -= consumed;
+    } else if (samples == 0) {
+        // 未解析出有效帧且未消耗字节（跳过脏数据）：向后滑动 1 字节
+        if (s_mp3_buf_len > 0) {
+            mp3_memmove(s_mp3_buf, s_mp3_buf + 1, s_mp3_buf_len - 1);
+            s_mp3_buf_len--;
+        }
     }
 
     if (samples > 0) {
@@ -335,6 +349,10 @@ int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
         return (int)frames_to_copy;
     }
 
+    if (g_mp3_stream.current_offset >= g_mp3_stream.size && s_mp3_buf_len < 4) {
+        return -1; // 流到末尾且不足以解码一帧
+    }
+
     return 0; // In sync scan, not EOF
 }
 
@@ -358,6 +376,7 @@ int mp3_dec_seek(unsigned int seconds) {
 
     if (target_offset >= g_mp3_stream.size) target_offset = g_mp3_stream.size - 2048;
     vfs_stream_seek(&g_mp3_stream, target_offset);
+    s_mp3_buf_len = 0;
     mp3dec_init(&g_mp3d);
 
     g_cur_frame_idx = (seconds * (unsigned int)g_mp3_info.sample_rate) / 1152;
@@ -369,6 +388,7 @@ int mp3_dec_seek(unsigned int seconds) {
 void mp3_dec_close(void) {
     if (g_mp3_is_open) {
         vfs_stream_close(&g_mp3_stream);
+        s_mp3_buf_len = 0;
         g_mp3_is_open = 0;
     }
 }

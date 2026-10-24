@@ -36,15 +36,29 @@ static inline int sar64_to_32(long long val, unsigned char shift) {
     }
 }
 
+#define BR_BUF_SIZE 2048
+static unsigned char g_br_buf[BR_BUF_SIZE];
+static int g_br_buf_pos = 0;
+static int g_br_buf_len = 0;
+
 static inline void br_reset(void) {
     g_br.tag = 0;
     g_br.bitcount = 0;
+    g_br_buf_pos = 0;
+    g_br_buf_len = 0;
 }
 
 static inline unsigned int br_read_bits(int num) {
     while (g_br.bitcount < num) {
-        unsigned char b = 0;
-        vfs_stream_read(&g_flac_stream, &b, 1);
+        if (g_br_buf_pos >= g_br_buf_len) {
+            g_br_buf_pos = 0;
+            g_br_buf_len = vfs_stream_read(&g_flac_stream, g_br_buf, BR_BUF_SIZE);
+            if (g_br_buf_len <= 0) {
+                g_br.bitcount += 8; // EOF padding
+                continue;
+            }
+        }
+        unsigned char b = g_br_buf[g_br_buf_pos++];
         g_br.tag |= ((unsigned int)b << (24 - g_br.bitcount));
         g_br.bitcount += 8;
     }
@@ -201,6 +215,9 @@ int flac_dec_open(const char* path, flac_info_t* out_info) {
 
 // Subframe decoder
 static int decode_subframe(int ch, int block_size, int bps) {
+    if (ch < 0 || ch >= 2) return -1;
+    if (block_size <= 0 || block_size > FLAC_MAX_BLOCK_SIZE) return -1;
+
     if (br_read_bits(1) != 0) return -1; // Zero bit required
     int type = br_read_bits(6);
     int wasted_bits = br_read_bits(1);
@@ -221,29 +238,41 @@ static int decode_subframe(int ch, int block_size, int bps) {
     } else if (type >= 8 && type <= 12) {
         // FIXED PREDICTOR (order 0..4)
         int order = type - 8;
+        if (order > block_size) return -1;
         for (int i = 0; i < order; i++) samples[i] = br_read_signed_bits(bps);
 
         // Decode Rice residuals
         int coding_method = br_read_bits(2);
         int partition_order = br_read_bits(4);
         int partitions = 1 << partition_order;
+        if (partitions > block_size) return -1;
         int param_bits = (coding_method == 0) ? 4 : 5;
         int escape_param = (coding_method == 0) ? 15 : 31;
 
         int sample_idx = order;
         for (int p = 0; p < partitions; p++) {
             int p_samples = (p == 0) ? ((block_size >> partition_order) - order) : (block_size >> partition_order);
+            if (sample_idx + p_samples > block_size) p_samples = block_size - sample_idx;
+            if (p_samples <= 0) continue;
+
             int rice_param = br_read_bits(param_bits);
             if (rice_param == escape_param) {
                 int raw_bits = br_read_bits(5);
-                for (int s = 0; s < p_samples; s++) samples[sample_idx++] = br_read_signed_bits(raw_bits);
+                for (int s = 0; s < p_samples; s++) {
+                    int val = br_read_signed_bits(raw_bits);
+                    if (sample_idx < FLAC_MAX_BLOCK_SIZE) {
+                        samples[sample_idx++] = val;
+                    }
+                }
             } else {
                 for (int s = 0; s < p_samples; s++) {
                     unsigned int msb = br_read_unary();
-                    unsigned int lsb = br_read_bits(rice_param);
+                    unsigned int lsb = (rice_param > 0) ? br_read_bits(rice_param) : 0;
                     unsigned int u = (msb << rice_param) | lsb;
                     int res = (u & 1) ? -(int)(u >> 1) - 1 : (int)(u >> 1);
-                    samples[sample_idx++] = res;
+                    if (sample_idx < FLAC_MAX_BLOCK_SIZE) {
+                        samples[sample_idx++] = res;
+                    }
                 }
             }
         }
@@ -260,6 +289,7 @@ static int decode_subframe(int ch, int block_size, int bps) {
     } else if (type >= 32) {
         // LPC PREDICTOR (order 1..32)
         int order = type - 31;
+        if (order < 1 || order > 32 || order > block_size) return -1;
         for (int i = 0; i < order; i++) samples[i] = br_read_signed_bits(bps);
 
         int qlp_precision = br_read_bits(4) + 1;
@@ -271,23 +301,34 @@ static int decode_subframe(int ch, int block_size, int bps) {
         int coding_method = br_read_bits(2);
         int partition_order = br_read_bits(4);
         int partitions = 1 << partition_order;
+        if (partitions > block_size) return -1;
         int param_bits = (coding_method == 0) ? 4 : 5;
         int escape_param = (coding_method == 0) ? 15 : 31;
 
         int sample_idx = order;
         for (int p = 0; p < partitions; p++) {
             int p_samples = (p == 0) ? ((block_size >> partition_order) - order) : (block_size >> partition_order);
+            if (sample_idx + p_samples > block_size) p_samples = block_size - sample_idx;
+            if (p_samples <= 0) continue;
+
             int rice_param = br_read_bits(param_bits);
             if (rice_param == escape_param) {
                 int raw_bits = br_read_bits(5);
-                for (int s = 0; s < p_samples; s++) samples[sample_idx++] = br_read_signed_bits(raw_bits);
+                for (int s = 0; s < p_samples; s++) {
+                    int val = br_read_signed_bits(raw_bits);
+                    if (sample_idx < FLAC_MAX_BLOCK_SIZE) {
+                        samples[sample_idx++] = val;
+                    }
+                }
             } else {
                 for (int s = 0; s < p_samples; s++) {
                     unsigned int msb = br_read_unary();
-                    unsigned int lsb = br_read_bits(rice_param);
+                    unsigned int lsb = (rice_param > 0) ? br_read_bits(rice_param) : 0;
                     unsigned int u = (msb << rice_param) | lsb;
                     int res = (u & 1) ? -(int)(u >> 1) - 1 : (int)(u >> 1);
-                    samples[sample_idx++] = res;
+                    if (sample_idx < FLAC_MAX_BLOCK_SIZE) {
+                        samples[sample_idx++] = res;
+                    }
                 }
             }
         }
@@ -301,6 +342,8 @@ static int decode_subframe(int ch, int block_size, int bps) {
             int pred = sar64_to_32(sum, (unsigned char)(qlp_shift > 0 ? qlp_shift : 0));
             samples[i] += pred;
         }
+    } else {
+        return -1; // Reserved subframe type
     }
 
     if (wasted_bits > 0) {
@@ -315,28 +358,47 @@ int flac_dec_read_samples(void* out_samples, unsigned int max_samples) {
     (void)out_samples; // Samples are fed directly to audio_feed_raw_pcm
     (void)max_samples;
 
-    // Sync to next frame header (14-bit sync code 0x3FFE)
+    // Byte-aligned search for next valid frame header (14-bit sync code 0x3FFE)
     int sync_found = 0;
+    int block_size_code = 0;
+    int sample_rate_code = 0;
+    int channel_mode = 0;
+    int sample_size_code = 0;
+
     while (!sync_found) {
-        unsigned int w = br_read_bits(8);
-        if (w == 0xFF) {
-            unsigned int next = br_read_bits(6);
-            if (next == 0x3E) {
-                sync_found = 1;
-                break;
+        if (g_flac_stream.current_offset >= g_flac_stream.size && g_br_buf_pos >= g_br_buf_len && g_br.bitcount < 16) {
+            return -1; // EOF reached
+        }
+
+        if (g_br.bitcount & 7) {
+            br_read_bits(g_br.bitcount & 7);
+        }
+
+        unsigned int b1 = br_read_bits(8);
+        if (b1 == 0xFF) {
+            unsigned int b2 = br_read_bits(8);
+            if ((b2 & 0xFE) == 0xF8) { // 14-bit sync code 0x3FFE + res1 == 0
+                unsigned int b3 = br_read_bits(8);
+                int bs_code = (b3 >> 4) & 0x0F;
+                int sr_code = b3 & 0x0F;
+
+                unsigned int b4 = br_read_bits(8);
+                int ch_mode = (b4 >> 4) & 0x0F;
+                int ss_code = (b4 >> 1) & 0x07;
+                int res2 = b4 & 0x01;
+
+                // Validate header fields per FLAC specification
+                if (res2 == 0 && bs_code != 0 && sr_code != 15 && ch_mode <= 10 && ss_code != 3 && ss_code != 7) {
+                    block_size_code = bs_code;
+                    sample_rate_code = sr_code;
+                    channel_mode = ch_mode;
+                    sample_size_code = ss_code;
+                    sync_found = 1;
+                    break;
+                }
             }
         }
-        if (g_flac_stream.current_offset >= g_flac_stream.size) return -1; // EOF
     }
-
-    // Parse frame header
-    (void)br_read_bits(1); // Reserved bit
-    (void)br_read_bits(1); // Blocking strategy
-    int block_size_code = br_read_bits(4);
-    int sample_rate_code = br_read_bits(4);
-    int channel_mode = br_read_bits(4);
-    int sample_size_code = br_read_bits(3);
-    (void)br_read_bits(1); // Reserved bit
 
     // Coded frame/sample number (UTF-8 variable length)
     unsigned int v = br_read_bits(8);
@@ -345,14 +407,16 @@ int flac_dec_read_samples(void* out_samples, unsigned int max_samples) {
     else if ((v & 0xE0) == 0xC0) num_extra = 1;
     else if ((v & 0xF0) == 0xE0) num_extra = 2;
     else if ((v & 0xF8) == 0xF0) num_extra = 3;
+    else if ((v & 0xFC) == 0xF8) num_extra = 4;
+    else if ((v & 0xFE) == 0xFC) num_extra = 5;
     while (num_extra-- > 0) { (void)br_read_bits(8); }
 
     int block_size = 0;
     if (block_size_code == 1) block_size = 192;
     else if (block_size_code >= 2 && block_size_code <= 5) block_size = 576 << (block_size_code - 2);
     else if (block_size_code >= 8 && block_size_code <= 15) block_size = 256 << (block_size_code - 8);
-    else if (block_size_code == 6) block_size = br_read_bits(8) + 1;
-    else if (block_size_code == 7) block_size = br_read_bits(16) + 1;
+    else if (block_size_code == 6) block_size = (int)br_read_bits(8) + 1;
+    else if (block_size_code == 7) block_size = (int)br_read_bits(16) + 1;
     if (block_size <= 0 || block_size > FLAC_MAX_BLOCK_SIZE) block_size = 4096;
 
     if (sample_rate_code == 12) (void)br_read_bits(8);
@@ -367,12 +431,15 @@ int flac_dec_read_samples(void* out_samples, unsigned int max_samples) {
 
     // Decode subframes
     int channels = (channel_mode < 8) ? (channel_mode + 1) : 2;
+    if (channels > 2) channels = 2;
     for (int ch = 0; ch < channels; ch++) {
         int subframe_bps = bps;
         if (channel_mode == 8 && ch == 1) subframe_bps++; // Side channel +1 bit
         else if (channel_mode == 9 && ch == 0) subframe_bps++;
         else if (channel_mode == 10 && ch == 1) subframe_bps++;
-        decode_subframe(ch, block_size, subframe_bps);
+        if (decode_subframe(ch, block_size, subframe_bps) != 0) {
+            return 0; // Skip corrupted subframe gracefully
+        }
     }
 
     // Align to byte

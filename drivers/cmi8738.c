@@ -189,6 +189,8 @@ void cmi8738_set_format(int rate, int bits, int stereo) {
 void cmi8738_start_dma(void) {
     if (!g_cmi_present || !g_cmi_io_base) return;
 
+    g_last_half_playing = -1;
+
     // Re-program base address and buffer size
     cmi_write32(CMI_REG_CH0_FRAME1, g_dma_phys);
     cmi_write32(CMI_REG_CH0_FRAME2, ((unsigned int)0x1FFF << 16) | 0x3FFF);

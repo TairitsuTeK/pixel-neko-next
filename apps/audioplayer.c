@@ -13,6 +13,7 @@ static int marquee_pos = 0;
 static int marquee_timer = 0;
 static int is_dragging_seek = 0;
 static int is_dragging_vol = 0;
+static int g_drag_seek_target_sec = -1;
 static char g_last_opened_filepath[256] = {0};
 
 static void my_strcpy(char* d, const char* s) {
@@ -33,6 +34,7 @@ void audioplayer_init(void) {
     marquee_timer = 0;
     is_dragging_seek = 0;
     is_dragging_vol = 0;
+    g_drag_seek_target_sec = -1;
     if (!cmi8738_is_present()) {
         my_strcpy(current_title, "No Output Device (CMI8738 Not Detected)");
     } else {
@@ -170,7 +172,7 @@ void audioplayer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         font_draw_text(v, lcd_x + 6, lcd_y + 6, st_tag, st_col);
         
         // 动态时间码显示：[MM:SS / MM:SS]
-        unsigned int cur_sec = audio_get_position_sec();
+        unsigned int cur_sec = (is_dragging_seek && g_drag_seek_target_sec >= 0) ? (unsigned int)g_drag_seek_target_sec : audio_get_position_sec();
         unsigned int tot_sec = audio_get_duration_sec();
         
         char time_str[24];
@@ -290,7 +292,7 @@ void audioplayer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     }
     
     // 计算播放比例
-    unsigned int c_sec = audio_get_position_sec();
+    unsigned int c_sec = (is_dragging_seek && g_drag_seek_target_sec >= 0) ? (unsigned int)g_drag_seek_target_sec : audio_get_position_sec();
     unsigned int d_sec = audio_get_duration_sec();
     int prog_w = 0;
     if (d_sec > 0) {
@@ -374,7 +376,7 @@ void audioplayer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww,
                 if (offset_x < 0) offset_x = 0;
                 if (offset_x > sb_w) offset_x = sb_w;
                 unsigned int target_sec = (unsigned int)(((unsigned int)offset_x * tot) / (unsigned int)sb_w);
-                audio_seek_sec(target_sec);
+                g_drag_seek_target_sec = (int)target_sec;
             }
             is_dragging_seek = 1;
         }
@@ -466,7 +468,7 @@ int audioplayer_drag(int mx, int my, int wx, int wy, int ww, int wh) {
             if (offset_x < 0) offset_x = 0;
             if (offset_x > sb_w) offset_x = sb_w;
             unsigned int target_sec = (unsigned int)(((unsigned int)offset_x * tot) / (unsigned int)sb_w);
-            audio_seek_sec(target_sec);
+            g_drag_seek_target_sec = (int)target_sec;
         }
         return 1;
     } else if (is_dragging_vol) {
@@ -487,6 +489,12 @@ int audioplayer_is_dragging(void) {
 }
 
 void audioplayer_release(void) {
+    if (is_dragging_seek) {
+        if (g_drag_seek_target_sec >= 0) {
+            audio_seek_sec((unsigned int)g_drag_seek_target_sec);
+            g_drag_seek_target_sec = -1;
+        }
+    }
     is_dragging_seek = 0;
     is_dragging_vol = 0;
 }
