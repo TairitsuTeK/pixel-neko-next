@@ -17,6 +17,8 @@ static unsigned int g_first_frame_pos = 0;
 static unsigned int g_cur_frame_idx = 0;
 static unsigned char g_vbr_toc[100];
 static int g_has_vbr_toc = 0;
+static unsigned char s_mp3_buf[8192];
+static int s_mp3_buf_len = 0;
 
 // Standard MPEG Layer III Bitrate Tables (kbps)
 static const short g_bitrate_tab[2][16] = {
@@ -283,8 +285,6 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
     return 0;
 }
 
-static unsigned char s_mp3_buf[8192];
-static int s_mp3_buf_len = 0;
 
 int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
     if (!g_mp3_is_open) return -1;
