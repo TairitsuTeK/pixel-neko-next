@@ -25,6 +25,7 @@ typedef struct {
 
 void audio_init(void);
 void audio_poll(void); // Call in OS main loop to pump PCM to CMI8738 DMA
+void enable_fpu(void); // Initialize/re-enable x87 FPU and SSE
 
 int audio_has_hardware(void);
 const char* audio_get_hardware_name(void);

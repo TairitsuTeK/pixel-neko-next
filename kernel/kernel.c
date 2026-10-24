@@ -481,6 +481,7 @@ void kernel_main(void)
     speaker_init();
     audio_init();
     set_resolution(800, 600, 16);
+    enable_fpu(); // Re-enable x87 FPU / SSE after real-mode VBE switch
     timer_init(); // Re-verify PIT timer after real-mode VBE switch
     
     // Play Mac OS 9 & Windows 3.1 retro boot splash animation

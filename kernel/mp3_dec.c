@@ -17,7 +17,8 @@ static unsigned int g_first_frame_pos = 0;
 static unsigned int g_cur_frame_idx = 0;
 static unsigned char g_vbr_toc[100];
 static int g_has_vbr_toc = 0;
-static unsigned char s_mp3_buf[8192];
+static unsigned char s_mp3_buf[16384];
+static int s_mp3_buf_pos = 0;
 static int s_mp3_buf_len = 0;
 
 // Standard MPEG Layer III Bitrate Tables (kbps)
@@ -171,63 +172,72 @@ static int find_first_frame(unsigned int search_start) {
     unsigned int max_search = search_start + 65536;
     if (max_search > g_mp3_stream.size) max_search = g_mp3_stream.size;
 
+    static unsigned char scan_buf[4096];
     while (pos + 4 < max_search) {
-        int rate = 0, ch = 0, kbps = 0, samples = 0;
-        int flen = check_frame_header(pos, &rate, &ch, &kbps, &samples);
-        if (flen > 0) {
-            // Found valid frame header
-            g_first_frame_pos = pos;
-            g_mp3_info.sample_rate = rate;
-            g_mp3_info.channels = ch;
-            g_mp3_info.bitrate_kbps = kbps;
+        vfs_stream_seek(&g_mp3_stream, pos);
+        int chunk = vfs_stream_read(&g_mp3_stream, scan_buf, sizeof(scan_buf));
+        if (chunk < 4) break;
 
-            // Check for Xing / Info header in this first frame
-            unsigned char fbuf[128];
-            vfs_stream_seek(&g_mp3_stream, pos);
-            int r = vfs_stream_read(&g_mp3_stream, fbuf, 128);
-            if (r >= 64) {
-                // Check Xing offset (36 for MPEG1 stereo, 21 for others)
-                int xing_off = (ch == 2 && rate >= 32000) ? 36 : 21;
-                if (pos + xing_off + 8 < g_mp3_stream.size) {
-                    const unsigned char* xp = fbuf + xing_off;
-                    if ((xp[0] == 'X' && xp[1] == 'i' && xp[2] == 'n' && xp[3] == 'g') ||
-                        (xp[0] == 'I' && xp[1] == 'n' && xp[2] == 'f' && xp[3] == 'o')) {
-                        g_mp3_info.is_vbr = (xp[0] == 'X');
-                        unsigned int flags = ((unsigned int)xp[4] << 24) | ((unsigned int)xp[5] << 16) |
-                                             ((unsigned int)xp[6] << 8)  | (unsigned int)xp[7];
-                        int cur = 8;
-                        if (flags & 1) { // Frames field
-                            g_mp3_info.total_frames = ((unsigned int)xp[cur] << 24) | ((unsigned int)xp[cur+1] << 16) |
-                                                      ((unsigned int)xp[cur+2] << 8) | (unsigned int)xp[cur+3];
-                            cur += 4;
-                        }
-                        if (flags & 2) { // Bytes field
-                            cur += 4;
-                        }
-                        if (flags & 4) { // TOC field (100 bytes)
-                            for (int t = 0; t < 100; t++) g_vbr_toc[t] = xp[cur + t];
-                            g_has_vbr_toc = 1;
+        for (int k = 0; k + 4 <= chunk; k++) {
+            if (scan_buf[k] == 0xFF && (scan_buf[k + 1] & 0xE0) == 0xE0) {
+                int rate = 0, ch = 0, kbps = 0, samples = 0;
+                int flen = check_frame_header(pos + k, &rate, &ch, &kbps, &samples);
+                if (flen > 0) {
+                    // Found valid frame header
+                    g_first_frame_pos = pos + k;
+                    g_mp3_info.sample_rate = rate;
+                    g_mp3_info.channels = ch;
+                    g_mp3_info.bitrate_kbps = kbps;
+
+                    // Check for Xing / Info header in this first frame
+                    unsigned char fbuf[128];
+                    vfs_stream_seek(&g_mp3_stream, pos + k);
+                    int r = vfs_stream_read(&g_mp3_stream, fbuf, 128);
+                    if (r >= 64) {
+                        // Check Xing offset (36 for MPEG1 stereo, 21 for others)
+                        int xing_off = (ch == 2 && rate >= 32000) ? 36 : 21;
+                        if (pos + k + xing_off + 8 < g_mp3_stream.size) {
+                            const unsigned char* xp = fbuf + xing_off;
+                            if ((xp[0] == 'X' && xp[1] == 'i' && xp[2] == 'n' && xp[3] == 'g') ||
+                                (xp[0] == 'I' && xp[1] == 'n' && xp[2] == 'f' && xp[3] == 'o')) {
+                                g_mp3_info.is_vbr = (xp[0] == 'X');
+                                unsigned int flags = ((unsigned int)xp[4] << 24) | ((unsigned int)xp[5] << 16) |
+                                                     ((unsigned int)xp[6] << 8)  | (unsigned int)xp[7];
+                                int cur = 8;
+                                if (flags & 1) { // Frames field
+                                    g_mp3_info.total_frames = ((unsigned int)xp[cur] << 24) | ((unsigned int)xp[cur+1] << 16) |
+                                                              ((unsigned int)xp[cur+2] << 8) | (unsigned int)xp[cur+3];
+                                    cur += 4;
+                                }
+                                if (flags & 2) { // Bytes field
+                                    cur += 4;
+                                }
+                                if (flags & 4) { // TOC field (100 bytes)
+                                    for (int t = 0; t < 100; t++) g_vbr_toc[t] = xp[cur + t];
+                                    g_has_vbr_toc = 1;
+                                }
+                            }
                         }
                     }
+
+                    // If no Xing frames, calculate from file size
+                    if (g_mp3_info.total_frames == 0 && kbps > 0) {
+                        unsigned int audio_bytes = g_mp3_stream.size - g_first_frame_pos;
+                        g_mp3_info.duration_s = (int)((audio_bytes * 8) / (kbps * 1000));
+                        g_mp3_info.total_frames = (g_mp3_info.duration_s * rate) / samples;
+                    } else if (g_mp3_info.total_frames > 0 && rate > 0) {
+                        g_mp3_info.duration_s = (int)(((unsigned int)g_mp3_info.total_frames * (unsigned int)samples) / (unsigned int)rate);
+                    }
+
+                    if (g_mp3_info.duration_s <= 0) {
+                        g_mp3_info.duration_s = 1; // Default fallback to avoid --:--
+                    }
+
+                    return 0;
                 }
             }
-
-            // If no Xing frames, calculate from file size
-            if (g_mp3_info.total_frames == 0 && kbps > 0) {
-                unsigned int audio_bytes = g_mp3_stream.size - g_first_frame_pos;
-                g_mp3_info.duration_s = (int)((audio_bytes * 8) / (kbps * 1000));
-                g_mp3_info.total_frames = (g_mp3_info.duration_s * rate) / samples;
-            } else if (g_mp3_info.total_frames > 0 && rate > 0) {
-                g_mp3_info.duration_s = (int)(((unsigned int)g_mp3_info.total_frames * (unsigned int)samples) / (unsigned int)rate);
-            }
-
-            if (g_mp3_info.duration_s <= 0) {
-                g_mp3_info.duration_s = 1; // Default fallback to avoid --:--
-            }
-
-            return 0;
         }
-        pos++;
+        pos += chunk - 3; // Ensure 4-byte headers across chunk boundaries aren't missed
     }
 
     return -1;
@@ -273,6 +283,7 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
     g_cur_frame_idx = 0;
     vfs_stream_seek(&g_mp3_stream, g_first_frame_pos);
     mp3dec_init(&g_mp3d);
+    s_mp3_buf_pos = 0;
     s_mp3_buf_len = 0;
     g_mp3_is_open = 1;
 
@@ -289,68 +300,80 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
 int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
     if (!g_mp3_is_open) return -1;
 
-    // 顺序预充流式滑动窗口，完全规避反向 seek 和频繁零散读盘
-    while (s_mp3_buf_len < 4096 && g_mp3_stream.current_offset < g_mp3_stream.size) {
-        int space = (int)sizeof(s_mp3_buf) - s_mp3_buf_len;
-        if (space <= 0) break;
-        int nread = vfs_stream_read(&g_mp3_stream, s_mp3_buf + s_mp3_buf_len, space);
-        if (nread <= 0) break;
-        s_mp3_buf_len += nread;
-    }
-
-    if (s_mp3_buf_len <= 0) {
-        return -1; // EOF reached and buffer drained
-    }
-
-    mp3dec_frame_info_t info;
-    info.frame_bytes = 0;
-    static short pcm_frame[MINIMP3_MAX_SAMPLES_PER_FRAME]; // 1152 * 2
-    int samples = mp3dec_decode_frame(&g_mp3d, s_mp3_buf, s_mp3_buf_len, pcm_frame, &info);
-
-    int consumed = info.frame_bytes;
-    if (consumed > s_mp3_buf_len) consumed = s_mp3_buf_len;
-
-    if (consumed > 0) {
-        mp3_memmove(s_mp3_buf, s_mp3_buf + consumed, s_mp3_buf_len - consumed);
-        s_mp3_buf_len -= consumed;
-    } else if (samples == 0) {
-        // 未解析出有效帧且未消耗字节（跳过脏数据）：向后滑动 1 字节
-        if (s_mp3_buf_len > 0) {
-            mp3_memmove(s_mp3_buf, s_mp3_buf + 1, s_mp3_buf_len - 1);
-            s_mp3_buf_len--;
-        }
-    }
-
-    if (samples > 0) {
-        g_cur_frame_idx++;
-        if (info.bitrate_kbps > 0) {
-            audio_set_bitrate(info.bitrate_kbps, g_mp3_info.is_vbr);
-        }
-        if (info.hz > 0) {
-            unsigned int cur_time_s = (g_cur_frame_idx * (unsigned int)samples) / (unsigned int)info.hz;
-            audio_set_time((int)cur_time_s);
+    for (int retry = 0; retry < 16; retry++) {
+        // 紧凑流式滑动窗口：当读取位置前移超过 8KB 时，将剩余数据移回开头
+        if (s_mp3_buf_pos > 8192) {
+            int rem = s_mp3_buf_len - s_mp3_buf_pos;
+            if (rem > 0) {
+                mp3_memmove(s_mp3_buf, s_mp3_buf + s_mp3_buf_pos, rem);
+            }
+            s_mp3_buf_len = rem;
+            s_mp3_buf_pos = 0;
         }
 
-        unsigned int frames_to_copy = (unsigned int)samples;
-        if (frames_to_copy > max_samples) frames_to_copy = max_samples;
-        short* dst = (short*)out_samples;
-        int ch = info.channels;
+        // 顺序预充流式滑动窗口，保证缓冲区有充足未消费数据
+        while ((s_mp3_buf_len - s_mp3_buf_pos) < 4096 && g_mp3_stream.current_offset < g_mp3_stream.size) {
+            int space = (int)sizeof(s_mp3_buf) - s_mp3_buf_len;
+            if (space <= 0) break;
+            int nread = vfs_stream_read(&g_mp3_stream, s_mp3_buf + s_mp3_buf_len, space);
+            if (nread <= 0) break;
+            s_mp3_buf_len += nread;
+        }
 
-        for (unsigned int i = 0; i < frames_to_copy; i++) {
-            if (ch == 1) {
-                dst[i * 2]     = pcm_frame[i];
-                dst[i * 2 + 1] = pcm_frame[i];
-            } else {
-                dst[i * 2]     = pcm_frame[i * 2];
-                dst[i * 2 + 1] = pcm_frame[i * 2 + 1];
+        int avail = s_mp3_buf_len - s_mp3_buf_pos;
+        if (avail <= 0) {
+            return -1; // EOF reached and buffer drained
+        }
+
+        mp3dec_frame_info_t info;
+        info.frame_bytes = 0;
+        static short pcm_frame[MINIMP3_MAX_SAMPLES_PER_FRAME]; // 1152 * 2
+        int samples = mp3dec_decode_frame(&g_mp3d, s_mp3_buf + s_mp3_buf_pos, avail, pcm_frame, &info);
+
+        int consumed = info.frame_bytes;
+        if (consumed > avail) consumed = avail;
+
+        if (consumed > 0) {
+            s_mp3_buf_pos += consumed;
+        } else if (samples == 0) {
+            // 未解析出有效帧且未消耗字节（跳过脏数据）：向后滑动 1 字节
+            if (avail > 0) {
+                s_mp3_buf_pos++;
             }
         }
 
-        return (int)frames_to_copy;
-    }
+        if (samples > 0) {
+            g_cur_frame_idx++;
+            if (info.bitrate_kbps > 0) {
+                audio_set_bitrate(info.bitrate_kbps, g_mp3_info.is_vbr);
+            }
+            if (info.hz > 0) {
+                unsigned int cur_time_s = (g_cur_frame_idx * (unsigned int)samples) / (unsigned int)info.hz;
+                audio_set_time((int)cur_time_s);
+            }
 
-    if (g_mp3_stream.current_offset >= g_mp3_stream.size && s_mp3_buf_len < 4) {
-        return -1; // 流到末尾且不足以解码一帧
+            unsigned int frames_to_copy = (unsigned int)samples;
+            if (frames_to_copy > max_samples) frames_to_copy = max_samples;
+            short* dst = (short*)out_samples;
+            int ch = info.channels;
+
+            for (unsigned int i = 0; i < frames_to_copy; i++) {
+                if (ch == 1) {
+                    dst[i * 2]     = pcm_frame[i];
+                    dst[i * 2 + 1] = pcm_frame[i];
+                } else {
+                    dst[i * 2]     = pcm_frame[i * 2];
+                    dst[i * 2 + 1] = pcm_frame[i * 2 + 1];
+                }
+            }
+
+            return (int)frames_to_copy;
+        }
+
+        // 若 samples == 0，继续循环解码下一帧以填充 Bit Reservoir
+        if (g_mp3_stream.current_offset >= g_mp3_stream.size && (s_mp3_buf_len - s_mp3_buf_pos) < 4) {
+            return -1; // 流到末尾且不足以解码一帧
+        }
     }
 
     return 0; // In sync scan, not EOF
@@ -376,6 +399,7 @@ int mp3_dec_seek(unsigned int seconds) {
 
     if (target_offset >= g_mp3_stream.size) target_offset = g_mp3_stream.size - 2048;
     vfs_stream_seek(&g_mp3_stream, target_offset);
+    s_mp3_buf_pos = 0;
     s_mp3_buf_len = 0;
     mp3dec_init(&g_mp3d);
 
@@ -388,6 +412,7 @@ int mp3_dec_seek(unsigned int seconds) {
 void mp3_dec_close(void) {
     if (g_mp3_is_open) {
         vfs_stream_close(&g_mp3_stream);
+        s_mp3_buf_pos = 0;
         s_mp3_buf_len = 0;
         g_mp3_is_open = 0;
     }

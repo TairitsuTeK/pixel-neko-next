@@ -15,6 +15,7 @@ static int rs_dir(int mx, int my, int wx, int wy, int ww, int wh);
 #include "puzzle.h"
 #include "imageviewer.h"
 #include "audioplayer.h"
+#include "audio.h"
 #include "wallpaper.h"
 #include "speaker.h"
 #include "keyboard.h"
@@ -1101,7 +1102,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         if(!clp&&npv){int cx10=npx+4,cy10=npy+3;if(in_cl(mx,my,cx10,cy10)){clp=1;clw=10;clcx=cx10;clcy=cy10;cl_btn(v,cx10,cy10,1);need_mr=1;}}
     }
     if(mb_release&&clp){cl_btn(v,clcx,clcy,0);if(in_cl(mx,my,clcx,clcy)){
-        if(clw==1){wv=0;am=0;}else if(clw==2){cv=0;cm=0;}else if(clw==3){clv=0;clm=0;}else if(clw==4){cpv=0;cpm=0;}else if(clw==5){fmv=0;fmm=0;}else if(clw==6){edv=0;edm=0;}else if(clw==7){siv=0;sim=0;}else if(clw==8){pzv=0;pzm=0;}else if(clw==9){imv=0;imm=0;}else if(clw==10){npv=0;npm=0;}redraw=1;}else{redraw=1;}clp=0;clw=0;}
+        if(clw==1){wv=0;am=0;}else if(clw==2){cv=0;cm=0;}else if(clw==3){clv=0;clm=0;}else if(clw==4){cpv=0;cpm=0;}else if(clw==5){fmv=0;fmm=0;}else if(clw==6){edv=0;edm=0;}else if(clw==7){siv=0;sim=0;}else if(clw==8){pzv=0;pzm=0;}else if(clw==9){imv=0;imm=0;}else if(clw==10){npv=0;npm=0;audio_stop();}redraw=1;}else{redraw=1;}clp=0;clw=0;}
 
     if(mb_press&&!dragging&&!okp&&!clp&&!mip&&!resizing){
         if(wv){int mx2=wx+ww-16,my2=wy+4;if(in_mi(mx,my,mx2,my2)){mip=1;miw=1;mi_btn(v,mx2,my2,1);need_mr=1;}}

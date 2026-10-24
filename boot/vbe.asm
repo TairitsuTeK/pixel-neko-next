@@ -223,7 +223,8 @@ real_mode:
 
     mov eax, cr0
     or eax, 1
-    and eax, 0x9FFFFFFF ; Clear CR0.CD (bit 30) and CR0.NW (bit 29) to ensure cache is enabled
+    and eax, 0x9FFFFFF3 ; Clear CR0.CD (30), NW (29), EM (2), TS (3)
+    or eax, 2           ; Set CR0.MP (1)
     mov cr0, eax
     wbinvd
     

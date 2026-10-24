@@ -474,9 +474,12 @@ int flac_dec_read_samples(void* out_samples, unsigned int max_samples) {
     for (unsigned int i = 0; i < frames_to_copy; i++) {
         int sl = g_subframe_buf[0][i];
         int sr = (channels > 1) ? g_subframe_buf[1][i] : sl;
-        if (bps == 24) {
-            sl >>= 8;
-            sr >>= 8;
+        if (bps > 16) {
+            sl >>= (bps - 16);
+            sr >>= (bps - 16);
+        } else if (bps < 16) {
+            sl <<= (16 - bps);
+            sr <<= (16 - bps);
         }
         if (sl > 32767) sl = 32767; else if (sl < -32768) sl = -32768;
         if (sr > 32767) sr = 32767; else if (sr < -32768) sr = -32768;

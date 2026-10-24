@@ -1,5 +1,8 @@
 #ifndef MINIMP3_H
 #define MINIMP3_H
+#ifndef MINIMP3_NO_SIMD
+#define MINIMP3_NO_SIMD 1
+#endif
 /*
     https://github.com/lieff/minimp3
     To the extent possible under law, the author(s) have dedicated all copyright and related and neighboring rights to this software to the public domain worldwide.
@@ -1743,7 +1746,7 @@ int mp3dec_decode_frame(mp3dec_t *dec, const uint8_t *mp3, int mp3_bytes, mp3d_s
     int i = 0, igr, frame_size = 0, success = 1;
     const uint8_t *hdr;
     bs_t bs_frame[1];
-    mp3dec_scratch_t scratch;
+    static mp3dec_scratch_t scratch;
 
     if (mp3_bytes > 4 && dec->header[0] == 0xff && hdr_compare(dec->header, mp3))
     {

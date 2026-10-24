@@ -74,7 +74,51 @@ static int my_strlen(const char* s) {
     int n = 0; while (s[n]) n++; return n;
 }
 
+void enable_fpu(void) {
+    unsigned int cr0;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~(1 << 2); // 清除 CR0.EM (禁止软件模拟)
+    cr0 |=  (1 << 1); // 置位 CR0.MP (监控协处理器)
+    cr0 &= ~(1 << 3); // 清除 CR0.TS (任务已切换标志)
+    cr0 |=  (1 << 5); // 置位 CR0.NE (内部 x87 浮点错误报告)
+    __asm__ volatile("mov %0, %%cr0" :: "r"(cr0));
+
+    // 使用 CPUID 检测是否支持 FXSR 和 SSE
+    unsigned int edx = 0;
+    __asm__ volatile(
+        "pushfl\n"
+        "pushfl\n"
+        "popl %%eax\n"
+        "movl %%eax, %%ecx\n"
+        "xorl $0x200000, %%eax\n"
+        "pushl %%eax\n"
+        "popfl\n"
+        "pushfl\n"
+        "popl %%eax\n"
+        "popfl\n"
+        "xorl %%ecx, %%eax\n"
+        "jz 1f\n"
+        "movl $1, %%eax\n"
+        "cpuid\n"
+        "1:\n"
+        : "=d"(edx) : : "eax", "ebx", "ecx"
+    );
+
+    unsigned int cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    if (edx & (1 << 24)) { // FXSR 支持
+        cr4 |= (1 << 9);   // OSFXSR
+    }
+    if (edx & (1 << 25)) { // SSE 支持
+        cr4 |= (1 << 10);  // OSXMMEXCPT
+    }
+    __asm__ volatile("mov %0, %%cr4" :: "r"(cr4));
+
+    __asm__ volatile("fninit");
+}
+
 void audio_init(void) {
+    enable_fpu();
     g_audio_state = AUDIO_STATE_STOPPED;
     g_active_dec = DEC_NONE;
     g_queue_read_idx = 0;
@@ -124,65 +168,96 @@ int audio_feed_raw_pcm(const void* samples, unsigned int sample_count, int src_r
         decimation_ratio = 2;
     }
 
+    // -------------------------------------------------------------
+    // 极速路径 1：16-bit 立体声 1:1 直通 (44.1k/48k 原生输出，零运算开销)
+    // -------------------------------------------------------------
+    if (decimation_ratio == 1 && src_bits == 16 && src_channels == 2 && !src_float) {
+        const short* src_s16 = (const short*)samples;
+        unsigned int space_frames = (PCM_QUEUE_SIZE - g_queue_bytes) / 4;
+        unsigned int to_copy = (sample_count < space_frames) ? sample_count : space_frames;
+        for (unsigned int i = 0; i < to_copy; i++) {
+            unsigned int w_idx = g_queue_write_idx;
+            g_pcm_queue[w_idx]     = src_s16[i * 2];
+            g_pcm_queue[w_idx + 1] = src_s16[i * 2 + 1];
+            g_queue_write_idx = (w_idx + 2) % (PCM_QUEUE_SIZE / sizeof(short));
+            g_queue_bytes += 4;
+        }
+        return (int)to_copy;
+    }
+
+    // -------------------------------------------------------------
+    // 极速路径 2：16-bit 立体声 2:1 降采样 (96kHz -> 48kHz / 88.2kHz -> 44.1kHz)
+    // 采用 2 点线性平均平滑抽取，单位增益精确为 1.0，完全消灭削波与乘法消耗
+    // -------------------------------------------------------------
+    if (decimation_ratio == 2 && src_bits == 16 && src_channels == 2 && !src_float) {
+        const short* src_s16 = (const short*)samples;
+        unsigned int space_frames = (PCM_QUEUE_SIZE - g_queue_bytes) / 4;
+        unsigned int out_frames = sample_count / 2;
+        unsigned int to_copy = (out_frames < space_frames) ? out_frames : space_frames;
+        for (unsigned int i = 0; i < to_copy; i++) {
+            int idx = i * 4;
+            short l = (short)(((int)src_s16[idx] + (int)src_s16[idx + 2]) >> 1);
+            short r = (short)(((int)src_s16[idx + 1] + (int)src_s16[idx + 3]) >> 1);
+            unsigned int w_idx = g_queue_write_idx;
+            g_pcm_queue[w_idx]     = l;
+            g_pcm_queue[w_idx + 1] = r;
+            g_queue_write_idx = (w_idx + 2) % (PCM_QUEUE_SIZE / sizeof(short));
+            g_queue_bytes += 4;
+        }
+        return (int)(to_copy * 2);
+    }
+
+    // -------------------------------------------------------------
+    // 极速路径 3：16-bit 立体声 4:1 降采样 (192kHz -> 48kHz)
+    // -------------------------------------------------------------
+    if (decimation_ratio == 4 && src_bits == 16 && src_channels == 2 && !src_float) {
+        const short* src_s16 = (const short*)samples;
+        unsigned int space_frames = (PCM_QUEUE_SIZE - g_queue_bytes) / 4;
+        unsigned int out_frames = sample_count / 4;
+        unsigned int to_copy = (out_frames < space_frames) ? out_frames : space_frames;
+        for (unsigned int i = 0; i < to_copy; i++) {
+            int idx = i * 8;
+            int sum_l = (int)src_s16[idx] + (int)src_s16[idx + 2] + (int)src_s16[idx + 4] + (int)src_s16[idx + 6];
+            int sum_r = (int)src_s16[idx + 1] + (int)src_s16[idx + 3] + (int)src_s16[idx + 5] + (int)src_s16[idx + 7];
+            unsigned int w_idx = g_queue_write_idx;
+            g_pcm_queue[w_idx]     = (short)(sum_l >> 2);
+            g_pcm_queue[w_idx + 1] = (short)(sum_r >> 2);
+            g_queue_write_idx = (w_idx + 2) % (PCM_QUEUE_SIZE / sizeof(short));
+            g_queue_bytes += 4;
+        }
+        return (int)(to_copy * 4);
+    }
+
+    // 通用回退路径（用于非标准单声道、8-bit、24-bit、32-bit Float 等 WAV 数据）
     const unsigned char* src_bytes = (const unsigned char*)samples;
     int bytes_per_sample = (src_bits + 7) / 8;
     int frame_size = bytes_per_sample * src_channels;
     unsigned int produced_frames = 0;
 
     for (unsigned int i = 0; i < sample_count; i += decimation_ratio) {
-        if (g_queue_bytes + 4 > PCM_QUEUE_SIZE) {
-            break; // 队列满
-        }
+        if (g_queue_bytes + 4 > PCM_QUEUE_SIZE) break;
 
+        const unsigned char* p = src_bytes + i * frame_size;
         int s24_l = 0, s24_r = 0;
 
-        // 多相卷积抽取：只对保留下来的样本帧进行乘加，节省 50%~75% 算力
-        if (decimation_ratio == 2 && i >= 3 && i + 3 < sample_count) {
-            int acc_l = 0, acc_r = 0;
-            for (int k = -3; k <= 3; k++) {
-                int tap_idx = i + k;
-                const unsigned char* p = src_bytes + tap_idx * frame_size;
-                int val_l = 0, val_r = 0;
-                if (src_bits == 16) {
-                    val_l = *(const short*)p << 8;
-                    val_r = (src_channels > 1) ? (*(const short*)(p + 2) << 8) : val_l;
-                } else if (src_bits == 24) {
-                    val_l = (int)(((unsigned int)p[0]) | ((unsigned int)p[1] << 8) | ((unsigned int)(signed char)p[2] << 16));
-                    val_r = (src_channels > 1) ? (int)(((unsigned int)p[3]) | ((unsigned int)p[4] << 8) | ((unsigned int)(signed char)p[5] << 16)) : val_l;
-                }
-                short coeff = g_fir_coeffs[k + 3];
-                acc_l += (val_l >> 8) * coeff;
-                acc_r += (val_r >> 8) * coeff;
-            }
-            s24_l = acc_l;
-            s24_r = acc_r;
-        } else {
-            const unsigned char* p = src_bytes + i * frame_size;
-            if (src_float && src_bits == 32) {
-                unsigned int u_l = *(const unsigned int*)p;
-                s24_l = ieee754_to_s24(u_l);
-                if (src_channels > 1) {
-                    unsigned int u_r = *(const unsigned int*)(p + 4);
-                    s24_r = ieee754_to_s24(u_r);
-                } else {
-                    s24_r = s24_l;
-                }
-            } else if (src_bits == 16) {
-                s24_l = *(const short*)p << 8;
-                s24_r = (src_channels > 1) ? (*(const short*)(p + 2) << 8) : s24_l;
-            } else if (src_bits == 24) {
-                s24_l = (int)(((unsigned int)p[0]) | ((unsigned int)p[1] << 8) | ((unsigned int)(signed char)p[2] << 16));
-                s24_r = (src_channels > 1) ? (int)(((unsigned int)p[3]) | ((unsigned int)p[4] << 8) | ((unsigned int)(signed char)p[5] << 16)) : s24_l;
-            } else if (src_bits == 32) {
-                s24_l = *(const int*)p >> 8;
-                s24_r = (src_channels > 1) ? (*(const int*)(p + 4) >> 8) : s24_l;
-            } else if (src_bits == 8) {
-                s24_l = ((int)p[0] - 128) << 16;
-                s24_r = (src_channels > 1) ? (((int)p[1] - 128) << 16) : s24_l;
-            }
+        if (src_float && src_bits == 32) {
+            unsigned int u_l = *(const unsigned int*)p;
+            s24_l = ieee754_to_s24(u_l);
+            s24_r = (src_channels > 1) ? ieee754_to_s24(*(const unsigned int*)(p + 4)) : s24_l;
+        } else if (src_bits == 16) {
+            s24_l = *(const short*)p << 8;
+            s24_r = (src_channels > 1) ? (*(const short*)(p + 2) << 8) : s24_l;
+        } else if (src_bits == 24) {
+            s24_l = (int)(((unsigned int)p[0]) | ((unsigned int)p[1] << 8) | ((unsigned int)(signed char)p[2] << 16));
+            s24_r = (src_channels > 1) ? (int)(((unsigned int)p[3]) | ((unsigned int)p[4] << 8) | ((unsigned int)(signed char)p[5] << 16)) : s24_l;
+        } else if (src_bits == 32) {
+            s24_l = *(const int*)p >> 8;
+            s24_r = (src_channels > 1) ? (*(const int*)(p + 4) >> 8) : s24_l;
+        } else if (src_bits == 8) {
+            s24_l = ((int)p[0] - 128) << 16;
+            s24_r = (src_channels > 1) ? (((int)p[1] - 128) << 16) : s24_l;
         }
 
-        // TPDF 抖动输出 16 位立体声
         short s16_l = dither_s24_to_s16(s24_l);
         short s16_r = dither_s24_to_s16(s24_r);
 
@@ -199,6 +274,8 @@ int audio_feed_raw_pcm(const void* samples, unsigned int sample_count, int src_r
 
 int audio_play_file(const char* filepath) {
     if (!filepath || !filepath[0]) return -1;
+
+    enable_fpu();
 
     // 先停止当前播放
     audio_stop();
@@ -252,8 +329,8 @@ int audio_play_file(const char* filepath) {
         if (open_ok == 0) {
             g_active_dec = DEC_FLAC;
             g_audio_info.sample_rate = fi.sample_rate;
-            g_audio_info.channels = fi.channels;
-            g_audio_info.bit_depth = fi.bit_depth;
+            g_audio_info.channels = 2; // flac_dec_read_samples 始终输出双声道
+            g_audio_info.bit_depth = 16; // flac_dec_read_samples 始终输出 16-bit
             g_audio_info.is_float = 0;
             g_audio_info.total_duration_s = fi.duration_s;
             g_audio_info.bitrate_kbps = 0; // VBR
@@ -269,8 +346,8 @@ int audio_play_file(const char* filepath) {
         if (open_ok == 0) {
             g_active_dec = DEC_MP3;
             g_audio_info.sample_rate = mi.sample_rate;
-            g_audio_info.channels = mi.channels;
-            g_audio_info.bit_depth = 16;
+            g_audio_info.channels = 2; // mp3_dec_read_samples 始终输出双声道
+            g_audio_info.bit_depth = 16; // mp3_dec_read_samples 始终输出 16-bit
             g_audio_info.is_float = 0;
             g_audio_info.total_duration_s = mi.duration_s;
             g_audio_info.bitrate_kbps = mi.bitrate_kbps;
@@ -303,12 +380,12 @@ int audio_play_file(const char* filepath) {
     cmi8738_silence_half(0);
     cmi8738_silence_half(1);
 
-    // 2. 预充队列：在开启硬件 DMA 之前，先解码填充首半区（32KB）
-    for (int pre = 0; pre < 32 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
-        static unsigned char dec_temp_buf[8192];
+    // 2. 预充队列：在开启硬件 DMA 之前，先预充两半区 DMA + 内部队列缓冲（总计 ~96KB 缓冲）
+    static unsigned char dec_temp_buf[16384];
+    while (g_queue_bytes < (CMI_DMA_BUFFER_BYTES + CMI_DMA_HALF_BYTES) && !g_eof_reached) {
         int samples_read = 0;
-        if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 1024);
-        else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 1024);
+        if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
+        else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
         else if (g_active_dec == DEC_MP3) samples_read = mp3_dec_read_samples(dec_temp_buf, 1152);
 
         if (samples_read > 0) {
@@ -320,19 +397,23 @@ int audio_play_file(const char* filepath) {
         } else if (samples_read < 0) {
             g_eof_reached = 1;
             break;
+        } else {
+            break;
         }
     }
 
-    // 3. 将预充好的 PCM 复制写入 DMA 半区 0
-    if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
-        static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
-        unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
-        for (unsigned int i = 0; i < samples_needed; i++) {
-            dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
-            g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
+    // 3. 将预充好的 PCM 复制写入 DMA 半区 0 和半区 1
+    static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
+    for (int h = 0; h < 2; h++) {
+        if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
+            unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
+            for (unsigned int i = 0; i < samples_needed; i++) {
+                dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
+                g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
+            }
+            g_queue_bytes -= CMI_DMA_HALF_BYTES;
+            cmi8738_write_half(h, dma_copy_buf, CMI_DMA_HALF_BYTES);
         }
-        g_queue_bytes -= CMI_DMA_HALF_BYTES;
-        cmi8738_write_half(0, dma_copy_buf, CMI_DMA_HALF_BYTES);
     }
 
     // 4. 启动声卡硬件 DMA 环形播放
@@ -376,6 +457,8 @@ void audio_stop(void) {
 void audio_seek_sec(unsigned int seconds) {
     if (g_active_dec == DEC_NONE) return;
 
+    enable_fpu();
+
     if (g_active_dec == DEC_WAV) wav_dec_seek(seconds);
     else if (g_active_dec == DEC_FLAC) flac_dec_seek(seconds);
     else if (g_active_dec == DEC_MP3) mp3_dec_seek(seconds);
@@ -387,12 +470,12 @@ void audio_seek_sec(unsigned int seconds) {
     g_total_frames_played = (unsigned int)seconds * (unsigned int)g_audio_info.target_rate;
     g_eof_reached = 0;
 
-    // 预充少量数据，平滑恢复
-    for (int pre = 0; pre < 16 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
-        static unsigned char dec_temp_buf[8192];
+    // 预充数据平滑恢复
+    static unsigned char dec_temp_buf[16384];
+    while (g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached) {
         int samples_read = 0;
-        if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 1024);
-        else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 1024);
+        if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
+        else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
         else if (g_active_dec == DEC_MP3) samples_read = mp3_dec_read_samples(dec_temp_buf, 1152);
 
         if (samples_read > 0) {
@@ -403,6 +486,8 @@ void audio_seek_sec(unsigned int seconds) {
                                g_audio_info.is_float);
         } else if (samples_read < 0) {
             g_eof_reached = 1;
+            break;
+        } else {
             break;
         }
     }
@@ -471,14 +556,17 @@ void audio_poll(void) {
     if (!cmi8738_is_present()) return;
 
     // 1. 如果内部队列有空间，从当前解码器读取新样本
-    if (!g_eof_reached && g_queue_bytes < (PCM_QUEUE_SIZE / 2)) {
-        static unsigned char dec_temp_buf[8192];
+    // 贪婪循环填充至高水位（48KB），单次最多解码 6 帧以防阻塞 GUI
+    int dec_count = 0;
+    static unsigned char dec_temp_buf[16384];
+    while (!g_eof_reached && g_queue_bytes < (PCM_QUEUE_SIZE - 16384) && dec_count < 6) {
+        dec_count++;
         int samples_read = 0;
 
         if (g_active_dec == DEC_WAV) {
-            samples_read = wav_dec_read_samples(dec_temp_buf, 1024);
+            samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
         } else if (g_active_dec == DEC_FLAC) {
-            samples_read = flac_dec_read_samples(dec_temp_buf, 1024);
+            samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
         } else if (g_active_dec == DEC_MP3) {
             samples_read = mp3_dec_read_samples(dec_temp_buf, 1152);
         }
@@ -491,6 +579,10 @@ void audio_poll(void) {
                                g_audio_info.is_float);
         } else if (samples_read < 0) {
             g_eof_reached = 1;
+            break;
+        } else {
+            // samples_read == 0: 暂无新样本，跳出
+            break;
         }
     }
 
