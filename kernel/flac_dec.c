@@ -313,6 +313,7 @@ static int decode_subframe(int ch, int block_size, int bps) {
 int flac_dec_read_samples(void* out_samples, unsigned int max_samples) {
     if (!g_flac_is_open) return 0;
     (void)out_samples; // Samples are fed directly to audio_feed_raw_pcm
+    (void)max_samples;
 
     // Sync to next frame header (14-bit sync code 0x3FFE)
     int sync_found = 0;

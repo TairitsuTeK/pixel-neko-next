@@ -279,6 +279,7 @@ int mp3_dec_open(const char* path, mp3_info_t* out_info) {
 int mp3_dec_read_samples(void* out_samples, unsigned int max_samples) {
     if (!g_mp3_is_open) return 0;
     (void)out_samples;
+    (void)max_samples;
 
     if (g_mp3_stream.current_offset >= g_mp3_stream.size) return 0; // EOF
 

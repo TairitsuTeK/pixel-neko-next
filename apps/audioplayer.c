@@ -13,8 +13,6 @@ static int marquee_pos = 0;
 static int marquee_timer = 0;
 static int is_dragging_seek = 0;
 static int is_dragging_vol = 0;
-static int seek_drag_x = 0;
-static int vol_drag_x = 0;
 
 static void my_strcpy(char* d, const char* s) {
     while (*s) *d++ = *s++;
@@ -455,7 +453,7 @@ void audioplayer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww,
 }
 
 void audioplayer_drag(int mx, int my, int wx, int wy, int ww, int wh) {
-    (void)my; (void)ww; (void)wh;
+    (void)my; (void)wy; (void)ww; (void)wh;
     if (is_dragging_seek) {
         int sb_x = wx + 10;
         int sb_w = 320;
