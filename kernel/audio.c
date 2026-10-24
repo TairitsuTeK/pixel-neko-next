@@ -369,6 +369,17 @@ unsigned int audio_get_duration_sec(void) {
     return (unsigned int)g_audio_info.total_duration_s;
 }
 
+void audio_set_time(int current_s) {
+    if (current_s >= 0) {
+        g_audio_info.current_time_s = current_s;
+    }
+}
+
+void audio_set_bitrate(int kbps, int is_vbr) {
+    g_audio_info.bitrate_kbps = kbps;
+    g_audio_info.is_vbr = is_vbr;
+}
+
 void audio_set_volume(int vol) {
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;

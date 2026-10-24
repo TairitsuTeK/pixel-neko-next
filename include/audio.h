@@ -40,6 +40,8 @@ audio_state_t audio_get_state(void);
 const char* audio_get_title(void);
 unsigned int audio_get_position_sec(void);
 unsigned int audio_get_duration_sec(void);
+void audio_set_time(int current_s);
+void audio_set_bitrate(int kbps, int is_vbr);
 
 // Volume & Mixer Controls (0 ~ 100)
 void audio_set_volume(int vol);
