@@ -250,9 +250,14 @@ int disk_read_drive(int drive, unsigned int lba, unsigned char* buf)
     
     unsigned int port = d->base_port;
     if (d->is_atapi) {
-        // ATAPI READ 12
-        outb(port + 6, (d->drive_idx << 4));
+        // ATAPI READ 12 / READ 10
+        outb(port + 6, 0xA0 | (d->drive_idx << 4));
         inb(port + 7); inb(port + 7); inb(port + 7); inb(port + 7);
+        
+        int bsy_to = 100000;
+        while (bsy_to > 0 && (inb(port + 7) & ATA_SR_BSY)) bsy_to--;
+        if (bsy_to == 0) return -1;
+
         outb(port + 1, 0); // Feature
         outb(port + 4, 2048 & 0xFF); // Byte count limit
         outb(port + 5, 2048 >> 8);

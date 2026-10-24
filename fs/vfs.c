@@ -129,10 +129,10 @@ void vfs_init(void) {
                     } else {
                         my_strcpy(d->label, "CD-ROM Disc", sizeof(d->label));
                     }
+                    cd_idx++;
                 } else {
                     my_strcpy(d->label, "CD-ROM Drive", sizeof(d->label));
                 }
-                cd_idx++;
             }
             next_letter++;
         }
@@ -140,6 +140,30 @@ void vfs_init(void) {
 
     // Initialize FAT structures
     fat_init();
+}
+
+static iso_fs_t* get_iso_fs_for_drive(vfs_drive_t* drv) {
+    if (!drv || drv->drv_type != VFS_DRV_CDROM || !drv->dev) return 0;
+    for (int i = 0; i < 4; i++) {
+        if (g_iso_fs[i].dev == drv->dev && g_iso_fs[i].mounted) {
+            return &g_iso_fs[i];
+        }
+    }
+    // Not mounted yet, try mounting to first available slot
+    for (int i = 0; i < 4; i++) {
+        if (!g_iso_fs[i].mounted || g_iso_fs[i].dev == drv->dev) {
+            if (iso_mount(drv->dev, &g_iso_fs[i]) == 0) {
+                drv->mounted = 1;
+                drv->total_sectors = g_iso_fs[i].total_sectors;
+                drv->total_kb = drv->total_sectors * 2;
+                if (g_iso_fs[i].volume_label[0]) {
+                    my_strcpy(drv->label, g_iso_fs[i].volume_label, sizeof(drv->label));
+                }
+                return &g_iso_fs[i];
+            }
+        }
+    }
+    return 0;
 }
 
 struct vfs_list_bridge {
@@ -183,35 +207,22 @@ int vfs_list_dir(const char* path, void (*callback)(const vfs_dirent_t*)) {
         return VFS_ERR_UNSUPPORTED; // E.g. NTFS, exFAT, ext
     }
 
-    // Check media presence for removable drives
     if (drv->drv_type == VFS_DRV_FLOPPY) {
-        if (fdc_check_media(drv->dev->unit) == MEDIA_ABSENT) {
+        if (!drv->dev || fdc_check_media(drv->dev->unit) == MEDIA_ABSENT) {
             return VFS_ERR_NO_MEDIA;
-        }
-    } else if (drv->drv_type == VFS_DRV_CDROM) {
-        if (drv->dev->check_media && drv->dev->check_media(drv->dev) == MEDIA_ABSENT) {
-            return VFS_ERR_NO_MEDIA;
-        }
-        // If not mounted, try mounting now
-        int cd_idx = 0;
-        if (!drv->mounted) {
-            if (iso_mount(drv->dev, &g_iso_fs[cd_idx]) == 0) {
-                drv->mounted = 1;
-                if (g_iso_fs[cd_idx].volume_label[0]) {
-                    my_strcpy(drv->label, g_iso_fs[cd_idx].volume_label, sizeof(drv->label));
-                }
-            } else {
-                return VFS_ERR_NO_MEDIA;
-            }
         }
     }
 
     g_cur_list_bridge.user_cb = callback;
 
     if (drv->drv_type == VFS_DRV_CDROM) {
+        iso_fs_t* iso = get_iso_fs_for_drive(drv);
+        if (!iso) {
+            return VFS_ERR_NO_MEDIA;
+        }
         const char* subpath = path + 2;
         if (*subpath == '\\' || *subpath == '/') subpath++;
-        return iso_list_dir(&g_iso_fs[0], subpath, vfs_iso_cb);
+        return iso_list_dir(iso, subpath, vfs_iso_cb);
     } else {
         // FAT volume listing
         return fat_list_dir(path, vfs_fat_cb);
@@ -226,10 +237,12 @@ int vfs_find_file(const char* path, vfs_dirent_t* out_entry) {
     if (!drv->is_supported) return VFS_ERR_UNSUPPORTED;
 
     if (drv->drv_type == VFS_DRV_CDROM) {
+        iso_fs_t* iso = get_iso_fs_for_drive(drv);
+        if (!iso) return VFS_ERR_NO_MEDIA;
         const char* subpath = path + 2;
         if (*subpath == '\\' || *subpath == '/') subpath++;
         iso_file_info_t iso_info;
-        if (iso_find_file(&g_iso_fs[0], subpath, &iso_info) != 0) {
+        if (iso_find_file(iso, subpath, &iso_info) != 0) {
             return VFS_ERR_NOT_FOUND;
         }
         my_strcpy(out_entry->name, iso_info.name, sizeof(out_entry->name));
@@ -257,11 +270,13 @@ int vfs_read_file(const char* path, unsigned char* buf, unsigned int max_size) {
     if (!drv || !drv->is_supported) return -1;
 
     if (drv->drv_type == VFS_DRV_CDROM) {
+        iso_fs_t* iso = get_iso_fs_for_drive(drv);
+        if (!iso) return -1;
         const char* subpath = path + 2;
         if (*subpath == '\\' || *subpath == '/') subpath++;
         iso_file_info_t iso_info;
-        if (iso_find_file(&g_iso_fs[0], subpath, &iso_info) != 0) return -1;
-        return iso_read_file(&g_iso_fs[0], &iso_info, 0, buf, max_size);
+        if (iso_find_file(iso, subpath, &iso_info) != 0) return -1;
+        return iso_read_file(iso, &iso_info, 0, buf, max_size);
     } else {
         file_handle_t* h = fat_open(path);
         if (!h) return -1;
@@ -338,10 +353,12 @@ int vfs_stream_open(const char* path, vfs_stream_t* s) {
     s->path[i] = '\0';
 
     if (drv->drv_type == VFS_DRV_CDROM) {
+        iso_fs_t* iso = get_iso_fs_for_drive(drv);
+        if (!iso) return -1;
         const char* subpath = path + 2;
         if (*subpath == '\\' || *subpath == '/') subpath++;
         iso_file_info_t iso_info;
-        if (iso_find_file(&g_iso_fs[0], subpath, &iso_info) != 0) return -1;
+        if (iso_find_file(iso, subpath, &iso_info) != 0) return -1;
         s->size = iso_info.size;
         s->is_cdrom = 1;
         s->cdrom_extent_lba = iso_info.extent_lba;
@@ -368,6 +385,10 @@ int vfs_stream_read(vfs_stream_t* s, void* buf, unsigned int size) {
     if (size == 0) return 0;
 
     if (s->is_cdrom) {
+        vfs_drive_t* drv = vfs_get_drive(s->path[0]);
+        iso_fs_t* iso = get_iso_fs_for_drive(drv);
+        if (!iso) return -1;
+
         unsigned char* dst = (unsigned char*)buf;
         unsigned int bytes_copied = 0;
 
@@ -384,7 +405,7 @@ int vfs_stream_read(vfs_stream_t* s, void* buf, unsigned int size) {
                 iso_info.size = s->size;
                 iso_info.extent_lba = s->cdrom_extent_lba;
 
-                int r = iso_read_file(&g_iso_fs[0], &iso_info, sec_idx * 2048, s->sec_cache, 2048);
+                int r = iso_read_file(iso, &iso_info, sec_idx * 2048, s->sec_cache, 2048);
                 if (r <= 0) break;
                 s->cached_sec_lba = lba;
                 s->has_cached_sec = 1;
