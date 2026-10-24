@@ -73,7 +73,7 @@ static int icon_press_ox = 0, icon_press_oy = 0;
 static int icon_press_moved = 0;
 static int menu_open = 0, menu_index = -1;
 extern volatile int global_tick;
-static int last_click_icon = -1;
+static int last_click_icon = -1, last_s = -1;
 // Track previous click release for double-click timing (separate from visual selection)
 static int last_click_icon_prev = -1, last_click_time_prev = 0;
 
@@ -116,7 +116,6 @@ static int mip=0, miw=0;
 
 static int resizing=0, rsdir=0;
 static int rsox=0, rsoy=0, rsow=0, rsoh=0;
-static int tick=0;
 static int power_btn_pressed=0;
 static int power_confirm=0;
 static int power_cancel_pressed=0, power_ok_pressed=0;
@@ -354,7 +353,8 @@ static void icon(unsigned char* v, int x, int y, unsigned char bg, const char* l
         ic[5][7]=11;ic[3][7]=11;
     }else if(bg==5){
         for(int i=0;i<16;i++)for(int j=0;j<16;j++) ic[i][j]=7;
-        for(int j=0;j<16;j++) ic[0][j]=15; for(int i=0;i<16;i++) ic[i][0]=15;
+        for(int j=0;j<16;j++) ic[0][j]=15;
+        for(int i=0;i<16;i++) ic[i][0]=15;
         for(int j=0;j<16;j++) ic[15][j]=0;
         for(int i=0;i<16;i++) ic[i][15]=0;
         for(int i=3;i<13;i++)for(int j=3;j<13;j++) ic[i][j]=6;
@@ -942,7 +942,8 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         if (mb) {
             int dx = mx - (desk_icon_x[icon_pressed] + icon_press_ox);
             int dy = my - (desk_icon_y[icon_pressed] + icon_press_oy);
-            if (dx < 0) dx = -dx; if (dy < 0) dy = -dy;
+            if (dx < 0) dx = -dx;
+            if (dy < 0) dy = -dy;
             if (dx > 8 || dy > 8) {
                 icon_dragging = icon_pressed;
                 icon_drag_ox = icon_press_ox;
