@@ -268,6 +268,10 @@ unsigned int cmi8738_get_dma_frame_pos(void) {
     return pos;
 }
 
+const void* cmi8738_get_dma_buffer(void) {
+    return g_dma_buf;
+}
+
 void cmi8738_write_half(int half_idx, const void* data, unsigned int bytes) {
     if (!g_dma_buf) return;
     if (half_idx < 0 || half_idx > 1) return;

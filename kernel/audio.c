@@ -484,9 +484,8 @@ void audio_poll(void) {
     // 3. 硬件播放位置同步的 10 段频谱仪与立体声 VU 表
     unsigned int frame = cmi8738_get_dma_frame_pos();
     unsigned int sample_offset = (frame * 2) % (CMI_DMA_BUFFER_BYTES / sizeof(short));
-    extern unsigned char* g_dma_buf;
-    if (g_dma_buf) {
-        const short* dma_samples = (const short*)g_dma_buf;
+    const short* dma_samples = (const short*)cmi8738_get_dma_buffer();
+    if (dma_samples) {
         int peak_l = 0, peak_r = 0;
         int band_acc[10] = {0};
 

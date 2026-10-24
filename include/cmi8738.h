@@ -41,6 +41,7 @@ void cmi8738_set_volume(int master_vol, int pcm_vol); // 0 ~ 100
 
 // Query current playback position in DMA ring buffer (sample frame offset 0..16383)
 unsigned int cmi8738_get_dma_frame_pos(void);
+const void* cmi8738_get_dma_buffer(void);
 
 // Buffer write operations: half_idx: 0 = first 32KB, 1 = second 32KB
 void cmi8738_write_half(int half_idx, const void* data, unsigned int bytes);
