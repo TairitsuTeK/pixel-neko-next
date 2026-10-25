@@ -76,7 +76,7 @@ static void update_progress_ui(int percent, const char* text, const char* subtex
 
 static void on_kernel_write_progress(unsigned int written, unsigned int total) {
     if (total == 0) return;
-    int pct = 30 + (int)(((unsigned long long)written * 45) / total);
+    int pct = 30 + (int)((written * 45) / total);
     if (pct > 75) pct = 75;
     char num_buf[48];
     unsigned int wr_kb = written / 1024;
