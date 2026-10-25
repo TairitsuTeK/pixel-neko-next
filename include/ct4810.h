@@ -7,6 +7,7 @@
 #define ES1371_DEV_ID           0x1371
 #define CT5880_DEV_ID           0x5880
 #define CREATIVE_VENDOR_ID      0x1102
+#define EV1938_DEV_ID           0x8938
 
 // ES1371 / CT5880 Registers (BAR0 offsets)
 #define ES_REG_CONTROL          0x00 // Control register
@@ -17,28 +18,38 @@
 #define ES_REG_SRC              0x10 // Sample Rate Converter
 #define ES_REG_CODEC            0x14 // AC'97 Codec Port
 #define ES_REG_LEGACY           0x18 // Legacy Control
-#define ES_REG_CH_FORMAT        0x20 // Channel Format Register
+#define ES_REG_SERIAL           0x20 // Serial Control / Channel Format
+#define ES_REG_DAC2_COUNT       0x28 // DAC2 Sample / Period Count
 
-// DAC2 / Playback Frame Registers
-#define ES_REG_DAC2_FRAME1      0x38 // DAC2 Buffer Base Address
-#define ES_REG_DAC2_FRAME2      0x3C // DAC2 Sample Count / Size
+// Registers mapped under PAGE 0x0C (ES_PAGE_DAC)
+#define ES_PAGE_DAC             0x0C
+#define ES_REG_DAC2_FRAME1      0x38 // DAC2 Buffer Base Physical Address
+#define ES_REG_DAC2_FRAME2      0x3C // DAC2 Current Count (31:16) & Frame Size (15:0)
 
 // Control Register (0x00) Bits
-#define ES_CTL_DAC2_EN          0x00000020 // DAC2 Enable (Bit 5 in ES1371)
-#define ES_CTL_DAC1_EN          0x00000010 // DAC1 Enable (Bit 4 in ES1371)
-#define ES_CTL_ADC_EN           0x00000008 // ADC Enable
-#define ES_CTL_CCB_INTRM        0x00000400 // CCB Interrupt Mask
 #define ES_CTL_BREQ             0x00000001 // Bus Master Request
+#define ES_CTL_ADC_EN           0x00000010 // ADC Enable (Bit 4)
+#define ES_CTL_DAC2_EN          0x00000020 // DAC2 Enable (Bit 5)
+#define ES_CTL_DAC1_EN          0x00000040 // DAC1 Enable (Bit 6)
 
-// Status Register (0x04) Bits
-#define ES_STAT_INTR            0x80000000 // Interrupt Pending
-#define ES_STAT_CSTAT           0x00000400 // Codec Status: 1 = ready
-#define ES_STAT_DAC2_INT        0x00000004 // DAC2 Interrupt
-#define ES_STAT_DAC1_INT        0x00000002 // DAC1 Interrupt
+// Serial Control Register (0x20) Bits
+#define ES_P2_MODEO(o)          (((o) & 0x03) << 2) // Mode: 0=8M, 1=8S, 2=16M, 3=16S
+#define ES_P2_MODEM             (0x03 << 2)
+#define ES_P2_INT_EN            (1 << 9)
+#define ES_P2_PAUSE             (1 << 12)
+#define ES_P2_LOOP_SEL          (1 << 14) // 0 = Loop mode, 1 = Stop mode
 
-// AC'97 Codec Status & Control (0x14)
-#define ES_CODEC_BUSY           0x40000000 // Bit 30: Codec Busy / WIP
-#define ES_CODEC_READ           0x00800000 // Bit 23: 1 = Read, 0 = Write
+// Sample Rate Converter (0x10) Bits & Masks
+#define ES_1371_DIS_R1          (1 << 19)
+#define ES_1371_DIS_P2          (1 << 20)
+#define ES_1371_DIS_P1          (1 << 21)
+#define ES_1371_SRC_DISABLE     (1 << 22)
+#define ES_1371_SRC_RAM_BUSY    (1 << 23)
+#define ES_1371_SRC_RAM_WE      (1 << 24)
+
+// AC'97 Codec Port (0x14) Bits
+#define ES_1371_CODEC_WIP       (1 << 30) // Codec Write/Access In Progress
+#define ES_1371_CODEC_PORD      (1 << 31) // Codec Read In Progress / Status
 
 // DMA Ring Buffer Dimensions: 64KB total, two 32KB halves
 #define CT_DMA_BUFFER_BYTES     65536

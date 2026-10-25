@@ -34,40 +34,99 @@ static inline void ct_write16(unsigned int reg, unsigned short val) {
     outw(g_ct_io_base + reg, val);
 }
 
-// AC'97 Codec Read/Write primitives
-static int ct_codec_wait(void) {
+// Wait for Sample Rate Converter (SRC) to report not busy
+static unsigned int ct_wait_src_ready(void) {
+    if (!g_ct_io_base) return 0;
     for (int t = 0; t < 20000; t++) {
-        if (!(ct_read32(ES_REG_CODEC) & ES_CODEC_BUSY)) {
-            return 0;
+        unsigned int r = ct_read32(ES_REG_SRC);
+        if (!(r & ES_1371_SRC_RAM_BUSY)) {
+            return r;
         }
-        for (volatile int d = 0; d < 50; d++);
+        for (volatile int d = 0; d < 20; d++);
     }
-    return -1;
+    return 0;
 }
 
+// Write to SRC RAM register
+static void ct_src_write(unsigned short reg, unsigned short data) {
+    if (!g_ct_io_base) return;
+    unsigned int r = ct_wait_src_ready() & (ES_1371_SRC_DISABLE | ES_1371_DIS_P1 | ES_1371_DIS_P2 | ES_1371_DIS_R1);
+    r |= ((unsigned int)(reg & 0x7F) << 25) | (data & 0xFFFF);
+    ct_write32(ES_REG_SRC, r | ES_1371_SRC_RAM_WE);
+}
+
+// Read from SRC RAM register
+static unsigned short ct_src_read(unsigned short reg) {
+    if (!g_ct_io_base) return 0;
+    unsigned int r = ct_wait_src_ready() & (ES_1371_SRC_DISABLE | ES_1371_DIS_P1 | ES_1371_DIS_P2 | ES_1371_DIS_R1);
+    r |= ((unsigned int)(reg & 0x7F) << 25);
+    ct_write32(ES_REG_SRC, r);
+    ct_wait_src_ready();
+    return (unsigned short)(ct_read32(ES_REG_SRC) & 0xFFFF);
+}
+
+// Write to AC'97 Codec register with required SRC synchronization
 static void ct_codec_write(unsigned char reg, unsigned short val) {
     if (!g_ct_io_base) return;
-    ct_codec_wait();
-    ct_write32(ES_REG_CODEC, ((unsigned int)reg << 16) | (val & 0xFFFF));
-    ct_codec_wait();
+
+    for (int t = 0; t < 20000; t++) {
+        if (!(ct_read32(ES_REG_CODEC) & ES_1371_CODEC_WIP)) {
+            // 1. Save current SRC state
+            unsigned int x = ct_wait_src_ready();
+            ct_write32(ES_REG_SRC, (x & (ES_1371_SRC_DISABLE | ES_1371_DIS_P1 |
+                                         ES_1371_DIS_P2 | ES_1371_DIS_R1)) | 0x00010000);
+
+            // 2. Wait for not busy (state 0) to avoid transition glitch
+            for (int t2 = 0; t2 < 20000; t2++) {
+                if ((ct_read32(ES_REG_SRC) & 0x00870000) == 0x00000000)
+                    break;
+                for (volatile int d = 0; d < 10; d++);
+            }
+
+            // 3. Wait for safe synchronization state (0x00010000)
+            for (int t2 = 0; t2 < 20000; t2++) {
+                if ((ct_read32(ES_REG_SRC) & 0x00870000) == 0x00010000)
+                    break;
+                for (volatile int d = 0; d < 10; d++);
+            }
+
+            // 4. Output AC'97 Codec register write: reg in bits 22:16, data in bits 15:0
+            ct_write32(ES_REG_CODEC, ((unsigned int)(reg & 0x7F) << 16) | (val & 0xFFFF));
+
+            // 5. Restore SRC register state
+            ct_wait_src_ready();
+            ct_write32(ES_REG_SRC, x);
+            return;
+        }
+        for (volatile int d = 0; d < 20; d++);
+    }
 }
 
+// Read from AC'97 Codec register
 static unsigned short ct_codec_read(unsigned char reg) {
     if (!g_ct_io_base) return 0;
-    ct_codec_wait();
-    ct_write32(ES_REG_CODEC, ((unsigned int)reg << 16) | ES_CODEC_READ);
-    ct_codec_wait();
-    return (unsigned short)(ct_read32(ES_REG_CODEC) & 0xFFFF);
-}
 
-// Sample Rate Converter (SRC) RAM write
-static void ct_src_write(unsigned short addr, unsigned short data) {
-    if (!g_ct_io_base) return;
-    // Wait for SRC busy bit (bit 22) in 0x10 to clear
-    for (int t = 0; t < 10000; t++) {
-        if (!(ct_read32(ES_REG_SRC) & 0x00400000)) break;
+    for (int t = 0; t < 20000; t++) {
+        if (!(ct_read32(ES_REG_CODEC) & ES_1371_CODEC_WIP)) {
+            ct_write32(ES_REG_CODEC, (1 << 23) | ((unsigned int)(reg & 0x7F) << 16));
+            break;
+        }
+        for (volatile int d = 0; d < 20; d++);
     }
-    ct_write32(ES_REG_SRC, ((unsigned int)(addr & 0x7F) << 25) | 0x00800000 | (data & 0xFFFF));
+    for (int t = 0; t < 20000; t++) {
+        if (!(ct_read32(ES_REG_CODEC) & ES_1371_CODEC_WIP)) {
+            break;
+        }
+        for (volatile int d = 0; d < 20; d++);
+    }
+    for (int t = 0; t < 20000; t++) {
+        unsigned int x = ct_read32(ES_REG_CODEC);
+        if (!(x & ES_1371_CODEC_PORD)) {
+            return (unsigned short)(x & 0xFFFF);
+        }
+        for (volatile int d = 0; d < 20; d++);
+    }
+    return 0;
 }
 
 int ct4810_init(void) {
@@ -76,7 +135,7 @@ int ct4810_init(void) {
     g_ct_chip_name = "None";
     g_ct_dma_running = 0;
 
-    // Scan PCI bus for Ensoniq ES1371 / ES1373 or Creative CT5880 / CT4810
+    // Scan PCI bus for Ensoniq ES1371 / ES1373 or Creative CT5880 / CT4810 / EV1938
     for (int bus = 0; bus < 256; bus++) {
         for (int dev = 0; dev < 32; dev++) {
             for (int func = 0; func < 8; func++) {
@@ -90,10 +149,12 @@ int ct4810_init(void) {
                 unsigned short device = (id >> 16) & 0xFFFF;
 
                 if ((vendor == ENSONIQ_VENDOR_ID && (device == ES1371_DEV_ID || device == CT5880_DEV_ID)) ||
-                    (vendor == CREATIVE_VENDOR_ID && device == CT5880_DEV_ID)) {
+                    (vendor == CREATIVE_VENDOR_ID && (device == CT5880_DEV_ID || device == EV1938_DEV_ID))) {
 
                     if (device == CT5880_DEV_ID) {
                         g_ct_chip_name = "Creative CT4810 (CT5880) PCI";
+                    } else if (device == EV1938_DEV_ID) {
+                        g_ct_chip_name = "Creative AudioPCI (EV1938) PCI";
                     } else {
                         g_ct_chip_name = "Ensoniq AudioPCI (ES1371) PCI";
                     }
@@ -146,19 +207,23 @@ int ct4810_init(void) {
 
     // Reset Control Register: stop all DACs
     ct_write32(ES_REG_CONTROL, 0x00000000);
+    ct_write32(ES_REG_SERIAL, 0x00000000);
     for (volatile int d = 0; d < 2000; d++);
 
-    // Wait for Codec Ready in Status Register
-    for (int t = 0; t < 10000; t++) {
-        if (ct_read32(ES_REG_STATUS) & ES_STAT_CSTAT) break;
-        for (volatile int d = 0; d < 50; d++);
+    // Initialize SRC: clear all 128 SRC RAM registers
+    for (int i = 0; i < 0x80; i++) {
+        ct_src_write(i, 0);
     }
+    // Set default truncation / interpolation parameters for DAC1, DAC2, ADC:
+    ct_src_write(0x70 /* DAC1 */, 16 << 4);
+    ct_src_write(0x74 /* DAC2 */, 16 << 4);
+    ct_src_write(0x78 /* ADC  */, 16 << 4);
 
-    // Initialize AC'97 Codec
+    // Reset AC'97 Codec
     ct_codec_write(0x00, 0x0000); // Cold reset AC'97 Codec
     for (volatile int d = 0; d < 5000; d++);
 
-    // Unmute and set master & PCM volume to maximum (0dB attenuation)
+    // Unmute Codec volumes (Master, Headphone, PCM Out) to 0dB attenuation
     ct_codec_write(0x02, 0x0000); // Master Volume L/R = 0dB
     ct_codec_write(0x04, 0x0000); // Headphone Volume L/R = 0dB
     ct_codec_write(0x18, 0x0000); // PCM Out Volume L/R = 0dB
@@ -167,20 +232,14 @@ int ct4810_init(void) {
     ct_codec_write(0x10, 0x8808); // Mute Line In
     ct_codec_write(0x12, 0x8808); // Mute CD In
 
-    // Configure Channel Format: 16-bit Stereo on DAC2
-    // Bits 3:2 of ES_REG_CH_FORMAT (0x20): 11b = 16-bit stereo for DAC2
-    unsigned int cf = ct_read32(ES_REG_CH_FORMAT);
-    cf |= (3 << 2);
-    ct_write32(ES_REG_CH_FORMAT, cf);
+    // Program DAC2 default format (44.1 kHz, 16-bit stereo)
+    ct4810_set_format(44100, 16, 1);
 
-    // Default rate: 44.1 kHz (ratio = 44100 * 32768 / 48000 = 30105.6 = 0x7599)
-    ct_src_write(0x70, 0x7599);
-    ct_src_write(0x74, 0x7599);
-
-    // Program Base Address and Frame Size for DAC2
-    ct_write32(ES_REG_MEMPAGE, 0x00);
+    // Program MEMPAGE to PAGE 0x0C (ES_PAGE_DAC)
+    ct_write32(ES_REG_MEMPAGE, ES_PAGE_DAC);
     ct_write32(ES_REG_DAC2_FRAME1, g_ct_dma_phys);
-    ct_write32(ES_REG_DAC2_FRAME2, ((unsigned int)(CT_DMA_TOTAL_FRAMES - 1) << 16) | (CT_DMA_TOTAL_FRAMES - 1));
+    ct_write32(ES_REG_DAC2_FRAME2, (CT_DMA_BUFFER_BYTES / 4) - 1);
+    ct_write32(ES_REG_DAC2_COUNT, (CT_DMA_HALF_BYTES / 4) - 1);
 
     return 0;
 }
@@ -200,19 +259,33 @@ unsigned short ct4810_get_io_base(void) {
 void ct4810_set_format(int rate, int bits, int stereo) {
     if (!g_ct_present || !g_ct_io_base) return;
 
-    // Set DAC2 format in Channel Format Register (0x20)
-    unsigned int cf = ct_read32(ES_REG_CH_FORMAT);
-    cf &= ~(3 << 2);
-    if (bits == 16 && stereo)       cf |= (3 << 2);
-    else if (bits == 16 && !stereo) cf |= (2 << 2);
-    else if (bits == 8 && stereo)   cf |= (1 << 2);
-    else                            cf |= (0 << 2);
-    ct_write32(ES_REG_CH_FORMAT, cf);
+    // 1. Configure Serial Control (0x20): Mode (16-bit Stereo = 3)
+    unsigned int mode = 0;
+    if (bits == 16) mode |= 0x02;
+    if (stereo)     mode |= 0x01;
 
-    // Configure SRC playback frequency ratio: (rate * 256) / 375 (equivalent to (rate * 32768) / 48000)
-    unsigned int ratio = (rate >= 48000) ? 0x8000 : (unsigned int)(((unsigned int)rate * 256U) / 375U);
-    ct_src_write(0x70, (unsigned short)ratio);
-    ct_src_write(0x74, (unsigned short)ratio);
+    unsigned int sctrl = ct_read32(ES_REG_SERIAL);
+    sctrl &= ~(ES_P2_LOOP_SEL | ES_P2_PAUSE | ES_P2_MODEM);
+    sctrl |= ES_P2_MODEO(mode); // Loop mode (bit 14=0), Not paused (bit 12=0)
+    ct_write32(ES_REG_SERIAL, sctrl);
+
+    // 2. Configure SRC for DAC2
+    // freq = ((rate << 15) + 1500) / 3000
+    // rate * 32768 fits in 32-bit: 48000 * 32768 = 1,572,864,000 < 4,294,967,295
+    unsigned int freq = (((unsigned int)rate << 15) + 1500U) / 3000U;
+
+    // Freeze DAC2 accumulator while updating rate
+    unsigned int r = (ct_wait_src_ready() & (ES_1371_SRC_DISABLE | ES_1371_DIS_P1 | ES_1371_DIS_R1)) | ES_1371_DIS_P2;
+    ct_write32(ES_REG_SRC, r);
+
+    // Update INT_REGS (0x75) and VFREQ_FRAC (0x77)
+    unsigned short cur_int = ct_src_read(0x74 + 1);
+    ct_src_write(0x74 + 1, (cur_int & 0x00FF) | ((freq >> 5) & 0xFC00));
+    ct_src_write(0x74 + 3, freq & 0x7FFF);
+
+    // Unfreeze DAC2 accumulator
+    r = ct_wait_src_ready() & (ES_1371_SRC_DISABLE | ES_1371_DIS_P1 | ES_1371_DIS_R1);
+    ct_write32(ES_REG_SRC, r);
 }
 
 void ct4810_start_dma(void) {
@@ -220,16 +293,22 @@ void ct4810_start_dma(void) {
 
     extern volatile int global_tick;
 
-    // 1. Program DMA Base Address and Frame Counts
-    ct_write32(ES_REG_MEMPAGE, 0x00);
+    // 1. Program Page to DAC (0x0C) and Buffer Parameters
+    ct_write32(ES_REG_MEMPAGE, ES_PAGE_DAC);
     ct_write32(ES_REG_DAC2_FRAME1, g_ct_dma_phys);
-    ct_write32(ES_REG_DAC2_FRAME2, ((unsigned int)(CT_DMA_TOTAL_FRAMES - 1) << 16) | (CT_DMA_TOTAL_FRAMES - 1));
+    ct_write32(ES_REG_DAC2_FRAME2, (CT_DMA_BUFFER_BYTES / 4) - 1);
+    ct_write32(ES_REG_DAC2_COUNT, (CT_DMA_HALF_BYTES / 4) - 1);
 
-    // 2. Ensure AC'97 volumes are unmuted
+    // 2. Ensure Serial Control is loop mode, not paused
+    unsigned int sctrl = ct_read32(ES_REG_SERIAL);
+    sctrl &= ~(ES_P2_LOOP_SEL | ES_P2_PAUSE);
+    ct_write32(ES_REG_SERIAL, sctrl);
+
+    // 3. Ensure AC'97 volumes are unmuted
     ct_codec_write(0x02, 0x0000);
     ct_codec_write(0x18, 0x0000);
 
-    // 3. Enable DAC2 in Control Register (0x00)
+    // 4. Enable DAC2 in Control Register (0x00)
     unsigned int ctl = ct_read32(ES_REG_CONTROL);
     ctl |= ES_CTL_DAC2_EN;
     ct_write32(ES_REG_CONTROL, ctl);
@@ -244,9 +323,15 @@ void ct4810_start_dma(void) {
 void ct4810_stop_dma(void) {
     if (!g_ct_present || !g_ct_io_base) return;
 
+    // Disable DAC2 in Control Register
     unsigned int ctl = ct_read32(ES_REG_CONTROL);
     ctl &= ~ES_CTL_DAC2_EN;
     ct_write32(ES_REG_CONTROL, ctl);
+
+    // Pause in Serial Control
+    unsigned int sctrl = ct_read32(ES_REG_SERIAL);
+    sctrl |= ES_P2_PAUSE;
+    ct_write32(ES_REG_SERIAL, sctrl);
 
     g_ct_dma_running = 0;
     g_ct_last_half_playing = -1;
@@ -264,10 +349,10 @@ void ct4810_stop_dma(void) {
 void ct4810_pause_dma(int pause) {
     if (!g_ct_present || !g_ct_io_base) return;
 
-    unsigned int ctl = ct_read32(ES_REG_CONTROL);
-    if (pause) ctl &= ~ES_CTL_DAC2_EN;
-    else       ctl |= ES_CTL_DAC2_EN;
-    ct_write32(ES_REG_CONTROL, ctl);
+    unsigned int sctrl = ct_read32(ES_REG_SERIAL);
+    if (pause) sctrl |= ES_P2_PAUSE;
+    else       sctrl &= ~ES_P2_PAUSE;
+    ct_write32(ES_REG_SERIAL, sctrl);
 }
 
 void ct4810_set_volume(int master_vol, int pcm_vol) {
@@ -293,11 +378,14 @@ void ct4810_set_volume(int master_vol, int pcm_vol) {
 unsigned int ct4810_get_dma_frame_pos(void) {
     if (!g_ct_present || !g_ct_io_base || !g_ct_dma_running) return 0;
 
-    // Lower 16-bit of 0x3C returns current sample countdown
-    unsigned short rem = ct_read16(ES_REG_DAC2_FRAME2);
-    if (rem >= CT_DMA_TOTAL_FRAMES) rem = CT_DMA_TOTAL_FRAMES - 1;
-    unsigned int pos = (CT_DMA_TOTAL_FRAMES - (rem + 1)) & (CT_DMA_TOTAL_FRAMES - 1);
-    return pos;
+    // Read 32-bit register at 0x3C in PAGE 0x0C (ES_PAGE_DAC)
+    // Upper 16 bits (val >> 16) contains the current sample count (0..16383)
+    ct_write32(ES_REG_MEMPAGE, ES_PAGE_DAC);
+    unsigned int val = ct_read32(ES_REG_DAC2_FRAME2);
+    unsigned int frame = (val >> 16) & 0xFFFF;
+    if (frame >= CT_DMA_TOTAL_FRAMES) frame = 0;
+
+    return frame;
 }
 
 const void* ct4810_get_dma_buffer(void) {
@@ -339,7 +427,10 @@ int ct4810_poll_half_needed(void) {
 
     unsigned int frame = ct4810_get_dma_frame_pos();
 
-    if (frame != g_ct_last_seen_frame) {
+    // Check if hardware frame counter has actually advanced from initial read
+    if (g_ct_last_seen_frame == 0xFFFFFFFF) {
+        g_ct_last_seen_frame = frame;
+    } else if (frame != g_ct_last_seen_frame) {
         g_ct_last_seen_frame = frame;
         g_ct_hw_reg_moving = 1;
     }

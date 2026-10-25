@@ -447,8 +447,10 @@ int cmi8738_poll_half_needed(void) {
 
     unsigned int frame = cmi8738_get_dma_frame_pos();
 
-    // Check if the hardware frame register is actively advancing
-    if (frame != g_last_seen_frame) {
+    // Check if the hardware frame register has actually advanced from initial read
+    if (g_last_seen_frame == 0xFFFFFFFF) {
+        g_last_seen_frame = frame;
+    } else if (frame != g_last_seen_frame) {
         g_last_seen_frame = frame;
         g_hw_reg_moving = 1;
     }
