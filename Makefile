@@ -28,6 +28,7 @@ C_SOURCES = kernel/kernel.c \
             kernel/mp3_dec.c \
             drivers/ati_mach64.c \
             drivers/cmi8738.c \
+            drivers/ct4810.c \
             drivers/gfx_accel.c \
             drivers/speaker.c \
             drivers/mouse.c \

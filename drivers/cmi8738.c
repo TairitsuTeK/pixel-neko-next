@@ -157,18 +157,17 @@ int cmi8738_init(void) {
     // 4. Configure MISC_CTRL:
     // - Clear CM_PWD (bit 31 = 0: normal power)
     // - Clear CM_RESET (bit 30 = 0: running)
-    // - Clear CM_XCHGDAC (bit 22 = 0: Front = CH0, green jack!)
-    // - Set CM_ENDBDAC (bit 23 = 1: Dual DAC mode, enables DAC to output!)
-    // - Set CM_TXVX (bit 27 = 1: PCI bus master burst timing for non-VX chipsets)
+    // - Clear CM_ENDBDAC (bit 23 = 0: Single DAC mode, routes Channel 0 to Front Green Line-Out jack!)
+    // - Clear CM_XCHGDAC (bit 22 = 0: Front = CH0, green jack)
+    // - Set CM_TXVX (bit 27 = 1: PCI bus master burst timing)
     // - Set CM_N4SPK3D (bit 26 = 1: Copy Front to Rear / 4-Speaker, so both green & rear jacks output)
     unsigned int misc = cmi_read32(CMI_REG_MISC_CTRL);
-    misc &= ~(CMI_MISC_PWD | CMI_MISC_RESET | CMI_MISC_XCHGDAC | (3 << 28));
-    misc |= (CMI_MISC_ENDBDAC | CMI_MISC_N4SPK3D | CMI_MISC_TXVX);
+    misc &= ~(CMI_MISC_PWD | CMI_MISC_RESET | CMI_MISC_XCHGDAC | CMI_MISC_ENDBDAC | (3 << 28));
+    misc |= (CMI_MISC_N4SPK3D | CMI_MISC_TXVX);
     cmi_write32(CMI_REG_MISC_CTRL, misc);
 
-    // 5. Extended misc initialization magic for CMI8738 (ALSA cmipci.c):
-    outb(g_cmi_io_base + CMI_REG_EXT_MISC, 0x20);     // Port 0x90
-    outb(g_cmi_io_base + CMI_REG_EXT_MISC + 1, 0x09); // Port 0x91
+    // 5. Extended misc initialization (0x90): clear 7.1/6ch multi-channel overrides
+    cmi_write32(CMI_REG_EXT_MISC, 0x00000000);
 
     // 6. Ensure CM_NXCHG = 0 in LEGACY_CTRL
     unsigned int leg = cmi_read32(CMI_REG_LEGACY_CTRL);
@@ -201,6 +200,8 @@ int cmi8738_init(void) {
 
     // 11. Enable all output switches in SB16 MIXER_OUTMIX (0x3C)
     cmi_write_mixer(0x3C, 0x1F);
+    cmi_write_mixer(0x3D, 0x00); // Unmute PCM output switch
+    cmi_write_mixer(0x3E, 0x00); // Unmute Master output switch
 
     // 12. Unmute Speaker and Phone in extended mixer register 0xF0
     unsigned char ext = cmi_read_mixer(0xF0);
@@ -376,8 +377,10 @@ void cmi8738_set_volume(int master_vol, int pcm_vol) {
     cmi_write_mixer(0x22, (m4 << 4) | m4);
     cmi_write_mixer(0x04, (p4 << 4) | p4);
 
-    // Output switch (0x3C): enable all outputs
+    // Output switch (0x3C): enable all outputs; un-mute PCM (0x3D) and Master (0x3E)
     cmi_write_mixer(0x3C, 0x1F);
+    cmi_write_mixer(0x3D, 0x00);
+    cmi_write_mixer(0x3E, 0x00);
 
     // Output gain control (0x41 L, 0x42 R)
     cmi_write_mixer(0x41, 0x00);

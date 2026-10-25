@@ -1,7 +1,6 @@
 // apps/audioplayer.c - NekoPlayer 复古 Hi-Fi 音频播放器
 #include "audioplayer.h"
 #include "audio.h"
-#include "cmi8738.h"
 #include "font.h"
 #include "wm.h"
 
@@ -35,8 +34,8 @@ void audioplayer_init(void) {
     is_dragging_seek = 0;
     is_dragging_vol = 0;
     g_drag_seek_target_sec = -1;
-    if (!cmi8738_is_present()) {
-        my_strcpy(current_title, "No Output Device (CMI8738 Not Detected)");
+    if (!audio_has_hardware()) {
+        my_strcpy(current_title, "No Output Device (No Audio Hardware)");
     } else {
         my_strcpy(current_title, "NekoPlayer ready. Open a file to play.");
     }
@@ -147,7 +146,7 @@ void audioplayer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         }
     }
     
-    int dev_ok = cmi8738_is_present();
+    int dev_ok = audio_has_hardware();
     if (!dev_ok) {
         // ---------------------------------------------------------------------
         // 【关键需求】：未识别到声卡，提示“无输出设备”！
@@ -155,7 +154,7 @@ void audioplayer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         int blink = (global_tick / 35) & 1;
         unsigned char warn_color = blink ? 12 : 4; // 醒目红色闪烁
         font_draw_text(v, lcd_x + 14, lcd_y + 8, "[!] NO OUTPUT DEVICE", warn_color);
-        font_draw_text(v, lcd_x + 14, lcd_y + 26, "CMI8738 PCI Sound Card", 14); // 黄色警告
+        font_draw_text(v, lcd_x + 14, lcd_y + 26, "Supported PCI Audio Card", 14); // 黄色警告
         font_draw_text(v, lcd_x + 14, lcd_y + 44, "Hardware not detected on bus", 8); // 暗灰
     } else {
         // 声卡正常，显示状态、跑马灯、参数与动效
@@ -353,7 +352,7 @@ void audioplayer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     
     // 硬件芯片型号显示
     if (dev_ok) {
-        font_draw_text(v, wx + 160, wy + 154, "CMI8738/PCI (Stereo)", 0);
+        font_draw_text(v, wx + 160, wy + 154, audio_get_hardware_name(), 0);
     } else {
         font_draw_text(v, wx + 160, wy + 154, "NO AUDIO HARDWARE", 12);
     }
@@ -361,7 +360,7 @@ void audioplayer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
 void audioplayer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh) {
     (void)v; (void)ww; (void)wh;
-    int dev_ok = cmi8738_is_present();
+    int dev_ok = audio_has_hardware();
     
     // 1. 进度条点击 Seek
     int sb_x = wx + 10;

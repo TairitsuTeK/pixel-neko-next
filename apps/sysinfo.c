@@ -6,7 +6,7 @@
 #include "port.h"
 #include "gfx_accel.h"
 #include "vfs.h"
-#include "cmi8738.h"
+#include "audio.h"
 #include "version.h"
 
 static int active_tab = 0; // 0: System, 1: PCI Bus, 2: Drives
@@ -254,15 +254,15 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
         ly += 16;
         font_draw_text(v, lx, ly, "Audio Device:", 0);
-        if (cmi8738_is_present()) {
-            font_draw_text(v, lx + 125, ly, "[PCI] C-Media CMI8738", 0);
+        if (audio_has_hardware()) {
+            font_draw_text(v, lx + 125, ly, audio_get_hardware_name(), 0);
         } else {
             font_draw_text(v, lx + 125, ly, "PC Speaker (No PCI Sound Card)", 8);
         }
 
         ly += 16;
         font_draw_text(v, lx, ly, "Audio Engine:", 0);
-        if (cmi8738_is_present()) {
+        if (audio_has_hardware()) {
             font_draw_text(v, lx + 125, ly, "Kernel DSP Engine (Active)", 2);
         } else {
             font_draw_text(v, lx + 125, ly, "Disabled", 8);

@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.004)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.100)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -171,6 +171,22 @@
 - **🔇 关机停机画面静音与 DMA 彻底停止**：在退出系统进入经典 Safe to Turn Off 画面及重启前立即切断声卡 DMA 环形缓冲与静音输出，彻底消除关机停机时的硬件残余卡碟循环循环。
 - **💽 Intel H55 (ASUS P7H55-M LE) SATA / IDE Native PCI 驱动器自适应探测**：新增 PCI 存储控制器（Class 0101）全面枚举与 BAR0~BAR3 Native PCI I/O 端口识别，解决现代与近现代主板兼容 IDE 模式下找不到硬盘与光驱的问题。
 - **🏷️ 开机画面与系统内核版本号迭代同步**：开机 Boot Splash 及系统关于视窗全面联动动态版本号，正式迭代至 `Build 2010.010`。
+
+---
+
+## 💾 Build 2011.100 更新特性
+- **🎼 Creative CT4810 (CT5880 / Ensoniq ES1371) PCI 声卡原生硬件驱动**：
+  - **PCI 总线即插即用识别**：自动探测 Vendor ID `0x1274`（Ensoniq）及 Device ID `0x1371` / `0x5880`（Creative CT4810），配置 PCI Bus Mastering 与 Latency Timer；
+  - **AC'97 规范混音器与音量控制**：建立与 AC'97 物理 Codec 芯片的读写状态机握手，支持 Master / Headphone / PCM 各级通道 0dB 无衰减高保真输出与静音切换；
+  - **原生硬件 SRC 采样率同步**：写入 CT5880 / ES1371 内部 Sample Rate Converter RAM，智能匹配 44.1kHz 与 48kHz 播放时钟比率；
+  - **DAC2 64KB 连续双缓冲 DMA**：利用物理内存页框对齐分配器构建环形双缓冲，实现零丢帧无缝流式播放。
+- **🎛️ 统一音频硬件抽象层（Kernel Audio HAL）与智能声卡识别**：
+  - 重构内核音频架构，构建统一的 `audio_driver_ops_t` 硬件抽象表；
+  - 系统启动时自适应级联探测：优先智能识别 **Creative CT4810**，其次识别 **C-Media CMI8738**；
+  - NekoPlayer 播放器与 SysInfo 系统信息视窗全面联动，智能显示当前真实激活的声卡硬件全名。
+- **🔊 CMI8738 实体机模拟前置音频孔（绿色孔）出声彻底修复**：
+  - **通道路由校准**：消除开启 `CMI_MISC_ENDBDAC`（双 DAC 结构）导致 Channel 0 播放被重定向至后置环绕插孔而使前置绿孔无声的硬件缺陷，回退至纯净 Single DAC 结构，并将 Channel 0 严格绑定至前置主输出并镜像至后置孔；
+  - **SB16 模拟主控/PCM 开关全解禁**：在软复位后向 SB16 Mixer 寄存器 `0x3D` 与 `0x3E` 真实写入 `0x00`，彻底解除实体卡默认的 Master Output / Voice Mute 硬件拦截。
 
 ---
 

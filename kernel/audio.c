@@ -1,6 +1,7 @@
 // kernel/audio.c - 统一音频引擎、DSP 处理器与流媒体解码调度器
 #include "audio.h"
 #include "cmi8738.h"
+#include "ct4810.h"
 #include "wav_dec.h"
 #include "flac_dec.h"
 #include "mp3_dec.h"
@@ -10,7 +11,57 @@
 #define DEC_FLAC 2
 #define DEC_MP3  3
 
-#define PCM_QUEUE_SIZE  65536 // 64KB 环形队列（~340ms 16-bit 48kHz Stereo）
+#define PCM_QUEUE_SIZE          65536 // 64KB 环形队列（~340ms 16-bit 48kHz Stereo）
+#define AUDIO_DMA_HALF_BYTES    32768
+#define AUDIO_DMA_BUFFER_BYTES  65536
+
+// 统一硬件声卡 HAL 驱动操作表
+typedef struct {
+    const char* (*get_name)(void);
+    int (*is_present)(void);
+    void (*set_format)(int rate, int bits, int stereo);
+    void (*start_dma)(void);
+    void (*stop_dma)(void);
+    void (*pause_dma)(int pause);
+    void (*set_volume)(int master, int pcm);
+    int (*poll_half_needed)(void);
+    void (*write_half)(int half, const void* data, unsigned int bytes);
+    void (*silence_half)(int half);
+    unsigned int (*get_dma_frame_pos)(void);
+    const void* (*get_dma_buffer)(void);
+} audio_driver_ops_t;
+
+static const audio_driver_ops_t g_cmi8738_ops = {
+    .get_name = cmi8738_get_name,
+    .is_present = cmi8738_is_present,
+    .set_format = cmi8738_set_format,
+    .start_dma = cmi8738_start_dma,
+    .stop_dma = cmi8738_stop_dma,
+    .pause_dma = cmi8738_pause_dma,
+    .set_volume = cmi8738_set_volume,
+    .poll_half_needed = cmi8738_poll_half_needed,
+    .write_half = cmi8738_write_half,
+    .silence_half = cmi8738_silence_half,
+    .get_dma_frame_pos = cmi8738_get_dma_frame_pos,
+    .get_dma_buffer = cmi8738_get_dma_buffer,
+};
+
+static const audio_driver_ops_t g_ct4810_ops = {
+    .get_name = ct4810_get_name,
+    .is_present = ct4810_is_present,
+    .set_format = ct4810_set_format,
+    .start_dma = ct4810_start_dma,
+    .stop_dma = ct4810_stop_dma,
+    .pause_dma = ct4810_pause_dma,
+    .set_volume = ct4810_set_volume,
+    .poll_half_needed = ct4810_poll_half_needed,
+    .write_half = ct4810_write_half,
+    .silence_half = ct4810_silence_half,
+    .get_dma_frame_pos = ct4810_get_dma_frame_pos,
+    .get_dma_buffer = ct4810_get_dma_buffer,
+};
+
+static const audio_driver_ops_t* g_active_driver = 0;
 
 static audio_state_t g_audio_state = AUDIO_STATE_STOPPED;
 static audio_info_t g_audio_info;
@@ -101,19 +152,28 @@ void audio_init(void) {
     g_vu_l = 0;
     g_vu_r = 0;
 
-    // 探测并初始化 C-Media CMI8738 硬件声卡
-    cmi8738_init();
-    if (cmi8738_is_present()) {
-        cmi8738_set_volume(g_master_volume, g_master_volume);
+    // 智能硬件识别：优先检测 Creative CT4810 (CT5880 / ES1371)，其次检测 C-Media CMI8738
+    g_active_driver = 0;
+    if (ct4810_init() == 0 && ct4810_is_present()) {
+        g_active_driver = &g_ct4810_ops;
+    } else if (cmi8738_init() == 0 && cmi8738_is_present()) {
+        g_active_driver = &g_cmi8738_ops;
+    }
+
+    if (g_active_driver) {
+        g_active_driver->set_volume(g_master_volume, g_master_volume);
     }
 }
 
 int audio_has_hardware(void) {
-    return cmi8738_is_present();
+    return (g_active_driver != 0 && g_active_driver->is_present());
 }
 
 const char* audio_get_hardware_name(void) {
-    return cmi8738_get_name();
+    if (g_active_driver) {
+        return g_active_driver->get_name();
+    }
+    return "No Audio Device";
 }
 
 void audio_flush_queue(void) {
@@ -248,7 +308,7 @@ int audio_play_file(const char* filepath) {
     // 先停止当前播放
     audio_stop();
 
-    if (!cmi8738_is_present()) {
+    if (!audio_has_hardware()) {
         return -2; // 无输出设备
     }
 
@@ -334,10 +394,10 @@ int audio_play_file(const char* filepath) {
     int srate = g_audio_info.sample_rate;
     if (srate % 44100 == 0 || srate == 22050 || srate == 11025) {
         g_audio_info.target_rate = 44100;
-        cmi8738_set_format(44100, 16, 1);
+        if (g_active_driver) g_active_driver->set_format(44100, 16, 1);
     } else {
         g_audio_info.target_rate = 48000;
-        cmi8738_set_format(48000, 16, 1);
+        if (g_active_driver) g_active_driver->set_format(48000, 16, 1);
     }
 
     audio_flush_queue();
@@ -345,12 +405,14 @@ int audio_play_file(const char* filepath) {
     g_eof_reached = 0;
 
     // 1. 静音 DMA 双半区，消除开机或切歌瞬间物理内存脏数据导致的 "si" 杂音
-    cmi8738_silence_half(0);
-    cmi8738_silence_half(1);
+    if (g_active_driver) {
+        g_active_driver->silence_half(0);
+        g_active_driver->silence_half(1);
+    }
 
     // 2. 预充队列：在开启硬件 DMA 之前，先解码填充首半区（32KB）
     static unsigned char dec_temp_buf[16384];
-    for (int pre = 0; pre < 32 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
+    for (int pre = 0; pre < 32 && g_queue_bytes < AUDIO_DMA_HALF_BYTES && !g_eof_reached; pre++) {
         int samples_read = 0;
         if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
         else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
@@ -369,19 +431,19 @@ int audio_play_file(const char* filepath) {
     }
 
     // 3. 将预充好的 PCM 复制写入 DMA 半区 0
-    if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
-        static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
-        unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
+    if (g_queue_bytes >= AUDIO_DMA_HALF_BYTES) {
+        static short dma_copy_buf[AUDIO_DMA_HALF_BYTES / sizeof(short)];
+        unsigned int samples_needed = AUDIO_DMA_HALF_BYTES / sizeof(short);
         for (unsigned int i = 0; i < samples_needed; i++) {
             dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
             g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
         }
-        g_queue_bytes -= CMI_DMA_HALF_BYTES;
-        cmi8738_write_half(0, dma_copy_buf, CMI_DMA_HALF_BYTES);
+        g_queue_bytes -= AUDIO_DMA_HALF_BYTES;
+        if (g_active_driver) g_active_driver->write_half(0, dma_copy_buf, AUDIO_DMA_HALF_BYTES);
     }
 
     // 4. 继续预充 DMA 半区 1
-    for (int pre = 0; pre < 32 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
+    for (int pre = 0; pre < 32 && g_queue_bytes < AUDIO_DMA_HALF_BYTES && !g_eof_reached; pre++) {
         int samples_read = 0;
         if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
         else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
@@ -399,19 +461,19 @@ int audio_play_file(const char* filepath) {
         }
     }
 
-    if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
-        static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
-        unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
+    if (g_queue_bytes >= AUDIO_DMA_HALF_BYTES) {
+        static short dma_copy_buf[AUDIO_DMA_HALF_BYTES / sizeof(short)];
+        unsigned int samples_needed = AUDIO_DMA_HALF_BYTES / sizeof(short);
         for (unsigned int i = 0; i < samples_needed; i++) {
             dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
             g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
         }
-        g_queue_bytes -= CMI_DMA_HALF_BYTES;
-        cmi8738_write_half(1, dma_copy_buf, CMI_DMA_HALF_BYTES);
+        g_queue_bytes -= AUDIO_DMA_HALF_BYTES;
+        if (g_active_driver) g_active_driver->write_half(1, dma_copy_buf, AUDIO_DMA_HALF_BYTES);
     }
 
     // 4. 启动声卡硬件 DMA 环形播放
-    cmi8738_start_dma();
+    if (g_active_driver) g_active_driver->start_dma();
     g_audio_state = AUDIO_STATE_PLAYING;
 
     return 0;
@@ -419,21 +481,21 @@ int audio_play_file(const char* filepath) {
 
 void audio_pause(void) {
     if (g_audio_state == AUDIO_STATE_PLAYING) {
-        cmi8738_pause_dma(1);
+        if (g_active_driver) g_active_driver->pause_dma(1);
         g_audio_state = AUDIO_STATE_PAUSED;
     }
 }
 
 void audio_resume(void) {
     if (g_audio_state == AUDIO_STATE_PAUSED) {
-        cmi8738_pause_dma(0);
+        if (g_active_driver) g_active_driver->pause_dma(0);
         g_audio_state = AUDIO_STATE_PLAYING;
     }
 }
 
 void audio_stop(void) {
     if (g_audio_state != AUDIO_STATE_STOPPED) {
-        cmi8738_stop_dma();
+        if (g_active_driver) g_active_driver->stop_dma();
         g_audio_state = AUDIO_STATE_STOPPED;
     }
     if (g_active_dec == DEC_WAV) wav_dec_close();
@@ -458,15 +520,17 @@ void audio_seek_sec(unsigned int seconds) {
     else if (g_active_dec == DEC_MP3) mp3_dec_seek(seconds);
 
     audio_flush_queue();
-    cmi8738_silence_half(0);
-    cmi8738_silence_half(1);
+    if (g_active_driver) {
+        g_active_driver->silence_half(0);
+        g_active_driver->silence_half(1);
+    }
     g_audio_info.current_time_s = (int)seconds;
     g_total_frames_played = (unsigned int)seconds * (unsigned int)g_audio_info.target_rate;
     g_eof_reached = 0;
 
     // 预充数据平滑恢复
     static unsigned char dec_temp_buf[16384];
-    for (int pre = 0; pre < 16 && g_queue_bytes < CMI_DMA_HALF_BYTES && !g_eof_reached; pre++) {
+    for (int pre = 0; pre < 16 && g_queue_bytes < AUDIO_DMA_HALF_BYTES && !g_eof_reached; pre++) {
         int samples_read = 0;
         if (g_active_dec == DEC_WAV) samples_read = wav_dec_read_samples(dec_temp_buf, 2048);
         else if (g_active_dec == DEC_FLAC) samples_read = flac_dec_read_samples(dec_temp_buf, 4096);
@@ -516,9 +580,9 @@ void audio_set_volume(int vol) {
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
     g_master_volume = vol;
-    if (cmi8738_is_present()) {
+    if (g_active_driver) {
         int v = g_is_muted ? 0 : g_master_volume;
-        cmi8738_set_volume(v, v);
+        g_active_driver->set_volume(v, v);
     }
 }
 
@@ -528,9 +592,9 @@ int audio_get_volume(void) {
 
 void audio_toggle_mute(void) {
     g_is_muted = !g_is_muted;
-    if (cmi8738_is_present()) {
+    if (g_active_driver) {
         int v = g_is_muted ? 0 : g_master_volume;
-        cmi8738_set_volume(v, v);
+        g_active_driver->set_volume(v, v);
     }
 }
 
@@ -545,7 +609,7 @@ const audio_info_t* audio_get_info(void) {
 // 主循环泵送音频数据与频谱计算
 void audio_poll(void) {
     if (g_audio_state != AUDIO_STATE_PLAYING) return;
-    if (!cmi8738_is_present()) return;
+    if (!audio_has_hardware() || !g_active_driver) return;
 
     // 1. 如果内部队列有空间，从当前解码器读取新样本
     // 贪婪循环填充至高水位（48KB），单次最多解码 6 帧以防阻塞 GUI
@@ -579,18 +643,18 @@ void audio_poll(void) {
     }
 
     // 2. 检查声卡 DMA 半区是否已播放完需要填充
-    int half_needed = cmi8738_poll_half_needed();
+    int half_needed = g_active_driver->poll_half_needed();
     if (half_needed >= 0) {
-        static short dma_copy_buf[CMI_DMA_HALF_BYTES / sizeof(short)];
-        if (g_queue_bytes >= CMI_DMA_HALF_BYTES) {
-            unsigned int samples_needed = CMI_DMA_HALF_BYTES / sizeof(short);
+        static short dma_copy_buf[AUDIO_DMA_HALF_BYTES / sizeof(short)];
+        if (g_queue_bytes >= AUDIO_DMA_HALF_BYTES) {
+            unsigned int samples_needed = AUDIO_DMA_HALF_BYTES / sizeof(short);
             for (unsigned int i = 0; i < samples_needed; i++) {
                 dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
                 g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
             }
-            g_queue_bytes -= CMI_DMA_HALF_BYTES;
-            cmi8738_write_half(half_needed, dma_copy_buf, CMI_DMA_HALF_BYTES);
-            g_total_frames_played += (CMI_DMA_HALF_BYTES / 4);
+            g_queue_bytes -= AUDIO_DMA_HALF_BYTES;
+            g_active_driver->write_half(half_needed, dma_copy_buf, AUDIO_DMA_HALF_BYTES);
+            g_total_frames_played += (AUDIO_DMA_HALF_BYTES / 4);
         } else if (g_queue_bytes > 0) {
             // 欠载零填充保护
             unsigned int avail_samples = g_queue_bytes / sizeof(short);
@@ -598,15 +662,15 @@ void audio_poll(void) {
                 dma_copy_buf[i] = g_pcm_queue[g_queue_read_idx];
                 g_queue_read_idx = (g_queue_read_idx + 1) % (PCM_QUEUE_SIZE / sizeof(short));
             }
-            for (unsigned int i = avail_samples; i < CMI_DMA_HALF_BYTES / sizeof(short); i++) {
+            for (unsigned int i = avail_samples; i < AUDIO_DMA_HALF_BYTES / sizeof(short); i++) {
                 dma_copy_buf[i] = 0;
             }
             g_queue_bytes = 0;
-            cmi8738_write_half(half_needed, dma_copy_buf, CMI_DMA_HALF_BYTES);
+            g_active_driver->write_half(half_needed, dma_copy_buf, AUDIO_DMA_HALF_BYTES);
             g_total_frames_played += (avail_samples / 2);
         } else {
             // 完全排空静音
-            cmi8738_silence_half(half_needed);
+            g_active_driver->silence_half(half_needed);
             if (g_eof_reached) {
                 audio_stop();
                 return;
@@ -621,15 +685,15 @@ void audio_poll(void) {
     }
 
     // 3. 硬件播放位置同步的 10 段频谱仪与立体声 VU 表
-    unsigned int frame = cmi8738_get_dma_frame_pos();
-    unsigned int sample_offset = (frame * 2) % (CMI_DMA_BUFFER_BYTES / sizeof(short));
-    const short* dma_samples = (const short*)cmi8738_get_dma_buffer();
+    unsigned int frame = g_active_driver->get_dma_frame_pos();
+    unsigned int sample_offset = (frame * 2) % (AUDIO_DMA_BUFFER_BYTES / sizeof(short));
+    const short* dma_samples = (const short*)g_active_driver->get_dma_buffer();
     if (dma_samples) {
         int peak_l = 0, peak_r = 0;
         int band_acc[10] = {0};
 
         for (int i = 0; i < 128; i++) {
-            unsigned int idx = (sample_offset + i * 2) % (CMI_DMA_BUFFER_BYTES / sizeof(short));
+            unsigned int idx = (sample_offset + i * 2) % (AUDIO_DMA_BUFFER_BYTES / sizeof(short));
             int sl = dma_samples[idx];
             int sr = dma_samples[idx + 1];
             if (sl < 0) sl = -sl;
