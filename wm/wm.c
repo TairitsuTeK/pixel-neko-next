@@ -907,11 +907,16 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         editor_release();
         imageviewer_release();
         audioplayer_release();
+        fm_release();
     }
     
     // Keyboard input to active window
     int key = keyboard_get_key();
     while (key != 0) {
+        if (z_order[9] == 4 && fmv && !fmm) {
+            fm_handle_key(key);
+            redraw = 1;
+        }
         if (z_order[9] == 5 && edv && !edm) {
             editor_handle_key(key);
             redraw = 1;

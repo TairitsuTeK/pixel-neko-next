@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.014)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.015)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -125,6 +125,24 @@
    ```bash
    make clean
    ```
+
+## 🚀 Build 2010.015 更新特性
+- **📂 文件管理器完整目录浏览与右侧经典垂直滚动条（Scrollbar）**：
+  - **目录容量突破与动态视窗渲染**：将文件管理器单目录最大承载量由原本的 64 个扩充至 512 个（`MAX_FM_FILES 512`）；移除了每页最多固定只显示 10 个项目的生硬限制（`max_display > 10`），完全依据视窗当前拉伸高度自适应计算最大可见行数。
+  - **经典复古 3D 垂直滚动条**：在文件管理器视窗右侧构建 Win95 / Mac OS 经典立体滚动条，由顶部向上箭头按钮（▲）、底部向下箭头按钮（▼）、点阵抖动灰阶轨道（Track）以及带防滑抓握条纹（Grip lines）的立体滑块（Thumb）组成。
+  - **全功能鼠标交互体系**：
+    - 点击顶部/底部箭头按钮进行单行平滑步进；
+    - 点击滑块上/下方轨道区域执行翻页跳转（Page Up / Page Down）；
+    - 鼠标左键按住滑块自由纵向拖拽，实时精准映射至整个文件列表的任意偏移量；鼠标在视窗外部释放时平滑解脱拖拽锁定。
+  - **完备的键盘导航快捷支持**：
+    - 方向键 `Up` / `Down`：步进选中项，当选区到达视窗边界时自动联动垂直滚动条；
+    - `Page Up` / `Page Down`：按整屏快速翻页；
+    - `Home` / `End`：一键直达文件列表顶部与尾部；
+    - `Enter`：直接打开/运行当前选中项；
+    - `Backspace`：返回上一级目录。
+  - **文件条目与列宽自适应排版**：全面调整文件名、驱动器类型、总容量/可用容量及文件大小列的右对齐基准至滚动条左缘，杜绝长文件名及容量数值被滚动条遮挡，保证排版清晰优雅。
+
+---
 
 ## 🚀 Build 2010.014 更新特性
 - **🔊 CMI8738 物理实体声卡物理 DAC 输出与通道方向致命修复**：

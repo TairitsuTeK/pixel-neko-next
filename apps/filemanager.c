@@ -6,8 +6,14 @@
 #include "wm.h"
 #include "speaker.h"
 
+#define MAX_FM_FILES 512
+#define FM_HEADER_H  58
+#define FM_STATUS_H  21
+#define FM_ROW_H     16
+#define FM_SB_W      14
+
 char current_path[256] = "C:\\";
-static file_info_t files[64];
+static file_info_t files[MAX_FM_FILES];
 static int file_count = 0;
 static int selected = -1;
 static int scroll_offset = 0;
@@ -18,6 +24,15 @@ static char err_msg2[36] = "Or unsupported.";
 static int last_click_idx = -1;
 static int last_click_time = 0;
 static int last_mb = 0;
+static int last_max_display = 10;
+
+// Scrollbar interaction state
+static int sb_dragging = 0;
+static int sb_drag_start_y = 0;
+static int sb_drag_start_offset = 0;
+static int sb_up_pressed = 0;
+static int sb_down_pressed = 0;
+
 extern volatile int global_tick;
 extern int redraw;
 
@@ -99,7 +114,7 @@ static void format_kb(unsigned int kb, char* buf) {
 
 
 static void vfs_fm_callback(const vfs_dirent_t* ent) {
-    if (file_count < 64) {
+    if (file_count < MAX_FM_FILES) {
         int i;
         for (i = 0; i < 127 && ent->name[i]; i++) {
             files[file_count].name[i] = ent->name[i];
@@ -117,12 +132,15 @@ static void load_files(void) {
     selected = -1;
     scroll_offset = 0;
     ctx_menu_open = 0;
+    sb_dragging = 0;
+    sb_up_pressed = 0;
+    sb_down_pressed = 0;
     
     if (current_path[0] == 0) { 
         // Enumerate Windows-assigned drives from VFS (A: ~ Z:)
         for (int i = 0; i < 26; i++) {
             vfs_drive_t* d = vfs_get_drive('A' + i);
-            if (d && file_count < 64) {
+            if (d && file_count < MAX_FM_FILES) {
                 files[file_count].attr = 0x10;
                 files[file_count].size = d->total_sectors;
                 files[file_count].name[0] = d->letter;
@@ -300,10 +318,153 @@ static void ctx_menu_action(int act) {
     }
 }
 
+static void draw_scrollbar(unsigned char* v, int sb_x, int sb_y, int sb_w, int sb_h,
+                           int scroll_offset, int max_display, int file_count) {
+    if (sb_h < 30) return;
+
+    int list_bot = sb_y + sb_h;
+    int track_y = sb_y + 14;
+    int track_bot = list_bot - 14;
+    int track_h = track_bot - track_y;
+
+    // 1. Left divider line (Dark gray)
+    for (int y = sb_y; y < list_bot; y++) {
+        PUT_PIXEL(v, sb_x - 1, y, 8);
+    }
+
+    // 2. Up Arrow Button (Height 14px)
+    for (int y = sb_y; y < sb_y + 14; y++) {
+        for (int x = sb_x; x < sb_x + sb_w; x++) {
+            PUT_PIXEL(v, x, y, 7);
+        }
+    }
+    if (sb_up_pressed) {
+        for (int x = sb_x; x < sb_x + sb_w; x++) {
+            PUT_PIXEL(v, x, sb_y, 0);
+            PUT_PIXEL(v, x, sb_y + 13, 15);
+        }
+        for (int y = sb_y; y < sb_y + 14; y++) {
+            PUT_PIXEL(v, sb_x, y, 0);
+            PUT_PIXEL(v, sb_x + sb_w - 1, y, 15);
+        }
+    } else {
+        for (int x = sb_x; x < sb_x + sb_w; x++) {
+            PUT_PIXEL(v, x, sb_y, 15);
+            PUT_PIXEL(v, x, sb_y + 13, 0);
+            PUT_PIXEL(v, x, sb_y + 12, 8);
+        }
+        for (int y = sb_y; y < sb_y + 14; y++) {
+            PUT_PIXEL(v, sb_x, y, 15);
+            PUT_PIXEL(v, sb_x + sb_w - 1, y, 0);
+            PUT_PIXEL(v, sb_x + sb_w - 2, y, 8);
+        }
+    }
+    // Up arrow icon (centered black triangle)
+    int shift = sb_up_pressed ? 1 : 0;
+    int uacx = sb_x + sb_w / 2 + shift;
+    int uacy = sb_y + 5 + shift;
+    PUT_PIXEL(v, uacx, uacy, 0);
+    PUT_PIXEL(v, uacx - 1, uacy + 1, 0);
+    PUT_PIXEL(v, uacx,     uacy + 1, 0);
+    PUT_PIXEL(v, uacx + 1, uacy + 1, 0);
+    for (int x = uacx - 2; x <= uacx + 2; x++) PUT_PIXEL(v, x, uacy + 2, 0);
+    for (int x = uacx - 3; x <= uacx + 3; x++) PUT_PIXEL(v, x, uacy + 3, 0);
+
+    // 3. Down Arrow Button (Height 14px)
+    int dby = list_bot - 14;
+    for (int y = dby; y < list_bot; y++) {
+        for (int x = sb_x; x < sb_x + sb_w; x++) {
+            PUT_PIXEL(v, x, y, 7);
+        }
+    }
+    if (sb_down_pressed) {
+        for (int x = sb_x; x < sb_x + sb_w; x++) {
+            PUT_PIXEL(v, x, dby, 0);
+            PUT_PIXEL(v, x, list_bot - 1, 15);
+        }
+        for (int y = dby; y < list_bot; y++) {
+            PUT_PIXEL(v, sb_x, y, 0);
+            PUT_PIXEL(v, sb_x + sb_w - 1, y, 15);
+        }
+    } else {
+        for (int x = sb_x; x < sb_x + sb_w; x++) {
+            PUT_PIXEL(v, x, dby, 15);
+            PUT_PIXEL(v, x, list_bot - 1, 0);
+            PUT_PIXEL(v, x, list_bot - 2, 8);
+        }
+        for (int y = dby; y < list_bot; y++) {
+            PUT_PIXEL(v, sb_x, y, 15);
+            PUT_PIXEL(v, sb_x + sb_w - 1, y, 0);
+            PUT_PIXEL(v, sb_x + sb_w - 2, y, 8);
+        }
+    }
+    // Down arrow icon (centered black triangle)
+    shift = sb_down_pressed ? 1 : 0;
+    int dacx = sb_x + sb_w / 2 + shift;
+    int dacy = dby + 5 + shift;
+    for (int x = dacx - 3; x <= dacx + 3; x++) PUT_PIXEL(v, x, dacy, 0);
+    for (int x = dacx - 2; x <= dacx + 2; x++) PUT_PIXEL(v, x, dacy + 1, 0);
+    PUT_PIXEL(v, dacx - 1, dacy + 2, 0);
+    PUT_PIXEL(v, dacx,     dacy + 2, 0);
+    PUT_PIXEL(v, dacx + 1, dacy + 2, 0);
+    PUT_PIXEL(v, dacx, dacy + 3, 0);
+
+    // 4. Track Background (Classic 50% dither pattern)
+    for (int y = track_y; y < track_bot; y++) {
+        for (int x = sb_x; x < sb_x + sb_w; x++) {
+            int c = ((x + y) & 1) ? 15 : 7;
+            PUT_PIXEL(v, x, y, c);
+        }
+    }
+
+    // 5. Thumb Slider (Only if file_count > max_display)
+    if (file_count > max_display && track_h > 14) {
+        int max_scroll = file_count - max_display;
+        int thumb_h = (track_h * max_display) / file_count;
+        if (thumb_h < 14) thumb_h = 14;
+        if (thumb_h > track_h) thumb_h = track_h;
+        int scrollable_track = track_h - thumb_h;
+        int thumb_y = track_y;
+        if (max_scroll > 0 && scrollable_track > 0) {
+            thumb_y = track_y + (scroll_offset * scrollable_track) / max_scroll;
+        }
+
+        // Thumb body
+        for (int y = thumb_y; y < thumb_y + thumb_h; y++) {
+            for (int x = sb_x; x < sb_x + sb_w; x++) {
+                PUT_PIXEL(v, x, y, 7);
+            }
+        }
+        // Thumb 3D bevel
+        for (int x = sb_x; x < sb_x + sb_w; x++) {
+            PUT_PIXEL(v, x, thumb_y, 15);
+            PUT_PIXEL(v, x, thumb_y + thumb_h - 1, 0);
+            PUT_PIXEL(v, x, thumb_y + thumb_h - 2, 8);
+        }
+        for (int y = thumb_y; y < thumb_y + thumb_h; y++) {
+            PUT_PIXEL(v, sb_x, y, 15);
+            PUT_PIXEL(v, sb_x + sb_w - 1, y, 0);
+            PUT_PIXEL(v, sb_x + sb_w - 2, y, 8);
+        }
+        // Grip lines in center of thumb
+        if (thumb_h >= 18) {
+            int mid_y = thumb_y + thumb_h / 2;
+            for (int off = -2; off <= 2; off += 2) {
+                for (int gx = sb_x + 3; gx < sb_x + sb_w - 3; gx++) {
+                    PUT_PIXEL(v, gx, mid_y + off, 15);
+                    PUT_PIXEL(v, gx, mid_y + off + 1, 8);
+                }
+            }
+        }
+    }
+}
+
 void fm_update(unsigned char* v, int mx, int my, int mb, int wx, int wy, int ww, int wh) {
     (void)v;
     int mb_press = (mb & 1) && !(last_mb & 1);
     int rmb_press = (mb & 2) && !(last_mb & 2);
+    int mb_down = (mb & 1);
+    int mb_release = !(mb & 1) && (last_mb & 1);
     last_mb = mb;
     
     if (show_error) {
@@ -327,15 +488,111 @@ void fm_update(unsigned char* v, int mx, int my, int mb, int wx, int wy, int ww,
         return;
     }
     
-    int max_display = (wh - 80) / 16;
-    if (max_display > 10) max_display = 10;
+    int list_top = wy + 60;
+    int list_bot = wy + wh - FM_STATUS_H;
+    int list_h = list_bot - list_top;
+    int max_display = list_h / FM_ROW_H;
+    if (max_display < 1) max_display = 1;
+    last_max_display = max_display;
+
+    int max_scroll = file_count - max_display;
+    if (max_scroll < 0) max_scroll = 0;
+    if (scroll_offset > max_scroll) scroll_offset = max_scroll;
+    if (scroll_offset < 0) scroll_offset = 0;
+
+    int sb_x = wx + ww - 4 - FM_SB_W;
+    int sb_y = wy + FM_HEADER_H + 1;
+    int sb_w = FM_SB_W;
+    int sb_h = list_bot - sb_y;
+    int track_y = sb_y + 14;
+    int track_bot = sb_y + sb_h - 14;
+    int track_h = track_bot - track_y;
+
+    // Handle mouse button release
+    if (mb_release || !mb_down) {
+        if (sb_dragging || sb_up_pressed || sb_down_pressed) {
+            sb_dragging = 0;
+            sb_up_pressed = 0;
+            sb_down_pressed = 0;
+            redraw = 1;
+        }
+    }
+
+    // Handle scrollbar thumb dragging
+    if (sb_dragging && mb_down) {
+        if (file_count > max_display && track_h > 14 && max_scroll > 0) {
+            int thumb_h = (track_h * max_display) / file_count;
+            if (thumb_h < 14) thumb_h = 14;
+            if (thumb_h > track_h) thumb_h = track_h;
+            int scrollable_track = track_h - thumb_h;
+            if (scrollable_track > 0) {
+                int dy = my - sb_drag_start_y;
+                int new_offset = sb_drag_start_offset + (dy * max_scroll + (scrollable_track / 2)) / scrollable_track;
+                if (new_offset < 0) new_offset = 0;
+                if (new_offset > max_scroll) new_offset = max_scroll;
+                if (new_offset != scroll_offset) {
+                    scroll_offset = new_offset;
+                    redraw = 1;
+                }
+            }
+        }
+        return;
+    }
+
+    // Scrollbar clicking
+    if (mb_press && mx >= sb_x && mx < sb_x + sb_w && my >= sb_y && my < sb_y + sb_h) {
+        if (my < sb_y + 14) {
+            // Up Button
+            sb_up_pressed = 1;
+            if (scroll_offset > 0) {
+                scroll_offset--;
+                redraw = 1;
+            }
+        } else if (my >= sb_y + sb_h - 14) {
+            // Down Button
+            sb_down_pressed = 1;
+            if (scroll_offset < max_scroll) {
+                scroll_offset++;
+                redraw = 1;
+            }
+        } else if (file_count > max_display && track_h > 14) {
+            // Track / Thumb area
+            int thumb_h = (track_h * max_display) / file_count;
+            if (thumb_h < 14) thumb_h = 14;
+            if (thumb_h > track_h) thumb_h = track_h;
+            int scrollable_track = track_h - thumb_h;
+            int thumb_y = track_y;
+            if (max_scroll > 0 && scrollable_track > 0) {
+                thumb_y = track_y + (scroll_offset * scrollable_track) / max_scroll;
+            }
+
+            if (my >= thumb_y && my < thumb_y + thumb_h) {
+                // Click on Thumb -> Start dragging!
+                sb_dragging = 1;
+                sb_drag_start_y = my;
+                sb_drag_start_offset = scroll_offset;
+            } else if (my < thumb_y) {
+                // Click on track above thumb -> Page Up
+                scroll_offset -= max_display;
+                if (scroll_offset < 0) scroll_offset = 0;
+                redraw = 1;
+            } else {
+                // Click on track below thumb -> Page Down
+                scroll_offset += max_display;
+                if (scroll_offset > max_scroll) scroll_offset = max_scroll;
+                redraw = 1;
+            }
+        }
+        return;
+    }
     
+    // Right click for context menu (only within file list, not on scrollbar)
     if (rmb_press) {
         ctx_target_idx = -1;
         for (int i = 0; i < max_display && (i + scroll_offset) < file_count; i++) {
             int idx = i + scroll_offset;
-            int y = wy + 62 + i * 16;
-            if (mx >= wx+4 && mx < wx+ww-4 && my >= y && my < y+16) {
+            int y = wy + 62 + i * FM_ROW_H;
+            if (mx >= wx+4 && mx < sb_x - 2 && my >= y && my < y + FM_ROW_H) {
                 ctx_target_idx = idx;
                 selected = idx;
                 break;
@@ -347,12 +604,13 @@ void fm_update(unsigned char* v, int mx, int my, int mb, int wx, int wy, int ww,
         return;
     }
     
+    // Left click on file list
     if (mb_press) {
         for (int i = 0; i < max_display && (i + scroll_offset) < file_count; i++) {
             int idx = i + scroll_offset;
-            int y = wy + 62 + i * 16;
+            int y = wy + 62 + i * FM_ROW_H;
             
-            if (mx >= wx+4 && mx < wx+ww-4 && my >= y && my < y+16) {
+            if (mx >= wx+4 && mx < sb_x - 2 && my >= y && my < y + FM_ROW_H) {
                 if (last_click_idx == idx && global_tick - last_click_time < 55) {
                     open_file(idx);
                     last_click_idx = -1;
@@ -366,6 +624,93 @@ void fm_update(unsigned char* v, int mx, int my, int mb, int wx, int wy, int ww,
             }
         }
         selected = -1;
+        redraw = 1;
+    }
+}
+
+void fm_handle_key(int key) {
+    if (show_error) {
+        if (key == '\n' || key == ' ' || key == 27) {
+            show_error = 0;
+            redraw = 1;
+        }
+        return;
+    }
+    if (ctx_menu_open) {
+        if (key == 27) {
+            ctx_menu_open = 0;
+            redraw = 1;
+        }
+        return;
+    }
+    if (file_count <= 0) return;
+
+    int max_display = last_max_display;
+    if (max_display < 1) max_display = 1;
+    int max_scroll = file_count - max_display;
+    if (max_scroll < 0) max_scroll = 0;
+
+    if (key == 200) { // UP
+        if (selected > 0) {
+            selected--;
+            if (selected < scroll_offset) {
+                scroll_offset = selected;
+            }
+            redraw = 1;
+        } else if (selected == -1) {
+            selected = scroll_offset;
+            redraw = 1;
+        }
+    } else if (key == 201) { // DOWN
+        if (selected < file_count - 1) {
+            selected++;
+            if (selected >= scroll_offset + max_display) {
+                scroll_offset = selected - max_display + 1;
+                if (scroll_offset > max_scroll) scroll_offset = max_scroll;
+            }
+            redraw = 1;
+        } else if (selected == -1) {
+            selected = scroll_offset;
+            redraw = 1;
+        }
+    } else if (key == 206) { // PAGE UP
+        scroll_offset -= max_display;
+        if (scroll_offset < 0) scroll_offset = 0;
+        if (selected != -1) {
+            selected -= max_display;
+            if (selected < 0) selected = 0;
+        }
+        redraw = 1;
+    } else if (key == 207) { // PAGE DOWN
+        scroll_offset += max_display;
+        if (scroll_offset > max_scroll) scroll_offset = max_scroll;
+        if (selected != -1) {
+            selected += max_display;
+            if (selected >= file_count) selected = file_count - 1;
+        }
+        redraw = 1;
+    } else if (key == 204) { // HOME
+        scroll_offset = 0;
+        selected = 0;
+        redraw = 1;
+    } else if (key == 205) { // END
+        scroll_offset = max_scroll;
+        selected = file_count - 1;
+        redraw = 1;
+    } else if (key == '\n') { // ENTER
+        if (selected >= 0 && selected < file_count) {
+            open_file(selected);
+        }
+    } else if (key == '\b') { // BACKSPACE
+        go_up();
+    }
+}
+
+void fm_release(void) {
+    if (sb_dragging || sb_up_pressed || sb_down_pressed) {
+        sb_dragging = 0;
+        sb_up_pressed = 0;
+        sb_down_pressed = 0;
         redraw = 1;
     }
 }
@@ -396,27 +741,39 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     char title[256] = "File Manager: ";
     my_strcat(title, current_path[0] ? current_path : "Drives");
     font_draw_text(v, wx+5, wy+20, title, 0);
-    
+
+    int list_top = wy + 60;
+    int list_bot = wy + wh - FM_STATUS_H;
+    int list_h = list_bot - list_top;
+    int max_display = list_h / FM_ROW_H;
+    if (max_display < 1) max_display = 1;
+    last_max_display = max_display;
+
+    int max_scroll = file_count - max_display;
+    if (max_scroll < 0) max_scroll = 0;
+    if (scroll_offset > max_scroll) scroll_offset = max_scroll;
+    if (scroll_offset < 0) scroll_offset = 0;
+
+    int sb_x = wx + ww - 4 - FM_SB_W;
+    int item_max_x = sb_x - 3;
+
     if (current_path[0] == 0) {
         font_draw_text(v, wx+8, wy+40, "Drive", 0);
         font_draw_text(v, wx+70, wy+40, "Type", 0);
-        font_draw_text(v, wx+ww-160, wy+40, "Total", 0);
-        font_draw_text(v, wx+ww-80, wy+40, "Free", 0);
+        font_draw_text(v, item_max_x - 145, wy+40, "Total", 0);
+        font_draw_text(v, item_max_x - 70, wy+40, "Free", 0);
     } else {
         font_draw_text(v, wx+8, wy+40, "Name", 0);
-        font_draw_text(v, wx+ww-75, wy+40, "Size", 0);
+        font_draw_text(v, item_max_x - 70, wy+40, "Size", 0);
     }
-    for (int x = wx+4; x < wx+ww-4; x++) if (wy+58 < 768 && x < 1024) PUT_PIXEL(v, x, wy+58, 8);
-    
-    int max_display = (wh - 90) / 16;
-    if (max_display > 10) max_display = 10;
+    for (int x = wx+4; x < wx+ww-4; x++) if (wy+58 < screen_h && x < screen_w) PUT_PIXEL(v, x, wy+58, 8);
     
     for (int i = 0; i < max_display && (i + scroll_offset) < file_count; i++) {
         int idx = i + scroll_offset;
-        int y = wy + 62 + i * 16;
+        int y = wy + 62 + i * FM_ROW_H;
         if (idx == selected) {
-            for (int yy = y; yy < y+16 && yy < 768; yy++)
-                for (int xx = wx+4; xx < wx+ww-4 && xx < 1024; xx++) PUT_PIXEL(v, xx, yy, 9);
+            for (int yy = y; yy < y+16 && yy < screen_h; yy++)
+                for (int xx = wx+4; xx < item_max_x && xx < screen_w; xx++) PUT_PIXEL(v, xx, yy, 9);
         }
         int fg = (idx == selected) ? 15 : 0;
         
@@ -428,7 +785,7 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         } else {
             my_strcpy(dname, files[idx].name);
         }
-        int max_chars = (ww - 95) / 8;
+        int max_chars = (item_max_x - wx - 90) / 8;
         if (max_chars > 0 && max_chars < 127) {
             int dlen = my_strlen(dname);
             if (dlen > max_chars) {
@@ -454,26 +811,26 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
                 if (d->drv_type == VFS_DRV_FLOPPY) {
                     font_draw_text(v, wx+70, y, "FAT12", fg);
-                    font_draw_text(v, wx+ww-160, y, tot_str, fg);
+                    font_draw_text(v, item_max_x - 145, y, tot_str, fg);
                     if (is_known) {
                         format_kb(fre_k, fre_str);
-                        font_draw_text(v, wx+ww-80, y, fre_str, fg);
+                        font_draw_text(v, item_max_x - 70, y, fre_str, fg);
                     } else {
-                        font_draw_text(v, wx+ww-80, y, "--", fg);
+                        font_draw_text(v, item_max_x - 70, y, "--", fg);
                     }
                 } else if (d->drv_type == VFS_DRV_CDROM) {
                     font_draw_text(v, wx+70, y, "CDFS", fg);
-                    font_draw_text(v, wx+ww-160, y, tot_str, fg);
-                    font_draw_text(v, wx+ww-80, y, "0 KB (RO)", fg);
+                    font_draw_text(v, item_max_x - 145, y, tot_str, fg);
+                    font_draw_text(v, item_max_x - 70, y, "0 KB (RO)", fg);
                 } else {
                     const char* fs_nm = vfs_get_fs_name(d->fs_type);
                     font_draw_text(v, wx+70, y, fs_nm, fg);
-                    font_draw_text(v, wx+ww-160, y, tot_str, fg);
+                    font_draw_text(v, item_max_x - 145, y, tot_str, fg);
                     if (is_known) {
                         format_kb(fre_k, fre_str);
-                        font_draw_text(v, wx+ww-80, y, fre_str, fg);
+                        font_draw_text(v, item_max_x - 70, y, fre_str, fg);
                     } else {
-                        font_draw_text(v, wx+ww-80, y, "-- (N/A)", fg);
+                        font_draw_text(v, item_max_x - 70, y, "-- (N/A)", fg);
                     }
                 }
             } else {
@@ -482,12 +839,17 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         } else if (!(files[idx].attr & 0x10)) {
             char size_str[24];
             format_size(files[idx].size, size_str);
-            font_draw_text(v, wx+ww-75, y, size_str, fg);
+            font_draw_text(v, item_max_x - 70, y, size_str, fg);
         } else {
-            font_draw_text(v, wx+ww-75, y, "DIR", fg);
+            font_draw_text(v, item_max_x - 70, y, "DIR", fg);
         }
     }
     
+    // Draw the vertical scrollbar on the right side
+    int sb_y = wy + FM_HEADER_H + 1;
+    int sb_h = list_bot - sb_y;
+    draw_scrollbar(v, sb_x, sb_y, FM_SB_W, sb_h, scroll_offset, max_display, file_count);
+
     // Bottom status bar
     int status_y = wy + wh - 18;
     for (int x = wx+4; x < wx+ww-4; x++) PUT_PIXEL(v, x, status_y - 3, 8);
