@@ -12,7 +12,7 @@
 #define FM_ROW_H     16
 #define FM_SB_W      14
 
-char current_path[256] = "C:\\";
+char current_path[256] = "";
 static file_info_t files[MAX_FM_FILES];
 static int file_count = 0;
 static int selected = -1;
@@ -114,6 +114,11 @@ static void format_kb(unsigned int kb, char* buf) {
 
 
 static void vfs_fm_callback(const vfs_dirent_t* ent) {
+    if (!ent || !ent->name[0]) return;
+    // Don't add . or .. from directory listing as FM manages .. explicitly
+    if (ent->name[0] == '.' && (ent->name[1] == '\0' || (ent->name[1] == '.' && ent->name[2] == '\0'))) {
+        return;
+    }
     if (file_count < MAX_FM_FILES) {
         int i;
         for (i = 0; i < 127 && ent->name[i]; i++) {
@@ -199,12 +204,23 @@ static int my_strlen(const char* s) {
 
 static void go_up(void) {
     int len = my_strlen(current_path);
-    if (len <= 3) { // C:\ -> drives
+    if (len == 0) return; // already at Drives view
+
+    if (len <= 3) { // At drive root (e.g. "C:\" or "C:") -> return to Drives view
         current_path[0] = 0;
     } else {
-        int i = len - 2; // skip trailing \ if any
-        while (i > 0 && current_path[i] != '\\') i--;
-        current_path[i + 1] = 0;
+        int i = len - 1;
+        if (current_path[i] == '\\' || current_path[i] == '/') {
+            current_path[i] = 0;
+            i--;
+        }
+        while (i > 0 && current_path[i] != '\\' && current_path[i] != '/') i--;
+        if (i <= 2 && current_path[1] == ':') {
+            current_path[i + 1] = '\\';
+            current_path[i + 2] = 0;
+        } else {
+            current_path[i + 1] = 0;
+        }
     }
     load_files();
     redraw = 1;
@@ -488,6 +504,26 @@ void fm_update(unsigned char* v, int mx, int my, int mb, int wx, int wy, int ww,
         return;
     }
     
+    int btn_h = 17;
+    int btn_y = wy + 21;
+    int btn_drv_w = 64;
+    int btn_drv_x = wx + ww - 4 - FM_SB_W - btn_drv_w - 4;
+    int btn_up_w = 54;
+    int btn_up_x = btn_drv_x - btn_up_w - 4;
+
+    if (mb_press) {
+        if (mx >= btn_up_x && mx < btn_up_x + btn_up_w && my >= btn_y && my < btn_y + btn_h) {
+            go_up();
+            return;
+        }
+        if (mx >= btn_drv_x && mx < btn_drv_x + btn_drv_w && my >= btn_y && my < btn_y + btn_h) {
+            current_path[0] = 0;
+            load_files();
+            redraw = 1;
+            return;
+        }
+    }
+
     int list_top = wy + 60;
     int list_bot = wy + wh - FM_STATUS_H;
     int list_h = list_bot - list_top;
@@ -738,9 +774,31 @@ static void draw_error_dialog(unsigned char* v, int wx, int wy, int ww, int wh) 
 }
 
 void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
-    char title[256] = "File Manager: ";
-    my_strcat(title, current_path[0] ? current_path : "Drives");
-    font_draw_text(v, wx+5, wy+20, title, 0);
+    char title[256] = "Path: ";
+    my_strcat(title, current_path[0] ? current_path : "Drives (Select Disk)");
+    font_draw_text(v, wx+8, wy+24, title, 0);
+
+    // Toolbar buttons: Up and Drives
+    int btn_h = 17;
+    int btn_y = wy + 21;
+    int btn_drv_w = 64;
+    int btn_drv_x = wx + ww - 4 - FM_SB_W - btn_drv_w - 4;
+    int btn_up_w = 54;
+    int btn_up_x = btn_drv_x - btn_up_w - 4;
+
+    // 1. Draw Up button
+    for (int y = btn_y; y < btn_y + btn_h; y++)
+        for (int x = btn_up_x; x < btn_up_x + btn_up_w; x++) PUT_PIXEL(v, x, y, 7);
+    for (int x = btn_up_x; x < btn_up_x + btn_up_w; x++) { PUT_PIXEL(v, x, btn_y, 15); PUT_PIXEL(v, x, btn_y + btn_h - 1, 0); }
+    for (int y = btn_y; y < btn_y + btn_h; y++) { PUT_PIXEL(v, btn_up_x, y, 15); PUT_PIXEL(v, btn_up_x + btn_up_w - 1, y, 0); }
+    font_draw_text(v, btn_up_x + 10, btn_y + 4, "^ Up", 0);
+
+    // 2. Draw Drives button
+    for (int y = btn_y; y < btn_y + btn_h; y++)
+        for (int x = btn_drv_x; x < btn_drv_x + btn_drv_w; x++) PUT_PIXEL(v, x, y, 7);
+    for (int x = btn_drv_x; x < btn_drv_x + btn_drv_w; x++) { PUT_PIXEL(v, x, btn_y, 15); PUT_PIXEL(v, x, btn_y + btn_h - 1, 0); }
+    for (int y = btn_y; y < btn_y + btn_h; y++) { PUT_PIXEL(v, btn_drv_x, y, 15); PUT_PIXEL(v, btn_drv_x + btn_drv_w - 1, y, 0); }
+    font_draw_text(v, btn_drv_x + 8, btn_y + 4, "Drives", 0);
 
     int list_top = wy + 60;
     int list_bot = wy + wh - FM_STATUS_H;
@@ -758,13 +816,13 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     int item_max_x = sb_x - 3;
 
     if (current_path[0] == 0) {
-        font_draw_text(v, wx+8, wy+40, "Drive", 0);
-        font_draw_text(v, wx+70, wy+40, "Type", 0);
-        font_draw_text(v, item_max_x - 145, wy+40, "Total", 0);
-        font_draw_text(v, item_max_x - 70, wy+40, "Free", 0);
+        font_draw_text(v, wx+8, wy+42, "Drive", 0);
+        font_draw_text(v, wx+70, wy+42, "Type", 0);
+        font_draw_text(v, item_max_x - 145, wy+42, "Total", 0);
+        font_draw_text(v, item_max_x - 70, wy+42, "Free", 0);
     } else {
-        font_draw_text(v, wx+8, wy+40, "Name", 0);
-        font_draw_text(v, item_max_x - 70, wy+40, "Size", 0);
+        font_draw_text(v, wx+8, wy+42, "Name", 0);
+        font_draw_text(v, item_max_x - 70, wy+42, "Size", 0);
     }
     for (int x = wx+4; x < wx+ww-4; x++) if (wy+58 < screen_h && x < screen_w) PUT_PIXEL(v, x, wy+58, 8);
     
@@ -780,7 +838,15 @@ void fm_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         char dname[128] = {0};
         if (files[idx].attr & 0x10) {
             dname[0] = '['; dname[1] = 0;
-            my_strcat(dname, files[idx].name);
+            if (files[idx].name[0] == '.' && files[idx].name[1] == '.' && files[idx].name[2] == '\0') {
+                if (current_path[0] != 0 && my_strlen(current_path) <= 3) {
+                    my_strcat(dname, ".. (Drives)");
+                } else {
+                    my_strcat(dname, "..");
+                }
+            } else {
+                my_strcat(dname, files[idx].name);
+            }
             my_strcat(dname, "]");
         } else {
             my_strcpy(dname, files[idx].name);

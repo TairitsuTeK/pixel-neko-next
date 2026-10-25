@@ -299,11 +299,9 @@ static int traverse_dir(fat_fs_t* vol, unsigned int start_cluster, dir_callback_
             if (vol_read_sec(vol, root_start + i, buf) != 0) return -1;
             for (int j = 0; j < 16; j++) {
                 dir_entry_t* entry = (dir_entry_t*)&buf[j * 32];
-                if (entry->name[0] == 0x00) return 0;
-                if (entry->name[0] == 0xE5) {
+                if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
                     lfn_valid = 0;
                     lfn_buf[0] = 0;
-                    continue;
                 }
                 if (entry->attr == 0x0F) {
                     fat_lfn_entry_t* lfn = (fat_lfn_entry_t*)entry;
@@ -372,11 +370,9 @@ static int traverse_dir(fat_fs_t* vol, unsigned int start_cluster, dir_callback_
             if (vol_read_sec(vol, start_sector + i, buf) != 0) return -1;
             for (int j = 0; j < 16; j++) {
                 dir_entry_t* entry = (dir_entry_t*)&buf[j * 32];
-                if (entry->name[0] == 0x00) return 0;
-                if (entry->name[0] == 0xE5) {
+                if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
                     lfn_valid = 0;
                     lfn_buf[0] = 0;
-                    continue;
                 }
                 if (entry->attr == 0x0F) {
                     fat_lfn_entry_t* lfn = (fat_lfn_entry_t*)entry;
@@ -530,7 +526,8 @@ struct list_cb_data {
 
 static int list_cb(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, unsigned int sector, unsigned int offset, void* ud) {
     (void)vol; (void)sector; (void)offset;
-    if (entry->attr & 0x08) return 0;
+    if (entry->name[0] == 0x00) return 1;
+    if (entry->name[0] == 0xE5 || (entry->attr & 0x08)) return 0;
     
     struct list_cb_data* data = (struct list_cb_data*)ud;
     file_info_t info;
@@ -926,7 +923,31 @@ int fat_create_ext(const char* name, int is_dir) {
 
     struct cre_cb_data data = { (const char*)fat_name, (const char*)fat_ext, is_dir, cluster, 0 };
     if (traverse_dir(vol, cluster, cre_cb, &data) != 0) return -1;
-    return data.found ? 0 : -3;
+    if (data.found) return 0;
+
+    // If directory was full and is cluster-based (subdirectory or FAT32 root), allocate new cluster
+    if (cluster != 0 || vol->type == 32) {
+        unsigned int dir_c = (cluster != 0) ? cluster : vol->root_cluster;
+        unsigned int end_mark = (vol->type == 12) ? 0x0FF8 : ((vol->type == 16) ? 0xFFF8 : 0x0FFFFFF8);
+        while (1) {
+            unsigned int next_c = fat_read_entry(vol, dir_c);
+            if (next_c < 2 || next_c >= end_mark) break;
+            dir_c = next_c;
+        }
+        unsigned int new_dir_c = allocate_cluster(vol);
+        if (new_dir_c != 0) {
+            fat_write_entry(vol, dir_c, new_dir_c);
+            unsigned char zero_buf[512] = {0};
+            unsigned int start_sec = cluster_to_sector(vol, new_dir_c);
+            for (unsigned int s = 0; s < vol->sectors_per_cluster; s++) {
+                vol_write_sec(vol, start_sec + s, zero_buf);
+            }
+            if (traverse_dir(vol, new_dir_c, cre_cb, &data) == 0 && data.found) {
+                return 0;
+            }
+        }
+    }
+    return -3;
 }
 
 int fat_create(const char* name) { return fat_create_ext(name, 0); }

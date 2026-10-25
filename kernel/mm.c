@@ -119,7 +119,7 @@ void* pmm_alloc_pages(unsigned int count) {
     unsigned int consecutive = 0;
     unsigned int start_page = 0;
 
-    for (unsigned int i = next_free_page; i < MAX_PAGES; i++) {
+    for (unsigned int i = min_free_page; i < MAX_PAGES; i++) {
         if (consecutive == 0 && pmm_bitmap[i / 8] == 0xFF) {
             i = (i | 7);
             continue;

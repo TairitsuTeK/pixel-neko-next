@@ -122,22 +122,24 @@ static void draw_btn(unsigned char* v, int bx, int by, int bw, int bh, const cha
 
 static int copy_vfs_file(const char* src, const char* dst) {
     vfs_dirent_t ent;
-    if (vfs_find_file(src, &ent) != 0) return -1;
+    if (vfs_find_file(src, &ent) != 0) return 1;
     if (ent.size == 0) return 0;
 
     unsigned int pages = (ent.size + 4095) / 4096;
     unsigned char* buf = (unsigned char*)pmm_alloc_pages(pages);
-    if (!buf) return -2;
+    if (!buf) return 2;
 
     int read_bytes = vfs_read_file(src, buf, ent.size);
-    int ret = -3;
-    if (read_bytes > 0 && (unsigned int)read_bytes == ent.size) {
-        if (vfs_write_file(dst, buf, ent.size) == 0) {
-            ret = 0;
-        }
+    if (read_bytes <= 0 || (unsigned int)read_bytes != ent.size) {
+        pmm_free_pages(buf, pages);
+        return 3;
     }
+
+    int wret = vfs_write_file(dst, buf, ent.size);
     pmm_free_pages(buf, pages);
-    return ret;
+    if (wret != 0) return 4;
+
+    return 0;
 }
 
 static int do_installation(char target_letter) {
@@ -220,6 +222,14 @@ static int do_installation(char target_letter) {
     src_kernel[11] = 'n'; src_kernel[12] = 'e'; src_kernel[13] = 'l'; src_kernel[14] = '.';
     src_kernel[15] = 'e'; src_kernel[16] = 'l'; src_kernel[17] = 'f'; src_kernel[18] = '\0';
 
+    vfs_dirent_t ke_ent;
+    if (vfs_find_file(src_kernel, &ke_ent) != 0) {
+        src_kernel[0] = cd_let; src_kernel[1] = ':'; src_kernel[2] = '\\';
+        src_kernel[3] = 'k'; src_kernel[4] = 'e'; src_kernel[5] = 'r'; src_kernel[6] = 'n';
+        src_kernel[7] = 'e'; src_kernel[8] = 'l'; src_kernel[9] = '.'; src_kernel[10] = 'e';
+        src_kernel[11] = 'l'; src_kernel[12] = 'f'; src_kernel[13] = '\0';
+    }
+
     char dst_kernel[32];
     dst_kernel[0] = target_letter; dst_kernel[1] = ':'; dst_kernel[2] = '\\';
     dst_kernel[3] = 'b'; dst_kernel[4] = 'o'; dst_kernel[5] = 'o'; dst_kernel[6] = 't';
@@ -227,7 +237,16 @@ static int do_installation(char target_letter) {
     dst_kernel[11] = 'n'; dst_kernel[12] = 'e'; dst_kernel[13] = 'l'; dst_kernel[14] = '.';
     dst_kernel[15] = 'e'; dst_kernel[16] = 'l'; dst_kernel[17] = 'f'; dst_kernel[18] = '\0';
 
-    if (copy_vfs_file(src_kernel, dst_kernel) != 0) return -8;
+    int cp_k = copy_vfs_file(src_kernel, dst_kernel);
+    if (cp_k != 0) return -(80 + cp_k);
+
+    // Also copy to root of target drive (C:\kernel.elf)
+    char dst_kernel_root[32];
+    dst_kernel_root[0] = target_letter; dst_kernel_root[1] = ':'; dst_kernel_root[2] = '\\';
+    dst_kernel_root[3] = 'k'; dst_kernel_root[4] = 'e'; dst_kernel_root[5] = 'r'; dst_kernel_root[6] = 'n';
+    dst_kernel_root[7] = 'e'; dst_kernel_root[8] = 'l'; dst_kernel_root[9] = '.'; dst_kernel_root[10] = 'e';
+    dst_kernel_root[11] = 'l'; dst_kernel_root[12] = 'f'; dst_kernel_root[13] = '\0';
+    copy_vfs_file(src_kernel, dst_kernel_root);
 
     // 6. Copy grldr
     char src_grldr[32];
@@ -248,7 +267,8 @@ static int do_installation(char target_letter) {
     dst_grldr_root[3] = 'g'; dst_grldr_root[4] = 'r'; dst_grldr_root[5] = 'l';
     dst_grldr_root[6] = 'd'; dst_grldr_root[7] = 'r'; dst_grldr_root[8] = '\0';
 
-    copy_vfs_file(src_grldr, dst_grldr_root);
+    int cp_gr = copy_vfs_file(src_grldr, dst_grldr_root);
+    if (cp_gr != 0) return -91;
 
     char dst_grldr_boot[32];
     dst_grldr_boot[0] = target_letter; dst_grldr_boot[1] = ':'; dst_grldr_boot[2] = '\\';
@@ -264,8 +284,8 @@ static int do_installation(char target_letter) {
         "default 0\r\n"
         "\r\n"
         "title Pixel Neko Next\r\n"
-        "find --set-root /boot/kernel.elf\r\n"
-        "kernel /boot/kernel.elf\r\n"
+        "find --set-root /boot/kernel.elf || find --set-root /kernel.elf\r\n"
+        "kernel /boot/kernel.elf || kernel /kernel.elf\r\n"
         "boot\r\n";
     unsigned int mlen = sizeof(g_menulst_text) - 1;
 
@@ -273,7 +293,7 @@ static int do_installation(char target_letter) {
     dst_menu_root[0] = target_letter; dst_menu_root[1] = ':'; dst_menu_root[2] = '\\';
     dst_menu_root[3] = 'm'; dst_menu_root[4] = 'e'; dst_menu_root[5] = 'n'; dst_menu_root[6] = 'u';
     dst_menu_root[7] = '.'; dst_menu_root[8] = 'l'; dst_menu_root[9] = 's'; dst_menu_root[10] = 't'; dst_menu_root[11] = '\0';
-    vfs_write_file(dst_menu_root, (const unsigned char*)g_menulst_text, mlen);
+    if (vfs_write_file(dst_menu_root, (const unsigned char*)g_menulst_text, mlen) != 0) return -95;
 
     char dst_menu_boot[32];
     dst_menu_boot[0] = target_letter; dst_menu_boot[1] = ':'; dst_menu_boot[2] = '\\';
@@ -422,7 +442,15 @@ void installer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
             my_itoa_inst(-g_install_error, num_buf);
             str_cat_inst(err_msg, num_buf);
             font_draw_text(v, wx + 12, wy + 56, err_msg, 12);
-            font_draw_text(v, wx + 12, wy + 80, "Could not write boot code or copy files.", 0);
+
+            const char* desc = "Could not write boot code or copy files.";
+            if (g_install_error == -81) desc = "Source kernel not found on CD-ROM.";
+            else if (g_install_error == -82) desc = "Out of memory allocating copy buffer.";
+            else if (g_install_error == -83) desc = "Failed reading kernel from CD-ROM.";
+            else if (g_install_error == -84) desc = "Failed writing kernel to target drive.";
+            else if (g_install_error == -91) desc = "Failed to copy grldr bootloader.";
+            else if (g_install_error == -95) desc = "Failed writing menu.lst configuration.";
+            font_draw_text(v, wx + 12, wy + 80, desc, 0);
 
             draw_btn(v, wx + ww - 90, wy + wh - 30, 78, 22, "< Back", 7, 0);
         }
