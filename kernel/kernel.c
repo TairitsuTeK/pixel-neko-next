@@ -8,6 +8,7 @@
 #include "cpu.h"
 #include "splash.h"
 #include "settings.h"
+#include "ati_mach64.h"
 
 int screen_w = 320;
 int screen_h = 200;
@@ -268,9 +269,9 @@ static int try_set_vbe_mode(int mode, int req_w, int req_h, int req_bpp)
     screen_h = (info->y_res > 0) ? info->y_res : req_h;
 
     if (req_bpp == 32) {
-        if (info->bytes_per_scanline >= screen_w * 4 || info->bpp == 32) {
+        if (info->bpp == 32 && info->bytes_per_scanline >= screen_w * 4) {
             screen_bpp = 32;
-            screen_pitch = (info->bytes_per_scanline >= screen_w * 4) ? info->bytes_per_scanline : (screen_w * 4);
+            screen_pitch = info->bytes_per_scanline;
         } else {
             return 0; // Hardware mode is not 32-bit! Prevent scanline skew corruption.
         }
@@ -295,6 +296,20 @@ static int try_set_vbe_mode(int mode, int req_w, int req_h, int req_bpp)
     return 1;
 }
 
+static int try_set_mach64_32_mode(int mode24, int req_w, int req_h)
+{
+    if (!ati_mach64_supports_native_32bpp(req_w, req_h)) return 0;
+    if (!try_set_vbe_mode(mode24, req_w, req_h, 24)) return 0;
+    if (!ati_mach64_enable_native_32bpp(screen_w, screen_h)) return 0;
+
+    screen_bpp = 32;
+    screen_pitch = (screen_w * 4 + 7) & ~7;
+    set_vga_palette_full(0, 1);
+    extern void gfx_accel_set_mode(int w, int h, int bpp);
+    gfx_accel_set_mode(screen_w, screen_h, 32);
+    return 1;
+}
+
 int vbe_find_mode(int req_w, int req_h, int req_bpp)
 {
     if (vbe_get_controller_info() == 0x004F) {
@@ -310,7 +325,8 @@ int vbe_find_mode(int req_w, int req_h, int req_bpp)
                 if (vbe_get_mode_info(mode) == 0x004F) {
                     if (minfo->x_res == req_w && minfo->y_res == req_h && (minfo->attributes & 0x01)) {
                         if (req_bpp == 32) {
-                            if (minfo->bpp == 32 || minfo->bytes_per_scanline >= req_w * 4) {
+                            if (minfo->bpp == 32 &&
+                                minfo->bytes_per_scanline >= req_w * 4) {
                                 return mode;
                             }
                         } else if (req_bpp == 24) {
@@ -380,6 +396,8 @@ void set_resolution(int w, int h, int bpp)
     if (bpp == 32) {
         int m = vbe_find_mode(w, h, 32);
         if (m > 0 && try_set_vbe_mode(m, w, h, 32)) return;
+        int m24 = vbe_find_mode(w, h, 24);
+        if (m24 > 0 && try_set_mach64_32_mode(m24, w, h)) return;
         if (w == 800 && h == 600) {
             candidates[0] = 0x122; // ATI Mach64 800x600 32bpp
             candidates[1] = 0x143; // Bochs/SeaBIOS 800x600 32bpp

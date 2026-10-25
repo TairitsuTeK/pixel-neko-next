@@ -45,8 +45,12 @@ int gfx_accel_supports_bpp(int w, int h, int bpp) {
     }
 
     if (ati_mach64_is_active()) {
-        // Mach64 VT2 VBE BIOS supports 8, 15, 16, 24-bit for 800x600, 32-bit only for 640x480
-        if (bpp == 32 && w > 640) return 0;
+        if (bpp == 32) {
+            extern int vbe_find_mode(int w, int h, int bpp);
+            if (vbe_find_mode(w, h, 32) > 0) return 1;
+            return ati_mach64_supports_native_32bpp(w, h) &&
+                   vbe_find_mode(w, h, 24) > 0;
+        }
         return (bpp == 8 || bpp == 15 || bpp == 16 || bpp == 24 || bpp == 32);
     }
 

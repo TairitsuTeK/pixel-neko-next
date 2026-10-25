@@ -75,6 +75,7 @@ jobs:
 
           ### Fixes
           - Creative CT4810 / Ensoniq ES1371 playback and physical CMI8738 output fixes are included.
+          - ATI Mach64 / 3D Rage II+DVD 32-bit color modes are included.
           - NekoPlayer, System Information and File Manager layout improvements are included.
           - Pausing playback now mutes the hardware output path to prevent residual noise.
         draft: false

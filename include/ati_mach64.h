@@ -23,35 +23,38 @@
 #define PCI_DEVICE_ATI_MACH64_VT    0x5654  // Mach64 VT
 #define PCI_DEVICE_ATI_MACH64_VT4   0x5655  // Mach64 VT4
 
-// Mach64 Block 0 MMIO Register Offsets (relative to BAR1 MMIO Base)
-#define MACH64_DST_OFF_PITCH        0x0000
-#define MACH64_DST_X                0x0004
-#define MACH64_DST_Y                0x0008
-#define MACH64_DST_Y_X              0x0008
-#define MACH64_DST_WIDTH            0x000C
-#define MACH64_DST_HEIGHT           0x0010
-#define MACH64_DST_WIDTH_HEIGHT     0x000C
-#define MACH64_SRC_OFF_PITCH        0x0014
-#define MACH64_SRC_X                0x0018
-#define MACH64_SRC_Y                0x001C
-#define MACH64_SRC_Y_X              0x0010
-#define MACH64_SRC_WIDTH1           0x0014
-#define MACH64_GUI_TRAJ_CNTL        0x0018
-#define MACH64_DP_SRC               0x0020
-#define MACH64_DP_FRGD_CLR          0x0024
-#define MACH64_DP_BKGD_CLR          0x0028
-#define MACH64_DP_MIX               0x0028
-#define MACH64_DP_DATATYPE          0x002C
-#define MACH64_CLR_CMP_CNTL         0x0030
-#define MACH64_FIFO_STAT            0x0038
-#define MACH64_GUI_STAT             0x0038
-
-#define MACH64_CONFIG_STAT0         0x00A0
+// Mach64 block 0 register offsets (relative to the register block base).
+#define MACH64_CRTC_OFF_PITCH       0x0014
+#define MACH64_CRTC_GEN_CNTL        0x001C
+#define MACH64_BUS_CNTL             0x00A0
+#define MACH64_EXT_MEM_CNTL         0x00AC
 #define MACH64_MEM_CNTL             0x00B0
-#define MACH64_DAC_REGS             0x00C0
 #define MACH64_DAC_CNTL             0x00C4
-#define MACH64_GEN_TEST_CNTL        0x00D4
-#define MACH64_CRTC_GEN_CNTL        0x00EC
+#define MACH64_GEN_TEST_CNTL        0x00D0
+#define MACH64_CNFG_CHIP_ID         0x00E0
+
+// Mach64 GUI block register offsets.
+#define MACH64_DST_OFF_PITCH        0x0100
+#define MACH64_DST_Y_X              0x010C
+#define MACH64_DST_WIDTH_HEIGHT     0x0118
+#define MACH64_SRC_OFF_PITCH        0x0180
+#define MACH64_SRC_Y_X              0x018C
+#define MACH64_SC_LEFT_RIGHT        0x02A8
+#define MACH64_SC_TOP_BOTTOM        0x02B4
+#define MACH64_DP_BKGD_CLR          0x02C0
+#define MACH64_DP_FRGD_CLR          0x02C4
+#define MACH64_DP_CHAIN_MASK        0x02CC
+#define MACH64_DP_PIX_WIDTH         0x02D0
+#define MACH64_DP_MIX               0x02D4
+#define MACH64_DP_SRC               0x02D8
+#define MACH64_CLR_CMP_CNTL         0x0308
+#define MACH64_FIFO_STAT            0x0310
+#define MACH64_GUI_TRAJ_CNTL        0x0330
+#define MACH64_GUI_STAT             0x0338
+
+#define MACH64_PIX_WIDTH_MASK       0x00000700
+#define MACH64_PIX_WIDTH_24BPP      0x00000500
+#define MACH64_PIX_WIDTH_32BPP      0x00000600
 
 // ----------------------------------------------------------------------------
 // Driver API
@@ -60,6 +63,8 @@ int          ati_mach64_probe(void);
 int          ati_mach64_is_active(void);
 const char*  ati_mach64_get_chip_name(void);
 unsigned int ati_mach64_get_vram_size(void);
+int          ati_mach64_supports_native_32bpp(int w, int h);
+int          ati_mach64_enable_native_32bpp(int w, int h);
 void         ati_mach64_set_mode_bpp(int w, int h, int bpp);
 void         ati_mach64_fill_rect(int x, int y, int w, int h, unsigned int color);
 void         ati_mach64_screen_blt(int sx, int sy, int dx, int dy, int w, int h);
