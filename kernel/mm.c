@@ -140,6 +140,32 @@ void* pmm_alloc_pages(unsigned int count) {
     return 0; // Out of memory
 }
 
+void* pmm_alloc_pages_aligned(unsigned int count, unsigned int align_pages) {
+    if (count == 0) return 0;
+    if (align_pages == 0) align_pages = 1;
+
+    for (unsigned int i = next_free_page; i < MAX_PAGES; i++) {
+        if ((i % align_pages) != 0) {
+            i += (align_pages - (i % align_pages)) - 1;
+            continue;
+        }
+        int ok = 1;
+        for (unsigned int p = i; p < i + count; p++) {
+            if (p >= MAX_PAGES || (pmm_bitmap[p / 8] & (1 << (p % 8))) != 0) {
+                ok = 0;
+                break;
+            }
+        }
+        if (ok) {
+            for (unsigned int p = i; p < i + count; p++) {
+                pmm_bitmap[p / 8] |= (1 << (p % 8));
+            }
+            return (void*)(i * PAGE_SIZE);
+        }
+    }
+    return 0;
+}
+
 void pmm_free_pages(void* ptr, unsigned int count) {
     if (!ptr || count == 0) return;
     unsigned int start = (unsigned int)ptr / PAGE_SIZE;

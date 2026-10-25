@@ -43,6 +43,9 @@ void vfs_init(void) {
         g_vfs_drives[i].label[0] = '\0';
     }
 
+    // Initialize FAT structures
+    fat_init();
+
     // Initialize underlying blocks and partitions
     blkdev_init();
     part_scan_all();
@@ -68,6 +71,10 @@ void vfs_init(void) {
                 d->is_free_known = 0;
                 if (unit == 0) my_strcpy(d->label, "3.5\" Floppy (A:)", sizeof(d->label));
                 else my_strcpy(d->label, "3.5\" Floppy (B:)", sizeof(d->label));
+
+                if (fat_mount_dev('A' + unit, bdev, 0) == 0) {
+                    d->mounted = 1;
+                }
             }
         }
     }
@@ -92,6 +99,12 @@ void vfs_init(void) {
         d->free_kb = 0;
         d->is_free_known = 0;
         my_strcpy(d->label, part->label, sizeof(d->label));
+
+        if (part->is_supported) {
+            if (fat_mount_dev(next_letter, part->dev, part->start_lba) == 0) {
+                d->mounted = 1;
+            }
+        }
 
         next_letter++;
     }
@@ -137,9 +150,6 @@ void vfs_init(void) {
             next_letter++;
         }
     }
-
-    // Initialize FAT structures
-    fat_init();
 }
 
 static iso_fs_t* get_iso_fs_for_drive(vfs_drive_t* drv) {
@@ -447,5 +457,55 @@ void vfs_stream_close(vfs_stream_t* s) {
         }
         s->is_open = 0;
     }
+}
+
+int vfs_has_cdrom(void) {
+    for (int i = 0; i < 26; i++) {
+        if (g_vfs_drives[i].present && g_vfs_drives[i].drv_type == VFS_DRV_CDROM) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+char vfs_get_boot_cdrom_letter(void) {
+    for (int i = 0; i < 26; i++) {
+        if (g_vfs_drives[i].present && g_vfs_drives[i].drv_type == VFS_DRV_CDROM) {
+            char path[32];
+            path[0] = 'A' + i;
+            path[1] = ':';
+            path[2] = '\\';
+            path[3] = 'b'; path[4] = 'o'; path[5] = 'o'; path[6] = 't';
+            path[7] = '\\'; path[8] = 'k'; path[9] = 'e'; path[10] = 'r';
+            path[11] = 'n'; path[12] = 'e'; path[13] = 'l'; path[14] = '.';
+            path[15] = 'e'; path[16] = 'l'; path[17] = 'f'; path[18] = '\0';
+            vfs_dirent_t ent;
+            if (vfs_find_file(path, &ent) == 0) {
+                return 'A' + i;
+            }
+        }
+    }
+    return 0;
+}
+
+int vfs_is_booted_from_cdrom(void) {
+    char cd_let = vfs_get_boot_cdrom_letter();
+    if (!cd_let) return 0;
+
+    unsigned char bios_dl = *(volatile unsigned char*)0x7F60;
+    if (bios_dl >= 0xE0) return 1;
+
+    unsigned int* mb_info = (unsigned int*)(*(volatile unsigned int*)0x7F64);
+    if (mb_info && (mb_info[0] & (1 << 1))) {
+        unsigned char mb_drv = (mb_info[3] >> 24) & 0xFF;
+        if (mb_drv >= 0xE0) return 1;
+    }
+
+    vfs_dirent_t ent;
+    if (vfs_find_file("C:\\boot\\kernel.elf", &ent) != 0) {
+        return 1;
+    }
+
+    return 1;
 }
 

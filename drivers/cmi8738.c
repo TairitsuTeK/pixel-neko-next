@@ -103,9 +103,9 @@ int cmi8738_init(void) {
         return -1;
     }
 
-    // Allocate 64KB physically contiguous memory for DMA ring buffer (16 pages)
+    // Allocate 64KB physically contiguous memory for DMA ring buffer (16 pages, 64KB aligned)
     if (!g_dma_buf) {
-        g_dma_buf = (unsigned char*)pmm_alloc_pages(16);
+        g_dma_buf = (unsigned char*)pmm_alloc_pages_aligned(16, 16);
         if (!g_dma_buf) {
             g_cmi_present = 0;
             return -2;
@@ -354,6 +354,10 @@ void cmi8738_set_volume(int master_vol, int pcm_vol) {
     // Output switch (0x3C): enable all outputs
     cmi_write_mixer(0x3C, 0x1F);
 
+    // Output gain control (0x41 L, 0x42 R)
+    cmi_write_mixer(0x41, 0x00);
+    cmi_write_mixer(0x42, 0x00);
+
     // Speaker and Phone mute control (0xF0): clear bit 3 (CM_VSPKM) and bit 4 (CM_VPHOM)
     unsigned char ext = cmi_read_mixer(0xF0);
     ext &= ~0x18;
@@ -364,9 +368,14 @@ unsigned int cmi8738_get_dma_frame_pos(void) {
     if (!g_cmi_present || !g_cmi_io_base || !g_dma_running) return 0;
 
     // Reading Low 16 bits of CH0_FRAME2 returns remaining sample frames (16383 down to 0)
-    unsigned short rem = cmi_read16(CMI_REG_CH0_FRAME2);
-    if (rem > 16383) rem = 16383;
-    unsigned int pos = (16384 - rem) & 16383;
+    // Retry up to 3 times to get a stable, valid reading (ALSA cmipci workaround)
+    unsigned short rem = 0;
+    for (int tries = 0; tries < 3; tries++) {
+        rem = cmi_read16(CMI_REG_CH0_FRAME2);
+        if (rem < CMI_DMA_TOTAL_FRAMES) break;
+    }
+    if (rem >= CMI_DMA_TOTAL_FRAMES) rem = CMI_DMA_TOTAL_FRAMES - 1;
+    unsigned int pos = (CMI_DMA_TOTAL_FRAMES - 1 - rem) & (CMI_DMA_TOTAL_FRAMES - 1);
     return pos;
 }
 
@@ -406,6 +415,9 @@ void cmi8738_silence_half(int half_idx) {
 int cmi8738_poll_half_needed(void) {
     if (!g_cmi_present || !g_cmi_io_base || !g_dma_running) return -1;
 
+    extern volatile int global_tick;
+    static int last_toggle_tick = 0;
+
     unsigned int frame = cmi8738_get_dma_frame_pos();
     // 0..8191 -> Hardware is playing Half 0. Half 1 is free to fill!
     // 8192..16383 -> Hardware is playing Half 1. Half 0 is free to fill!
@@ -413,6 +425,7 @@ int cmi8738_poll_half_needed(void) {
 
     if (current_playing_half != g_last_half_playing) {
         g_last_half_playing = current_playing_half;
+        last_toggle_tick = global_tick;
         // The *other* half has finished playing and needs filling!
         int needed_half = 1 - current_playing_half;
         g_half_filled[needed_half] = 0; // Mark ready for new data
@@ -423,6 +436,20 @@ int cmi8738_poll_half_needed(void) {
     int other_half = 1 - current_playing_half;
     if (!g_half_filled[other_half]) {
         return other_half;
+    }
+
+    // Software timeout watchdog: if hardware register fails to update on physical card
+    // after expected half-buffer time (at 44.1k/48k: 8192 frames is ~180ms, 18-20 ticks at 100Hz),
+    // force cycle so sound and position timer never stall
+    if (last_toggle_tick == 0) last_toggle_tick = global_tick;
+    if ((global_tick - last_toggle_tick) >= 19) {
+        last_toggle_tick = global_tick;
+        int cur = (g_last_half_playing >= 0) ? g_last_half_playing : 0;
+        int next_playing = 1 - cur;
+        g_last_half_playing = next_playing;
+        int needed = 1 - next_playing;
+        g_half_filled[needed] = 0;
+        return needed;
     }
 
     return -1;

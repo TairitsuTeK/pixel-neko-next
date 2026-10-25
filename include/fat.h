@@ -1,6 +1,8 @@
 #ifndef FAT_H
 #define FAT_H
 
+#include "blkdev.h"
+
 typedef struct {
     unsigned short bytes_per_sector;
     unsigned char  sectors_per_cluster;
@@ -48,7 +50,7 @@ typedef struct {
     unsigned int   total_clusters;
     unsigned int   root_cluster;
     
-    int            drive_idx;
+    blkdev_t*      dev;
     unsigned int   partition_lba;
     
     unsigned int   cached_fat_sector;
@@ -91,11 +93,11 @@ int fat_create_dir(const char* name);
 int fat_write_file(const char* name, const unsigned char* buf, unsigned int size);
 void fat_flush_all(void);
 
-int fat_mount_volume(int vol_idx, int drive_idx, unsigned int lba);
-int mount_fat(fat_fs_t* vol, int drive_idx, unsigned int lba, unsigned char* boot_sector);
+int fat_mount_dev(char letter, blkdev_t* dev, unsigned int lba);
+int mount_fat(fat_fs_t* vol, blkdev_t* dev, unsigned int lba, unsigned char* boot_sector);
 int fat_get_volume_space(char letter, unsigned int* total_kb, unsigned int* free_kb);
 
-#define MAX_VOLUMES 16
+#define MAX_VOLUMES 26
 extern fat_fs_t g_volumes[MAX_VOLUMES];
 
 #endif

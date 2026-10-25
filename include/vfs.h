@@ -55,6 +55,9 @@ int  vfs_read_file(const char* path, unsigned char* buf, unsigned int max_size);
 int  vfs_write_file(const char* path, const unsigned char* buf, unsigned int size);
 const char* vfs_get_fs_name(part_fs_type_t type);
 int  vfs_get_drive_space(char letter, unsigned int* total_kb, unsigned int* free_kb, int* is_known);
+int  vfs_has_cdrom(void);
+char vfs_get_boot_cdrom_letter(void);
+int  vfs_is_booted_from_cdrom(void);
 
 typedef struct {
     char           path[256];

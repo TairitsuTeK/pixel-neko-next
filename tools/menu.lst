@@ -1,0 +1,7 @@
+timeout 5
+default 0
+
+title Pixel Neko Next
+find --set-root /boot/kernel.elf
+kernel /boot/kernel.elf
+boot

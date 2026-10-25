@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.015)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.000)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -171,6 +171,26 @@
 - **🔇 关机停机画面静音与 DMA 彻底停止**：在退出系统进入经典 Safe to Turn Off 画面及重启前立即切断声卡 DMA 环形缓冲与静音输出，彻底消除关机停机时的硬件残余卡碟循环循环。
 - **💽 Intel H55 (ASUS P7H55-M LE) SATA / IDE Native PCI 驱动器自适应探测**：新增 PCI 存储控制器（Class 0101）全面枚举与 BAR0~BAR3 Native PCI I/O 端口识别，解决现代与近现代主板兼容 IDE 模式下找不到硬盘与光驱的问题。
 - **🏷️ 开机画面与系统内核版本号迭代同步**：开机 Boot Splash 及系统关于视窗全面联动动态版本号，正式迭代至 `Build 2010.010`。
+
+---
+
+## 💾 Build 2011.000 更新特性
+- **💿 从 CD/DVD 光盘一键安装至硬盘 (OS Installer)**：
+  - 从光盘或虚拟机光驱启动时，桌面自适应呈现“Install”安装向导图标；
+  - 自动扫描并智能识别可用 FAT16 / FAT32 目标硬盘分区（清晰展示驱动器号、文件系统类型、总容量与剩余空间）；
+  - 具备二次防误触确认与安全警告对话框；
+  - 核心系统文件一键高速克隆复制至硬盘（`\boot\kernel.elf`、`\grldr`、`\menu.lst`）；
+  - 完整植入 GRUB4DOS 主引导记录（MBR）与分区引导记录（PBR），严格保留原磁盘分区表、NT 磁盘签名及 FAT BPB 参数，确保实体机与虚拟机冷启动即开即用；
+  - 安装完毕后弹出交互式“立即重启”或“继续留用桌面”对话框，支持一键秒级软复位。
+- **💽 彻底修复硬盘冷启动后所有盘文件打不开的故障**：
+  - 重构 FAT 存储子系统驱动器挂载架构，支持 26 个驱动器盘符（A: ~ Z:）直接索引与 `blkdev_t` 块设备直接寻道；
+  - 消除旧版 `fat_init()` 将包含 GRUB4DOS MBR 的启动盘误判为软盘超级引导块导致卷挂载失败的缺陷；
+  - VFS 与 FAT 实现智能按需动态自适应挂载（Auto-Mount Fallback），无论冷启动顺序如何，所有 IDE、SATA、软盘驱动器均可秒级识别与畅快读写。
+- **🎵 CMI8738 实体机声卡播放卡死（Play 00:00）根治与硬件 DMA 防越界**：
+  - 采用物理页对齐分配器为 PCI Bus Master DMA 分配 64KB 物理地址边界严密对齐的物理连续内存页，杜绝在 PCI 突发传输中穿越 64KB 物理回绕边界导致的硬件挂起；
+  - 引入 3 次重试原子读取硬件当前传输计数器，消除实体卡高频抖动造成的瞬态越界读数；
+  - 增加双缓冲轮询软件超时安全看门狗（Watchdog），在实体卡未能及时触发中断或寄存器回绕时自动平滑推移播放指针与填充数据，彻底根除实体卡卡在 `00:00` 的问题；
+  - 默认开启 Line Out / Headphone 双硬件增益通道（0x41/0x42）与绿色孔输出通道，确保实体卡接驳音箱与耳机清晰出声。
 
 ---
 

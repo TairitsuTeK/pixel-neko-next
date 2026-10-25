@@ -45,6 +45,7 @@ C_SOURCES = kernel/kernel.c \
             apps/puzzle.c \
             apps/imageviewer.c \
             apps/audioplayer.c \
+            apps/installer.c \
             fs/fat.c \
             fs/part.c \
             fs/iso9660.c \
@@ -95,6 +96,10 @@ iso/boot/grub/grub.cfg:
 
 $(ISO_FILE): $(KERNEL_ELF) iso/boot/grub/grub.cfg
 	@echo "  ISO   $@"
+	@cp tools/grldr iso/boot/grldr
+	@cp tools/grldr iso/grldr
+	@cp tools/menu.lst iso/boot/menu.lst
+	@cp tools/menu.lst iso/menu.lst
 	$(GRUB_MKRESCUE) -o $@ iso/
 
 run: $(ISO_FILE)
