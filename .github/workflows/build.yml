@@ -35,14 +35,14 @@ jobs:
         VERSION=$(grep "KERNEL_BUILD" include/version.h | head -1 | cut -d '"' -f 2)
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "TAG_NAME=v$VERSION" >> $GITHUB_ENV
-        # 打包源码 zip 作为独立资产
+        # Create the source archive as a release asset.
         git archive --format=zip --output="pixel_neko_source_${VERSION}.zip" HEAD
 
     - name: Step Summary and Diagnostics
       if: always()
       run: |
         if [ -f make.log ]; then
-          echo "### 📋 Build Log Output" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Log Output" >> $GITHUB_STEP_SUMMARY
           echo '```text' >> $GITHUB_STEP_SUMMARY
           tail -n 150 make.log >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -62,16 +62,19 @@ jobs:
         tag_name: ${{ env.TAG_NAME }}
         name: "Pixel Neko Next ${{ env.TAG_NAME }}"
         body: |
-          ## 🐾 Pixel Neko Next ${{ env.TAG_NAME }}
+          ## Pixel Neko Next ${{ env.TAG_NAME }}
 
-          ### 📦 发布内容 / Release Assets:
-          - **可启动 ISO 镜像**：`pixel_neko_build_${{ env.VERSION }}.iso`
-          - **源码压缩包**：`pixel_neko_source_${{ env.VERSION }}.zip`
-          - **构建 Commit**：`${{ github.sha }}`
+          ### Release Assets
+          - Bootable ISO image: `pixel_neko_build_${{ env.VERSION }}.iso`
+          - Source archive: `pixel_neko_source_${{ env.VERSION }}.zip`
+          - Build commit: `${{ github.sha }}`
 
-          ### 💻 虚拟机运行说明:
-          - **QEMU**: `qemu-system-i386 -cdrom pixel_neko_build_${{ env.VERSION }}.iso -m 128M -boot d`
-          - **VirtualBox / VMware**: 创建 32 位 Other/Unknown 操作系统虚拟机，挂载该 ISO 即可开机体验 GUI。
+          ### Running
+          - QEMU: `qemu-system-i386 -cdrom pixel_neko_build_${{ env.VERSION }}.iso -m 128M -boot d`
+          - VirtualBox / VMware: create a 32-bit Other/Unknown virtual machine and boot this ISO.
+
+          ### Audio
+          - Creative CT4810 / Ensoniq ES1371 playback and physical CMI8738 output fixes are included.
         draft: false
         prerelease: false
         files: |
