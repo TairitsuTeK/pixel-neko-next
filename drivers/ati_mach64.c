@@ -35,6 +35,10 @@ static unsigned int mach64_pitch_bytes(int w, int bpp) {
     return (bytes + 7U) & ~7U;
 }
 
+static unsigned int mach64_pitch_units(int w) {
+    return (((unsigned int)w + 7U) & ~7U) / 8U;
+}
+
 static unsigned int mach64_pixel_code(int bpp) {
     if (bpp <= 8) return 2;
     if (bpp == 15) return 3;
@@ -223,8 +227,7 @@ unsigned int ati_mach64_get_vram_size(void) {
 int ati_mach64_supports_native_32bpp(int w, int h) {
     if (!g_ati_active || !g_ati_regs || w <= 0 || h <= 0) return 0;
     if (w & 7) return 0;
-    unsigned int pitch = mach64_pitch_bytes(w, 32);
-    if (pitch / 8 > 0x3FF) return 0;
+    if (mach64_pitch_units(w) > 0x3FF) return 0;
     return (unsigned int)w * (unsigned int)h * 4 <= g_ati_vram_bytes;
 }
 
@@ -237,9 +240,9 @@ int ati_mach64_enable_native_32bpp(int w, int h) {
     unsigned int gen_cntl = mach64_read32(MACH64_CRTC_GEN_CNTL);
     if (off_pitch == 0xFFFFFFFF || gen_cntl == 0xFFFFFFFF) return 0;
 
-    unsigned int pitch_qwords = mach64_pitch_bytes(w, 32) / 8;
+    unsigned int pitch_units = mach64_pitch_units(w);
     off_pitch &= 0x000FFFFF;
-    off_pitch |= (pitch_qwords & 0x3FF) << 22;
+    off_pitch |= (pitch_units & 0x3FF) << 22;
     mach64_write32(MACH64_CRTC_OFF_PITCH, off_pitch);
 
     gen_cntl &= ~MACH64_PIX_WIDTH_MASK;
@@ -268,7 +271,7 @@ void ati_mach64_set_mode_bpp(int w, int h, int bpp) {
 
     ati_mach64_sync();
 
-    unsigned int pitch_units = mach64_pitch_bytes(w, bpp) / 8;
+    unsigned int pitch_units = mach64_pitch_units(w);
     mach64_write32(MACH64_DST_OFF_PITCH, (pitch_units & 0x3FF) << 22);
     mach64_write32(MACH64_SRC_OFF_PITCH, (pitch_units & 0x3FF) << 22);
 

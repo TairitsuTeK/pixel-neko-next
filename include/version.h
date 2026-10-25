@@ -4,7 +4,7 @@
 #define KERNEL_NAME       "TBMK GUI Shell" 
 #define KERNEL_CODENAME   "Pixel Neko" 
 #define KERNEL_VERSION    "C2.0" 
-#define KERNEL_BUILD      "2011.102"
+#define KERNEL_BUILD      "2011.110"
 #define KERNEL_COPYRIGHT  "(C) 2026 Tairitsu_tty" 
 #define KERNEL_AUTHOR     "Tairitsu_tty" 
 #define VER_STRING2       KERNEL_BUILD 

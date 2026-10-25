@@ -5,6 +5,7 @@
 
 #define ENSONIQ_VENDOR_ID       0x1274
 #define ES1371_DEV_ID           0x1371
+#define ES1371_COMPAT_DEV_ID    0x0371
 #define CT5880_DEV_ID           0x5880
 #define CREATIVE_VENDOR_ID      0x1102
 #define EV1938_DEV_ID           0x8938

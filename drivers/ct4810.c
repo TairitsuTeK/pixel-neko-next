@@ -226,6 +226,16 @@ static void ct_program_src_rate(unsigned short base, int rate) {
     ct_write32(ES_REG_SRC, r);
 }
 
+static int ct_device_supported(unsigned short vendor, unsigned short device) {
+    if (vendor == ENSONIQ_VENDOR_ID) {
+        return device == ES1371_DEV_ID ||
+               device == ES1371_COMPAT_DEV_ID ||
+               device == CT5880_DEV_ID;
+    }
+    return vendor == CREATIVE_VENDOR_ID &&
+           (device == CT5880_DEV_ID || device == EV1938_DEV_ID);
+}
+
 static int ct_needs_ac97_reset_quirk(unsigned short vendor,
                                      unsigned short device,
                                      unsigned char revision) {
@@ -233,7 +243,7 @@ static int ct_needs_ac97_reset_quirk(unsigned short vendor,
     if (device == CT5880_DEV_ID) {
         return revision == 0x02 || revision == 0x03 || revision == 0x04;
     }
-    if (device == ES1371_DEV_ID) {
+    if (device == ES1371_DEV_ID || device == ES1371_COMPAT_DEV_ID) {
         return revision == 0x07 || revision == 0x08;
     }
     return 0;
@@ -264,16 +274,16 @@ int ct4810_init(void) {
                 vendor = (unsigned short)(id & 0xFFFF);
                 device = (unsigned short)(id >> 16);
 
-                if (!((vendor == ENSONIQ_VENDOR_ID &&
-                       (device == ES1371_DEV_ID || device == CT5880_DEV_ID)) ||
-                      (vendor == CREATIVE_VENDOR_ID &&
-                       (device == CT5880_DEV_ID || device == EV1938_DEV_ID)))) {
-                    continue;
-                }
+                if (!ct_device_supported(vendor, device)) continue;
 
-                unsigned int bar0 = pci_read_config(bus, dev, func, 0x10);
-                if (!(bar0 & 1)) continue;
-                g_ct_io_base = (unsigned short)(bar0 & 0xFFFC);
+                for (int bar = 0; bar < 6; bar++) {
+                    unsigned int value =
+                        pci_read_config(bus, dev, func, 0x10 + bar * 4);
+                    if (value && value != 0xFFFFFFFFU && (value & 1)) {
+                        g_ct_io_base = (unsigned short)(value & 0xFFFC);
+                        break;
+                    }
+                }
                 if (!g_ct_io_base) continue;
 
                 unsigned int command = pci_read_config(bus, dev, func, 0x04);
@@ -293,6 +303,8 @@ int ct4810_init(void) {
                     g_ct_chip_name = "Creative CT4810 (CT5880) PCI";
                 } else if (g_ct_is_ev1938) {
                     g_ct_chip_name = "Creative AudioPCI (EV1938) PCI";
+                } else if (device == ES1371_COMPAT_DEV_ID) {
+                    g_ct_chip_name = "Ensoniq AudioPCI (CT4810 compatible) PCI";
                 } else {
                     g_ct_chip_name = "Ensoniq AudioPCI (ES1371) PCI";
                 }
