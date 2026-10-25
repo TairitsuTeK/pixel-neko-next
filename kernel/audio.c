@@ -419,14 +419,14 @@ int audio_play_file(const char* filepath) {
 
 void audio_pause(void) {
     if (g_audio_state == AUDIO_STATE_PLAYING) {
-        cmi8738_stop_dma();
+        cmi8738_pause_dma(1);
         g_audio_state = AUDIO_STATE_PAUSED;
     }
 }
 
 void audio_resume(void) {
     if (g_audio_state == AUDIO_STATE_PAUSED) {
-        cmi8738_start_dma();
+        cmi8738_pause_dma(0);
         g_audio_state = AUDIO_STATE_PLAYING;
     }
 }

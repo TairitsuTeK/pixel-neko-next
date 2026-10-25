@@ -10,6 +10,9 @@ static unsigned int g_dma_phys = 0;
 static int g_dma_running = 0;
 static int g_last_half_playing = -1;
 static int g_half_filled[2] = {0, 0};
+static int g_last_toggle_tick = 0;
+static unsigned int g_last_seen_frame = 0xFFFFFFFF;
+static int g_hw_reg_moving = 0;
 
 static inline unsigned int cmi_read32(unsigned int reg) {
     if (!g_cmi_io_base) return 0;
@@ -90,6 +93,12 @@ int cmi8738_init(void) {
                     unsigned int cmd = pci_read_config(bus, dev, func, 0x04);
                     pci_write_config(bus, dev, func, 0x04, cmd | 0x07);
 
+                    // Configure PCI Latency Timer (offset 0x0C, bits 15:8): ensure >= 0x40 (64 clocks)
+                    unsigned int lat = pci_read_config(bus, dev, func, 0x0C);
+                    if ((lat & 0xFF00) < 0x2000) {
+                        pci_write_config(bus, dev, func, 0x0C, (lat & 0xFFFF00FF) | 0x4000);
+                    }
+
                     g_cmi_present = 1;
                     break;
                 }
@@ -131,6 +140,7 @@ int cmi8738_init(void) {
 
     // 3. Reset Channel 0 and configure FUNCTRL0:
     // Bit 0 (CMI_CHADC0) = 0 -> PLAYBACK / DAC mode (Crucial! 1 = capture/record from ADC)
+    // Bit 1 (CMI_CHADC1) = 1 -> CAPTURE / ADC mode for Channel 1 (ALSA default)
     // Bit 2 (CMI_PAUSE0) = 0 -> Unpaused
     // Bit 16 (CMI_CHEN0) = 0 -> DMA disabled initially
     unsigned int f0 = cmi_read32(CMI_REG_FUNCTRL0);
@@ -139,6 +149,7 @@ int cmi8738_init(void) {
     for (volatile int d = 0; d < 2000; d++);
     f0 &= ~CMI_RST_CH0;
     f0 &= ~CMI_CHADC0; // 0 = Playback / DAC mode
+    f0 |= CMI_CHADC1;  // 1 = Capture mode for Channel 1
     f0 &= ~CMI_PAUSE0; // 0 = Unpaused
     f0 &= ~CMI_CHEN0;  // 0 = Stopped
     cmi_write32(CMI_REG_FUNCTRL0, f0);
@@ -147,20 +158,24 @@ int cmi8738_init(void) {
     // - Clear CM_PWD (bit 31 = 0: normal power)
     // - Clear CM_RESET (bit 30 = 0: running)
     // - Clear CM_XCHGDAC (bit 22 = 0: Front = CH0, green jack!)
-    // - Clear CM_ENDBDAC (bit 23 = 0: Single DAC playback mode)
-    // - Clear bits 29:28 (Internal test monitor signals)
+    // - Set CM_ENDBDAC (bit 23 = 1: Dual DAC mode, enables DAC to output!)
+    // - Set CM_TXVX (bit 27 = 1: PCI bus master burst timing for non-VX chipsets)
     // - Set CM_N4SPK3D (bit 26 = 1: Copy Front to Rear / 4-Speaker, so both green & rear jacks output)
     unsigned int misc = cmi_read32(CMI_REG_MISC_CTRL);
-    misc &= ~(CMI_MISC_PWD | CMI_MISC_RESET | CMI_MISC_XCHGDAC | CMI_MISC_ENDBDAC | (3 << 28));
-    misc |= CMI_MISC_N4SPK3D;
+    misc &= ~(CMI_MISC_PWD | CMI_MISC_RESET | CMI_MISC_XCHGDAC | (3 << 28));
+    misc |= (CMI_MISC_ENDBDAC | CMI_MISC_N4SPK3D | CMI_MISC_TXVX);
     cmi_write32(CMI_REG_MISC_CTRL, misc);
 
-    // 5. Ensure CM_NXCHG = 0 in LEGACY_CTRL
+    // 5. Extended misc initialization magic for CMI8738 (ALSA cmipci.c):
+    outb(g_cmi_io_base + CMI_REG_EXT_MISC, 0x20);     // Port 0x90
+    outb(g_cmi_io_base + CMI_REG_EXT_MISC + 1, 0x09); // Port 0x91
+
+    // 6. Ensure CM_NXCHG = 0 in LEGACY_CTRL
     unsigned int leg = cmi_read32(CMI_REG_LEGACY_CTRL);
     leg &= ~0x80000000;
     cmi_write32(CMI_REG_LEGACY_CTRL, leg);
 
-    // 6. Configure FUNCTRL1:
+    // 7. Configure FUNCTRL1:
     // Default 44.1 kHz (DSFC = 011b, ASFC = 011b) AND Bus Master Request (CMI_BREQ, bit 4)!
     // All SPDIF bits are cleared to 0 (analog DAC mode)
     unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
@@ -169,33 +184,34 @@ int cmi8738_init(void) {
     f1 |= CMI_BREQ;                              // Bus Master Request
     cmi_write32(CMI_REG_FUNCTRL1, f1);
 
-    // 7. Format: 16-bit Stereo (CH0FMT = 11b in CHFORMAT)
+    // 8. Format: 16-bit Stereo (CH0FMT = 11b in CHFORMAT) and CM_SETLAT48 (0x00800000)
     unsigned int fmt = cmi_read32(CMI_REG_CHFORMAT);
     fmt &= ~0x03;
     fmt |= 0x03;
+    fmt |= 0x00800000; // CM_SETLAT48
     cmi_write32(CMI_REG_CHFORMAT, fmt);
 
-    // 8. Native MIXER1 (0x24) and MIXER2 (0x25):
+    // 9. Native MIXER1 (0x24) and MIXER2 (0x25):
     // Writing 0x00 clears CMI_MIXER1_WSMUTE (0x40) to unmute PCM wave playback!
     outb(g_cmi_io_base + CMI_REG_MIXER1, 0x00);
     outb(g_cmi_io_base + CMI_REG_MIXER2, 0x00);
 
-    // 9. Reset SB16 Mixer
+    // 10. Reset SB16 Mixer
     cmi_write_mixer(0x00, 0x00);
 
-    // 10. Enable all output switches in SB16 MIXER_OUTMIX (0x3C)
+    // 11. Enable all output switches in SB16 MIXER_OUTMIX (0x3C)
     cmi_write_mixer(0x3C, 0x1F);
 
-    // 11. Unmute Speaker and Phone in extended mixer register 0xF0
+    // 12. Unmute Speaker and Phone in extended mixer register 0xF0
     unsigned char ext = cmi_read_mixer(0xF0);
     ext &= ~0x18; // Clear bit 3 (CM_VSPKM: Speaker mute) and bit 4 (CM_VPHOM: Phone mute)
     cmi_write_mixer(0xF0, ext);
 
-    // 12. Set DMA Base Address and Frame Counts
+    // 13. Set DMA Base Address and Frame Counts
     cmi_write32(CMI_REG_CH0_FRAME1, g_dma_phys);
     cmi_write32(CMI_REG_CH0_FRAME2, ((unsigned int)0x1FFF << 16) | 0x3FFF);
 
-    // 13. Setup Mixer: Master volume and Voice volume to 90%
+    // 14. Setup Mixer: Master volume and Voice volume to 90%
     cmi8738_set_volume(90, 90);
 
     return 0;
@@ -245,46 +261,52 @@ void cmi8738_set_format(int rate, int bits, int stereo) {
     unsigned int fmt = cmi_read32(CMI_REG_CHFORMAT);
     fmt &= ~0x03;
     fmt |= chfmt;
+    fmt |= 0x00800000; // Preserve CM_SETLAT48
     cmi_write32(CMI_REG_CHFORMAT, fmt);
 }
 
 void cmi8738_start_dma(void) {
     if (!g_cmi_present || !g_cmi_io_base) return;
 
-    g_last_half_playing = -1;
+    extern volatile int global_tick;
 
-    // Re-program base address and buffer size
-    cmi_write32(CMI_REG_CH0_FRAME1, g_dma_phys);
-    cmi_write32(CMI_REG_CH0_FRAME2, ((unsigned int)0x1FFF << 16) | 0x3FFF);
-
-    // Ensure Bus Master Request (CMI_BREQ) is enabled in FUNCTRL1
-    unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
-    if (!(f1 & CMI_BREQ)) {
-        cmi_write32(CMI_REG_FUNCTRL1, f1 | CMI_BREQ);
-    }
-
-    // Ensure PCM Wave output is unmuted in MIXER1 (0x24)
-    unsigned char m1 = inb(g_cmi_io_base + CMI_REG_MIXER1);
-    if (m1 & CMI_MIXER1_WSMUTE) {
-        outb(g_cmi_io_base + CMI_REG_MIXER1, m1 & ~CMI_MIXER1_WSMUTE);
-    }
-
-    // Reset Channel 0 before starting
+    // 1. Reset Channel 0 FIRST before setting frame/buffer registers
     unsigned int f0 = cmi_read32(CMI_REG_FUNCTRL0);
     f0 |= CMI_RST_CH0;
     cmi_write32(CMI_REG_FUNCTRL0, f0);
     for (volatile int d = 0; d < 500; d++);
     f0 &= ~CMI_RST_CH0;
+    f0 &= ~(CMI_CHADC0 | CMI_PAUSE0);
+    cmi_write32(CMI_REG_FUNCTRL0, f0);
+    for (volatile int d = 0; d < 500; d++);
 
-    // Configure Channel 0:
-    // CMI_CHADC0 (bit 0) = 0 -> PLAYBACK / DAC mode!
-    // CMI_PAUSE0 (bit 2) = 0 -> Unpaused
-    // CMI_CHEN0  (bit 16) = 1 -> Enable DMA
+    // 2. Program DMA Base Address (CH0_FRAME1) and Buffer Sizes (CH0_FRAME2)
+    cmi_write32(CMI_REG_CH0_FRAME1, g_dma_phys);
+    cmi_write32(CMI_REG_CH0_FRAME2, ((unsigned int)0x1FFF << 16) | 0x3FFF);
+
+    // 3. Ensure Bus Master Request (CMI_BREQ) is enabled in FUNCTRL1
+    unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
+    if (!(f1 & CMI_BREQ)) {
+        cmi_write32(CMI_REG_FUNCTRL1, f1 | CMI_BREQ);
+    }
+
+    // 4. Ensure PCM Wave output is unmuted in MIXER1 (0x24)
+    unsigned char m1 = inb(g_cmi_io_base + CMI_REG_MIXER1);
+    if (m1 & CMI_MIXER1_WSMUTE) {
+        outb(g_cmi_io_base + CMI_REG_MIXER1, m1 & ~CMI_MIXER1_WSMUTE);
+    }
+
+    // 5. Enable DMA on Channel 0 (CHEN0)
+    f0 = cmi_read32(CMI_REG_FUNCTRL0);
     f0 &= ~(CMI_CHADC0 | CMI_PAUSE0);
     f0 |= CMI_CHEN0;
     cmi_write32(CMI_REG_FUNCTRL0, f0);
 
     g_dma_running = 1;
+    g_last_half_playing = 0; // Hardware begins playing from Half 0
+    g_last_toggle_tick = global_tick;
+    g_last_seen_frame = 0xFFFFFFFF;
+    g_hw_reg_moving = 0;
 }
 
 void cmi8738_stop_dma(void) {
@@ -302,6 +324,9 @@ void cmi8738_stop_dma(void) {
 
     g_dma_running = 0;
     g_last_half_playing = -1;
+    g_last_toggle_tick = 0;
+    g_last_seen_frame = 0xFFFFFFFF;
+    g_hw_reg_moving = 0;
     g_half_filled[0] = 0;
     g_half_filled[1] = 0;
 
@@ -375,7 +400,7 @@ unsigned int cmi8738_get_dma_frame_pos(void) {
         if (rem < CMI_DMA_TOTAL_FRAMES) break;
     }
     if (rem >= CMI_DMA_TOTAL_FRAMES) rem = CMI_DMA_TOTAL_FRAMES - 1;
-    unsigned int pos = (CMI_DMA_TOTAL_FRAMES - 1 - rem) & (CMI_DMA_TOTAL_FRAMES - 1);
+    unsigned int pos = (CMI_DMA_TOTAL_FRAMES - (rem + 1)) & (CMI_DMA_TOTAL_FRAMES - 1);
     return pos;
 }
 
@@ -416,41 +441,58 @@ int cmi8738_poll_half_needed(void) {
     if (!g_cmi_present || !g_cmi_io_base || !g_dma_running) return -1;
 
     extern volatile int global_tick;
-    static int last_toggle_tick = 0;
 
     unsigned int frame = cmi8738_get_dma_frame_pos();
+
+    // Check if the hardware frame register is actively advancing
+    if (frame != g_last_seen_frame) {
+        g_last_seen_frame = frame;
+        g_hw_reg_moving = 1;
+    }
+
     // 0..8191 -> Hardware is playing Half 0. Half 1 is free to fill!
     // 8192..16383 -> Hardware is playing Half 1. Half 0 is free to fill!
     int current_playing_half = (frame < CMI_DMA_HALF_FRAMES) ? 0 : 1;
 
-    if (current_playing_half != g_last_half_playing) {
+    if (g_last_half_playing < 0) {
         g_last_half_playing = current_playing_half;
-        last_toggle_tick = global_tick;
-        // The *other* half has finished playing and needs filling!
-        int needed_half = 1 - current_playing_half;
-        g_half_filled[needed_half] = 0; // Mark ready for new data
-        return needed_half;
+        g_last_toggle_tick = global_tick;
     }
 
-    // Check if the other half was not filled yet
-    int other_half = 1 - current_playing_half;
-    if (!g_half_filled[other_half]) {
-        return other_half;
+    if (g_hw_reg_moving) {
+        // Hardware register is functioning properly!
+        if (current_playing_half != g_last_half_playing) {
+            g_last_half_playing = current_playing_half;
+            g_last_toggle_tick = global_tick;
+            // The *other* half has finished playing and needs filling!
+            int needed_half = 1 - current_playing_half;
+            g_half_filled[needed_half] = 0;
+            return needed_half;
+        }
+
+        // Check if the other half was not filled yet
+        int other_half = 1 - current_playing_half;
+        if (!g_half_filled[other_half]) {
+            return other_half;
+        }
+
+        return -1;
     }
 
-    // Software timeout watchdog: if hardware register fails to update on physical card
-    // after expected half-buffer time (at 44.1k/48k: 8192 frames is ~180ms, 18-20 ticks at 100Hz),
-    // force cycle so sound and position timer never stall
-    if (last_toggle_tick == 0) last_toggle_tick = global_tick;
-    if ((global_tick - last_toggle_tick) >= 19) {
-        last_toggle_tick = global_tick;
-        int cur = (g_last_half_playing >= 0) ? g_last_half_playing : 0;
-        int next_playing = 1 - cur;
-        g_last_half_playing = next_playing;
-        int needed = 1 - next_playing;
+    // Fallback ONLY when hardware register is completely stuck:
+    // Pace strictly by system timer (8192 frames at 44.1k is ~185ms, 18-19 ticks at 100Hz)
+    if (g_last_toggle_tick == 0) g_last_toggle_tick = global_tick;
+    if ((global_tick - g_last_toggle_tick) >= 19) {
+        g_last_toggle_tick = global_tick;
+        int needed = g_last_half_playing; // The half that just completed
+        g_last_half_playing = 1 - g_last_half_playing;
         g_half_filled[needed] = 0;
         return needed;
     }
+
+    // Check if either half has never been filled
+    if (!g_half_filled[0]) return 0;
+    if (!g_half_filled[1]) return 1;
 
     return -1;
 }

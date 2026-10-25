@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.003)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.004)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -171,6 +171,17 @@
 - **🔇 关机停机画面静音与 DMA 彻底停止**：在退出系统进入经典 Safe to Turn Off 画面及重启前立即切断声卡 DMA 环形缓冲与静音输出，彻底消除关机停机时的硬件残余卡碟循环循环。
 - **💽 Intel H55 (ASUS P7H55-M LE) SATA / IDE Native PCI 驱动器自适应探测**：新增 PCI 存储控制器（Class 0101）全面枚举与 BAR0~BAR3 Native PCI I/O 端口识别，解决现代与近现代主板兼容 IDE 模式下找不到硬盘与光驱的问题。
 - **🏷️ 开机画面与系统内核版本号迭代同步**：开机 Boot Splash 及系统关于视窗全面联动动态版本号，正式迭代至 `Build 2010.010`。
+
+---
+
+## 💾 Build 2011.004 更新特性
+- **🎵 CMI8738 实体机声卡无声与时钟 2 倍速飞逝彻底根治**：
+  - **DMA 启动时序与寄存器保护**：消除在配置 `CH0_FRAME1`（物理内存基址）与 `CH0_FRAME2`（样本帧计数器）之后意外复位通道导致 DMA 寄存器被清零的关键缺陷，调整为先执行通道软复位，再写入物理基地址与帧计数器，确保物理 DMA 真实读取并输出 PCM 数据；
+  - **输出通道与总线主控兼容**：开启硬件 Dual DAC 模式（`CMI_MISC_ENDBDAC`）与非 VX 芯片组 PCI 总线主控突发时序兼容（`CMI_MISC_TXVX`），写入 `EXT_MISC` 扩展路由寄存器，配置 PCI Latency Timer 至少 64 周期，确保实体机模拟输出插孔（绿色孔与后置孔）正常出声；
+  - **重构半缓冲轮询状态机**：增加硬件计数器活跃度动态感知，在计数器正常跑动时采用严格的乒乓翻转逻辑，彻底消除实体机超时看门狗与帧状态冲突引发的“现实 1 秒、播放器快进 2 秒”的倍速倒带现象；在计数器卡死时保持精准 1x 原速推进。
+- **🌄 自定义桌面壁纸重启后变灰故障修复**：
+  - **开机壁纸加载时序修正**：修复开机初始化时序中窗口管理器 `wm_init()` 内部调用 `wallpaper_init()` 导致 `settings_load()` 已加载到内存的壁纸指针被覆写清零的致命缺陷；
+  - **配置加载持久化保留**：将壁纸子系统清空逻辑前置于配置读取之前，消除开机读图耗时后桌面依然回退默认纯灰背景的问题，实现重启后用户壁纸与排布方式 100% 完美呈现。
 
 ---
 

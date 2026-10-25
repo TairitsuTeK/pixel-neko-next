@@ -689,7 +689,7 @@ void wm_init(void){
         desk_icon_x[i] = screen_w - 60 - col * 64;
         desk_icon_y[i] = 30 + row * 52;
     }
-    calc_init();cpanel_init();fm_init();sysinfo_init();puzzle_init();imageviewer_init();audioplayer_init();installer_init();wallpaper_init();redraw=1;
+    calc_init();cpanel_init();fm_init();sysinfo_init();puzzle_init();imageviewer_init();audioplayer_init();installer_init();redraw=1;
 }
 
 void wm_draw(unsigned char* v){

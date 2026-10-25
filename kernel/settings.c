@@ -34,6 +34,7 @@ static int parse_int(const char* s) {
 }
 
 void settings_init(void) {
+    wallpaper_init();
     g_saved_res_w = screen_w > 0 ? screen_w : 800;
     g_saved_res_h = screen_h > 0 ? screen_h : 600;
     g_saved_bpp = screen_bpp > 0 ? screen_bpp : 16;

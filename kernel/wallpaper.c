@@ -9,12 +9,8 @@ static unsigned int* g_wp_pixels = 0;
 static unsigned int g_wp_pages = 0;
 
 void wallpaper_init(void) {
-    g_wp_active = 0;
+    wallpaper_clear();
     g_wp_mode = WP_MODE_FILL;
-    g_wp_width = 0;
-    g_wp_height = 0;
-    g_wp_pixels = 0;
-    g_wp_pages = 0;
 }
 
 int wallpaper_is_active(void) {
