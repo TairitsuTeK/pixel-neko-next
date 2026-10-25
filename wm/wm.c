@@ -716,8 +716,7 @@ void wm_draw(unsigned char* v){
                 }
             }
         }
-        int is_cd_boot = vfs_is_booted_from_cdrom();
-        int num_icons = is_cd_boot ? 11 : 10;
+        int num_icons = 11;
         for (int i=0; i<num_icons; i++) {
             if (desk_icon_x[i] == 0 || desk_icon_x[i] > screen_w - 32) desk_icon_x[i] = screen_w - 60 - (i/6)*64;
             if (desk_icon_y[i] == 0 || desk_icon_y[i] > screen_h - 32) desk_icon_y[i] = 30 + (i%6)*52;
@@ -732,9 +731,7 @@ void wm_draw(unsigned char* v){
         icon(v,desk_icon_x[7],desk_icon_y[7],8,"Puzzle", last_click_icon == 7);
         icon(v,desk_icon_x[8],desk_icon_y[8],9,"Viewer", last_click_icon == 8);
         icon(v,desk_icon_x[9],desk_icon_y[9],10,"Player", last_click_icon == 9);
-        if (is_cd_boot) {
-            icon(v,desk_icon_x[10],desk_icon_y[10],11,"Install", last_click_icon == 10);
-        }
+        icon(v,desk_icon_x[10],desk_icon_y[10],11,"Install", last_click_icon == 10);
         draw_all(v);
         draw_menubar(v);
         if(power_confirm) {  draw_power_dialog(v); }
@@ -967,7 +964,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     
     // Desktop icon press: record press and wait to see if it becomes a drag or a click
     if (mb_press && !dragging && !resizing && !power_confirm && !mip && !clp && !okp && icon_dragging == -1) {
-        int total_icons = vfs_is_booted_from_cdrom() ? 11 : 10;
+        int total_icons = 11;
         int clicked_icon = -1;
         for (int i = total_icons - 1; i >= 0; i--) {
             if (in_icon(mx, my, i)) {

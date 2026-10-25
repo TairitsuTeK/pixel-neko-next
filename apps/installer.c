@@ -14,15 +14,18 @@ extern int insv;
 
 typedef enum {
     STEP_SELECT = 0,
-    STEP_CONFIRM = 1,
-    STEP_PROGRESS = 2,
-    STEP_COMPLETE = 3
+    STEP_OVERWRITE = 1,
+    STEP_CONFIRM = 2,
+    STEP_PROGRESS = 3,
+    STEP_COMPLETE = 4
 } install_step_t;
 
 static install_step_t g_step = STEP_SELECT;
 static int g_selected_idx = 0;
 static char g_target_letter = 'C';
 static int g_install_error = 0;
+static char g_existing_desc[64] = "";
+static int g_has_existing_files = 0;
 
 typedef struct {
     char letter;
@@ -93,6 +96,79 @@ static void on_kernel_write_progress(unsigned int written, unsigned int total) {
     update_progress_ui(pct, "Copying system kernel...", num_buf);
 }
 
+static int check_existing_boot_files(char target_letter, char* desc, int max_len) {
+    if (desc && max_len > 0) desc[0] = '\0';
+    int found_count = 0;
+    vfs_dirent_t de;
+    char p[32];
+
+    // Check \boot\kernel.elf or \kernel.elf
+    p[0] = target_letter; p[1] = ':'; p[2] = '\\'; p[3] = 'b'; p[4] = 'o'; p[5] = 'o'; p[6] = 't';
+    p[7] = '\\'; p[8] = 'k'; p[9] = 'e'; p[10] = 'r'; p[11] = 'n'; p[12] = 'e'; p[13] = 'l';
+    p[14] = '.'; p[15] = 'e'; p[16] = 'l'; p[17] = 'f'; p[18] = '\0';
+    if (vfs_find_file(p, &de) == 0) {
+        if (found_count++ > 0 && desc) str_cat_inst(desc, ", ");
+        if (desc) str_cat_inst(desc, "kernel.elf");
+    } else {
+        p[0] = target_letter; p[1] = ':'; p[2] = '\\'; p[3] = 'k'; p[4] = 'e'; p[5] = 'r';
+        p[6] = 'n'; p[7] = 'e'; p[8] = 'l'; p[9] = '.'; p[10] = 'e'; p[11] = 'l'; p[12] = 'f'; p[13] = '\0';
+        if (vfs_find_file(p, &de) == 0) {
+            if (found_count++ > 0 && desc) str_cat_inst(desc, ", ");
+            if (desc) str_cat_inst(desc, "kernel.elf");
+        }
+    }
+
+    // Check \grldr or \boot\grldr
+    p[0] = target_letter; p[1] = ':'; p[2] = '\\'; p[3] = 'g'; p[4] = 'r'; p[5] = 'l';
+    p[6] = 'd'; p[7] = 'r'; p[8] = '\0';
+    if (vfs_find_file(p, &de) == 0) {
+        if (found_count++ > 0 && desc) str_cat_inst(desc, ", ");
+        if (desc) str_cat_inst(desc, "grldr");
+    } else {
+        p[0] = target_letter; p[1] = ':'; p[2] = '\\'; p[3] = 'b'; p[4] = 'o'; p[5] = 'o';
+        p[6] = 't'; p[7] = '\\'; p[8] = 'g'; p[9] = 'r'; p[10] = 'l'; p[11] = 'd'; p[12] = 'r'; p[13] = '\0';
+        if (vfs_find_file(p, &de) == 0) {
+            if (found_count++ > 0 && desc) str_cat_inst(desc, ", ");
+            if (desc) str_cat_inst(desc, "grldr");
+        }
+    }
+
+    // Check \menu.lst or \boot\menu.lst
+    p[0] = target_letter; p[1] = ':'; p[2] = '\\'; p[3] = 'm'; p[4] = 'e'; p[5] = 'n';
+    p[6] = 'u'; p[7] = '.'; p[8] = 'l'; p[9] = 's'; p[10] = 't'; p[11] = '\0';
+    if (vfs_find_file(p, &de) == 0) {
+        if (found_count++ > 0 && desc) str_cat_inst(desc, ", ");
+        if (desc) str_cat_inst(desc, "menu.lst");
+    } else {
+        p[0] = target_letter; p[1] = ':'; p[2] = '\\'; p[3] = 'b'; p[4] = 'o'; p[5] = 'o';
+        p[6] = 't'; p[7] = '\\'; p[8] = 'm'; p[9] = 'e'; p[10] = 'n'; p[11] = 'u'; p[12] = '.';
+        p[13] = 'l'; p[14] = 's'; p[15] = 't'; p[16] = '\0';
+        if (vfs_find_file(p, &de) == 0) {
+            if (found_count++ > 0 && desc) str_cat_inst(desc, ", ");
+            if (desc) str_cat_inst(desc, "menu.lst");
+        }
+    }
+
+    // Fallback check for Windows bootmgr/ntldr
+    if (found_count == 0) {
+        p[0] = target_letter; p[1] = ':'; p[2] = '\\'; p[3] = 'b'; p[4] = 'o'; p[5] = 'o';
+        p[6] = 't'; p[7] = 'm'; p[8] = 'g'; p[9] = 'r'; p[10] = '\0';
+        if (vfs_find_file(p, &de) == 0) {
+            if (found_count++ > 0 && desc) str_cat_inst(desc, ", ");
+            if (desc) str_cat_inst(desc, "bootmgr");
+        } else {
+            p[0] = target_letter; p[1] = ':'; p[2] = '\\'; p[3] = 'n'; p[4] = 't'; p[5] = 'l';
+            p[6] = 'd'; p[7] = 'r'; p[8] = '\0';
+            if (vfs_find_file(p, &de) == 0) {
+                if (found_count++ > 0 && desc) str_cat_inst(desc, ", ");
+                if (desc) str_cat_inst(desc, "ntldr");
+            }
+        }
+    }
+
+    return found_count;
+}
+
 static void scan_targets(void) {
     g_part_count = 0;
     for (int i = 0; i < 26; i++) {
@@ -128,6 +204,8 @@ void installer_init(void) {
     g_step = STEP_SELECT;
     g_selected_idx = 0;
     g_install_error = 0;
+    g_has_existing_files = 0;
+    g_existing_desc[0] = '\0';
     scan_targets();
 }
 
@@ -445,6 +523,44 @@ void installer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         }
         draw_btn(v, wx + ww - 180, wy + wh - 30, 78, 22, "Cancel", 7, 0);
 
+    } else if (g_step == STEP_OVERWRITE) {
+        font_draw_text(v, wx + 12, wy + 26, "Warning: Existing Boot Files Detected", 12);
+
+        char w_msg[64];
+        w_msg[0] = 'D'; w_msg[1] = 'r'; w_msg[2] = 'i'; w_msg[3] = 'v'; w_msg[4] = 'e'; w_msg[5] = ' ';
+        w_msg[6] = g_target_letter; w_msg[7] = ':'; w_msg[8] = '\\'; w_msg[9] = ' ';
+        w_msg[10] = 'a'; w_msg[11] = 'l'; w_msg[12] = 'r'; w_msg[13] = 'e'; w_msg[14] = 'a'; w_msg[15] = 'd';
+        w_msg[16] = 'y'; w_msg[17] = ' '; w_msg[18] = 'c'; w_msg[19] = 'o'; w_msg[20] = 'n'; w_msg[21] = 't';
+        w_msg[22] = 'a'; w_msg[23] = 'i'; w_msg[24] = 'n'; w_msg[25] = 's'; w_msg[26] = ':'; w_msg[27] = '\0';
+        font_draw_text(v, wx + 12, wy + 48, w_msg, 0);
+
+        // Detected files inset box
+        int bx = wx + 12, by = wy + 66, bw = ww - 24, bh = 34;
+        for (int y = by; y < by + bh; y++) {
+            for (int x = bx; x < bx + bw; x++) {
+                PUT_PIXEL(v, x, y, 15);
+            }
+        }
+        for (int x = bx; x < bx + bw; x++) {
+            PUT_PIXEL(v, x, by, 8);
+            PUT_PIXEL(v, x, by + bh - 1, 7);
+        }
+        for (int y = by; y < by + bh; y++) {
+            PUT_PIXEL(v, bx, y, 8);
+            PUT_PIXEL(v, bx + bw - 1, y, 7);
+        }
+        font_draw_text(v, bx + 8, by + 6, "Found: ", 8);
+        font_draw_text(v, bx + 56, by + 6, g_existing_desc, 0);
+        font_draw_text(v, bx + 8, by + 19, "Existing bootloader or OS files exist.", 8);
+
+        font_draw_text(v, wx + 12, wy + 110, "Proceeding will rewrite MBR, PBR,", 0);
+        font_draw_text(v, wx + 12, wy + 126, "and replace all boot & kernel files.", 0);
+        font_draw_text(v, wx + 12, wy + 146, "Do you want to overwrite and install?", 12);
+
+        draw_btn(v, wx + ww - 125, wy + wh - 30, 115, 22, "Overwrite Now", 7, 0);
+        draw_btn(v, wx + ww - 210, wy + wh - 30, 75, 22, "< Back", 7, 0);
+        draw_btn(v, wx + 12, wy + wh - 30, 68, 22, "Cancel", 7, 0);
+
     } else if (g_step == STEP_CONFIRM) {
         font_draw_text(v, wx + 12, wy + 26, "Confirm OS Installation", 0);
 
@@ -568,7 +684,12 @@ void installer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, i
         if (mx >= nbx && mx < nbx + 78 && my >= nby && my < nby + 22) {
             if (g_part_count > 0 && g_selected_idx >= 0 && g_selected_idx < g_part_count) {
                 g_target_letter = g_parts[g_selected_idx].letter;
-                g_step = STEP_CONFIRM;
+                g_has_existing_files = check_existing_boot_files(g_target_letter, g_existing_desc, sizeof(g_existing_desc));
+                if (g_has_existing_files > 0) {
+                    g_step = STEP_OVERWRITE;
+                } else {
+                    g_step = STEP_CONFIRM;
+                }
                 redraw = 1;
             }
             return;
@@ -582,10 +703,46 @@ void installer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, i
             return;
         }
 
+    } else if (g_step == STEP_OVERWRITE) {
+        // Overwrite Now button
+        int obx = wx + ww - 125, oby = wy + wh - 30;
+        if (mx >= obx && mx < obx + 115 && my >= oby && my < oby + 22) {
+            g_step = STEP_PROGRESS;
+            update_progress_ui(0, "Starting installation...", "Overwriting boot files and disk MBR");
+            int err = do_installation(g_target_letter);
+            g_install_error = err;
+            g_step = STEP_COMPLETE;
+            redraw = 1;
+            return;
+        }
+
+        // < Back button
+        int bbx = wx + ww - 210, bby = wy + wh - 30;
+        if (mx >= bbx && mx < bbx + 75 && my >= bby && my < bby + 22) {
+            g_step = STEP_SELECT;
+            scan_targets();
+            redraw = 1;
+            return;
+        }
+
+        // Cancel button
+        int cbx = wx + 12, cby = wy + wh - 30;
+        if (mx >= cbx && mx < cbx + 68 && my >= cby && my < cby + 22) {
+            insv = 0;
+            redraw = 1;
+            return;
+        }
+
     } else if (g_step == STEP_CONFIRM) {
         // Install Now button
         int ibx = wx + ww - 100, iby = wy + wh - 30;
         if (mx >= ibx && mx < ibx + 88 && my >= iby && my < iby + 22) {
+            g_has_existing_files = check_existing_boot_files(g_target_letter, g_existing_desc, sizeof(g_existing_desc));
+            if (g_has_existing_files > 0) {
+                g_step = STEP_OVERWRITE;
+                redraw = 1;
+                return;
+            }
             g_step = STEP_PROGRESS;
             update_progress_ui(0, "Starting installation...", "Preparing disk and partitions");
             int err = do_installation(g_target_letter);

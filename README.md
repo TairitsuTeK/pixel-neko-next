@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.002)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.003)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -174,10 +174,14 @@
 
 ---
 
-## 💾 Build 2011.002 更新特性
+## 💾 Build 2011.003 更新特性
+- **⚠️ 安装前智能引导/系统文件探测与覆盖防呆确认**：
+  - 在正式开始安装前对目标盘符进行深度扫描，自动探测是否已存在 `\boot\kernel.elf`、`\grldr`、`\menu.lst` 或 Windows 引导文件（`bootmgr` / `ntldr`）；
+  - 若检测到已有引导或旧版系统，弹出醒目的复古警示视窗，明确罗列检测到的文件名，并提供 `[Overwrite Now]`（覆盖并继续安装）、`[< Back]`（返回重选其他驱动器）与 `[Cancel]`（取消并退出向导）选项，防止静默覆盖破坏用户重要分区；
+- **🖥️ 桌面 Install 一键安装向导图标全环境常驻**：
+  - 无论从光盘 Live 启动还是本地硬盘启动，桌面始终保留 Install 快捷图标，方便多硬盘互装或随时重装修复引导；
 - **📁 文件管理器点击穿透与驱动器打不开根治**：
-  - 彻底修复当引入第 11 个窗口（安装程序）时，活动窗口焦点判断仍沿用 `z_order[9]` 导致窗口置顶时 `z_order[10]` 的鼠标点击事件被全部丢弃的严重缺陷；
-  - 移除旧版 `fm_update` 内部依赖的单边沿按键记忆机制，全面升级为由窗口管理器标准派发的 `fm_click`、`fm_drag`、`fm_release`；
+  - 修复置顶窗口索引（`z_order[10]`）事件过滤缺陷，全面升级为由窗口管理器标准派发的 `fm_click`、`fm_drag`、`fm_release`；
   - 工具栏新增 `[Open]` 快捷按钮，支持直接选中行后按回车键、双击或点击 `[Open]` 畅通进入 `C:\` 等驱动器与子文件夹。
 - **📊 FAT32 空闲容量动态刷新与 FSInfo 扇区精确同步**：
   - 解决安装到硬盘后剩余空间仍停留在未安装前数值（如 231 MB）的缓存脱节故障；
@@ -186,8 +190,6 @@
 - **⚙️ 本地硬盘启动设置持久化与 CD-ROM Live 模式智能区分**：
   - 引入内核级配置系统 `C:\settings.ini`，本地硬盘启动时自动持久化与恢复**屏幕分辨率（宽/高）**、**色彩深度（BPP）**、**桌面背景与壁纸路径/排布模式**；
   - 智能感知启动介质（BIOS 驱动器号与 Multiboot 启动参数），CD-ROM 光盘启动维持 Live 模式（纯内存体验，不污染物理磁盘）。
-- **💿 硬盘启动自动隐藏安装向导**：
-  - 本地硬盘启动时桌面自动隐藏 "Install" 安装向导图标，仅在 CD/DVD Live 环境提供安装入口。
 - **⚡ 安装向导全流程动态进度条与写入速度深度优化**：
   - 告别点击开始安装后系统静默无响应 10 余秒的体验问题，新增复古 3D 嵌入式进度条与实时扇区写入百分比提示；
   - 消除旧版冗余的 1.8MB 内核双重写入拷贝，挂接 FAT 驱动层实时回调，每写入 64KB 平滑更新进度与子步骤提示，流畅度大幅提升。
