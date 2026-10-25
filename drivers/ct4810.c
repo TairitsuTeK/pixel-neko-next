@@ -209,8 +209,8 @@ void ct4810_set_format(int rate, int bits, int stereo) {
     else                            cf |= (0 << 2);
     ct_write32(ES_REG_CH_FORMAT, cf);
 
-    // Configure SRC playback frequency ratio: (rate * 32768) / 48000
-    unsigned int ratio = (rate >= 48000) ? 0x8000 : (unsigned int)(((unsigned long long)rate * 32768ULL) / 48000ULL);
+    // Configure SRC playback frequency ratio: (rate * 256) / 375 (equivalent to (rate * 32768) / 48000)
+    unsigned int ratio = (rate >= 48000) ? 0x8000 : (unsigned int)(((unsigned int)rate * 256U) / 375U);
     ct_src_write(0x70, (unsigned short)ratio);
     ct_src_write(0x74, (unsigned short)ratio);
 }
