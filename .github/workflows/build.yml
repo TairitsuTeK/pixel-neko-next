@@ -73,8 +73,10 @@ jobs:
           - QEMU: `qemu-system-i386 -cdrom pixel_neko_build_${{ env.VERSION }}.iso -m 128M -boot d`
           - VirtualBox / VMware: create a 32-bit Other/Unknown virtual machine and boot this ISO.
 
-          ### Audio
+          ### Fixes
           - Creative CT4810 / Ensoniq ES1371 playback and physical CMI8738 output fixes are included.
+          - NekoPlayer, System Information and File Manager layout improvements are included.
+          - Pausing playback now mutes the hardware output path to prevent residual noise.
         draft: false
         prerelease: false
         files: |

@@ -108,6 +108,75 @@ static void int_to_str(unsigned int n, char* buf) {
     buf[bi] = '\0';
 }
 
+static void draw_text_fitted(unsigned char* v, int x, int y, int max_chars,
+                             const char* text, unsigned char color) {
+    char out[80];
+    int len = 0;
+    if (max_chars < 4) max_chars = 4;
+    if (max_chars > 76) max_chars = 76;
+    while (text[len]) len++;
+
+    if (len <= max_chars) {
+        for (int i = 0; i < len; i++) out[i] = text[i];
+        out[len] = '\0';
+    } else {
+        int keep = max_chars - 3;
+        for (int i = 0; i < keep; i++) out[i] = text[i];
+        out[keep] = '.';
+        out[keep + 1] = '.';
+        out[keep + 2] = '.';
+        out[max_chars] = '\0';
+    }
+    font_draw_text(v, x, y, out, color);
+}
+
+static int draw_text_wrapped(unsigned char* v, int x, int y, int max_chars,
+                             int max_lines, const char* text,
+                             unsigned char color) {
+    char line[80];
+    int pos = 0;
+    int line_no = 0;
+
+    if (max_chars < 4) max_chars = 4;
+    if (max_chars > 76) max_chars = 76;
+
+    while (text[pos] && line_no < max_lines) {
+        while (text[pos] == ' ') pos++;
+        if (!text[pos]) break;
+
+        int start = pos;
+        int count = 0;
+        int last_space = -1;
+        while (text[pos] && count < max_chars) {
+            if (text[pos] == ' ') last_space = pos;
+            pos++;
+            count++;
+        }
+        if (text[pos] && last_space > start) pos = last_space;
+
+        int end = pos;
+        while (end > start && text[end - 1] == ' ') end--;
+        int len = end - start;
+        if (len > max_chars) len = max_chars;
+        for (int i = 0; i < len; i++) line[i] = text[start + i];
+
+        if (line_no == max_lines - 1 && text[pos]) {
+            if (len > max_chars - 3) len = max_chars - 3;
+            line[len++] = '.';
+            line[len++] = '.';
+            line[len++] = '.';
+        }
+        line[len] = '\0';
+        font_draw_text(v, x, y, line, color);
+
+        while (text[pos] == ' ') pos++;
+        line_no++;
+        y += 16;
+    }
+
+    return line_no > 0 ? line_no : 1;
+}
+
 static void hex16_to_str(unsigned short val, char* out) {
     const char hex[] = "0123456789ABCDEF";
     out[0] = hex[(val >> 12) & 0xF];
@@ -195,13 +264,18 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     if (active_tab == 0) {
         // Tab 0: System
         int lx = fx + 10, ly = fy + 8;
+        int value_x = lx + 125;
+        int max_value_chars = (fx + fw - 10 - value_x) / 8;
+        if (max_value_chars < 4) max_value_chars = 4;
+
         font_draw_text(v, lx, ly, "OS Version:", 0);
-        font_draw_text(v, lx + 125, ly, "Pixel Neko Next (Build " KERNEL_BUILD ")", 1);
+        draw_text_fitted(v, value_x, ly, max_value_chars,
+                         "Pixel Neko Next (Build " KERNEL_BUILD ")", 1);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Processor:", 0);
         const char* brand = cpu_model_string[0] ? cpu_model_string : "i686 Compatible CPU";
-        font_draw_text(v, lx + 125, ly, brand, 0);
+        draw_text_fitted(v, value_x, ly, max_value_chars, brand, 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Frequency:", 0);
@@ -209,11 +283,12 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         int_to_str(g_cpu_info.mhz > 0 ? g_cpu_info.mhz : 200, mhz_buf);
         int mi = 0; while (mhz_buf[mi]) mi++;
         mhz_buf[mi++] = ' '; mhz_buf[mi++] = 'M'; mhz_buf[mi++] = 'H'; mhz_buf[mi++] = 'z'; mhz_buf[mi] = '\0';
-        font_draw_text(v, lx + 125, ly, mhz_buf, 0);
+        draw_text_fitted(v, value_x, ly, max_value_chars, mhz_buf, 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Features:", 0);
-        font_draw_text(v, lx + 125, ly, "FPU, TSC, MSR, PAE, APIC, CMOV", 8);
+        draw_text_fitted(v, value_x, ly, max_value_chars,
+                         "FPU, TSC, MSR, PAE, APIC, CMOV", 8);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Installed RAM:", 0);
@@ -229,11 +304,11 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         ram_buf[ri++] = ' '; ram_buf[ri++] = 'M'; ram_buf[ri++] = 'B'; ram_buf[ri++] = ' ';
         ram_buf[ri++] = 'T'; ram_buf[ri++] = 'o'; ram_buf[ri++] = 't'; ram_buf[ri++] = 'a'; ram_buf[ri++] = 'l'; ram_buf[ri++] = ')';
         ram_buf[ri] = '\0';
-        font_draw_text(v, lx + 125, ly, ram_buf, 0);
+        draw_text_fitted(v, value_x, ly, max_value_chars, ram_buf, 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Graphics Card:", 0);
-        font_draw_text(v, lx + 125, ly, gfx_accel_get_name(), 0);
+        draw_text_fitted(v, value_x, ly, max_value_chars, gfx_accel_get_name(), 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Video Memory:", 0);
@@ -242,30 +317,37 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         int_to_str(vram_mb, vram_buf);
         int vi = 0; while (vram_buf[vi]) vi++;
         vram_buf[vi++] = ' '; vram_buf[vi++] = 'M'; vram_buf[vi++] = 'B'; vram_buf[vi] = '\0';
-        font_draw_text(v, lx + 125, ly, vram_buf, 0);
+        draw_text_fitted(v, value_x, ly, max_value_chars, vram_buf, 0);
 
         ly += 16;
         font_draw_text(v, lx, ly, "2D Engine:", 0);
         if (gfx_accel_is_active()) {
-            font_draw_text(v, lx + 125, ly, "ATI Mach64 GUI Accelerator (Active)", 2);
+            draw_text_fitted(v, value_x, ly, max_value_chars,
+                             "ATI Mach64 GUI Accelerator (Active)", 2);
         } else {
-            font_draw_text(v, lx + 125, ly, "Software Rasterizer (VBE Mode)", 8);
+            draw_text_fitted(v, value_x, ly, max_value_chars,
+                             "Software Rasterizer (VBE Mode)", 8);
         }
 
         ly += 16;
         font_draw_text(v, lx, ly, "Audio Device:", 0);
+        int audio_lines = 1;
         if (audio_has_hardware()) {
-            font_draw_text(v, lx + 125, ly, audio_get_hardware_name(), 0);
+            audio_lines = draw_text_wrapped(v, value_x, ly, max_value_chars, 2,
+                                            audio_get_hardware_name(), 0);
         } else {
-            font_draw_text(v, lx + 125, ly, "PC Speaker (No PCI Sound Card)", 8);
+            audio_lines = draw_text_wrapped(v, value_x, ly, max_value_chars, 2,
+                                            "PC Speaker (No PCI Sound Card)", 8);
         }
+        ly += (audio_lines - 1) * 16;
 
         ly += 16;
         font_draw_text(v, lx, ly, "Audio Engine:", 0);
         if (audio_has_hardware()) {
-            font_draw_text(v, lx + 125, ly, "Kernel DSP Engine (Active)", 2);
+            draw_text_fitted(v, value_x, ly, max_value_chars,
+                             "Kernel DSP Engine (Active)", 2);
         } else {
-            font_draw_text(v, lx + 125, ly, "Disabled", 8);
+            draw_text_fitted(v, value_x, ly, max_value_chars, "Disabled", 8);
         }
 
     } else if (active_tab == 1) {

@@ -20,6 +20,51 @@ static void my_strcpy(char* d, const char* s) {
     *d = '\0';
 }
 
+static void draw_wrapped_text(unsigned char* v, int x, int y, int max_chars,
+                              int max_lines, const char* text,
+                              unsigned char color) {
+    char line[64];
+    int pos = 0;
+    int line_no = 0;
+
+    if (max_chars < 4) max_chars = 4;
+    if (max_chars > 61) max_chars = 61;
+
+    while (text[pos] && line_no < max_lines) {
+        while (text[pos] == ' ') pos++;
+        if (!text[pos]) break;
+
+        int start = pos;
+        int count = 0;
+        int last_space = -1;
+        while (text[pos] && count < max_chars) {
+            if (text[pos] == ' ') last_space = pos;
+            pos++;
+            count++;
+        }
+        if (text[pos] && last_space > start) pos = last_space;
+
+        int end = pos;
+        while (end > start && text[end - 1] == ' ') end--;
+        int len = end - start;
+        if (len > max_chars) len = max_chars;
+        for (int i = 0; i < len; i++) line[i] = text[start + i];
+
+        if (line_no == max_lines - 1 && text[pos]) {
+            if (len > max_chars - 3) len = max_chars - 3;
+            line[len++] = '.';
+            line[len++] = '.';
+            line[len++] = '.';
+        }
+        line[len] = '\0';
+        font_draw_text(v, x, y, line, color);
+
+        while (text[pos] == ' ') pos++;
+        line_no++;
+        y += 16;
+    }
+}
+
 static void my_itoa_2d(int n, char* buf) {
     if (n < 0) n = 0;
     if (n > 99) n = 99;
@@ -108,14 +153,14 @@ static void draw_retro_btn(unsigned char* v, int bx, int by, int bw, int bh, con
 }
 
 void audioplayer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
-    (void)ww; (void)wh;
-    // 播放器窗口尺寸建议 340 x 185
-    int card_w = 340;
-    int card_h = 185;
-    
-    // 主面板背景（深灰碳纤纹理质感）
-    for (int y = wy + 20; y < wy + card_h; y++) {
-        for (int x = wx; x < wx + card_w; x++) {
+    // Fill only the client area. The old fixed 340x185 rectangle covered the
+    // window manager's right and bottom borders, making the frame look broken.
+    int body_left = wx + 1;
+    int body_top = wy + 19;
+    int body_right = wx + ww - 1;
+    int body_bottom = wy + wh - 1;
+    for (int y = body_top; y < body_bottom; y++) {
+        for (int x = body_left; x < body_right; x++) {
             unsigned char bg_c = ((x + y) & 1) ? 7 : 8;
             PUT_PIXEL(v, x, y, bg_c);
         }
@@ -350,11 +395,18 @@ void audioplayer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         }
     }
     
-    // 硬件芯片型号显示
+    // Hardware name on its own full-width row. Long ES1371 codec names wrap
+    // instead of spilling outside the player window.
+    for (int x = wx + 8; x < wx + ww - 8; x++) {
+        PUT_PIXEL(v, x, wy + 172, 0);
+        PUT_PIXEL(v, x, wy + 173, 15);
+    }
+    font_draw_text(v, wx + 10, wy + 178, "DEV:", 0);
     if (dev_ok) {
-        font_draw_text(v, wx + 160, wy + 154, audio_get_hardware_name(), 0);
+        draw_wrapped_text(v, wx + 50, wy + 178, (ww - 60) / 8, 2,
+                          audio_get_hardware_name(), 0);
     } else {
-        font_draw_text(v, wx + 160, wy + 154, "NO AUDIO HARDWARE", 12);
+        font_draw_text(v, wx + 50, wy + 178, "NO AUDIO HARDWARE", 12);
     }
 }
 

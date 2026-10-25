@@ -87,16 +87,16 @@ static int wcx=95, wcy=50, wcw=170, wch=160;
 static int wcw_def=170, wch_def=160;
 static int cpx=85, cpy=50, cpw=310, cph=210;
 static int cpw_def=310, cph_def=210;
-static int fmx=85, fmy=45, fmw=320, fmh=190;
-static int fmw_def=320, fmh_def=190;
+static int fmx=85, fmy=45, fmw=440, fmh=260;
+static int fmw_def=440, fmh_def=260;
 int edv=0, edm=0;
 int fmv=0, fmm=0;
 static int wv=0, cv=0, clv=0, cpv=0;
 static int am=0, cm=0, clm=0, cpm=0;
 static int edx=90, edy=60, edw=300, edh=200;
 static int edw_def=300, edh_def=200;
-static int six=75, siy=35, siw=420, sih=250;
-static int siw_def=420, sih_def=250;
+static int six=65, siy=35, siw=520, sih=250;
+static int siw_def=520, sih_def=250;
 static int siv=0, sim=0;
 static int pzx=110, pzy=50, pzw=180, pzh=200;
 static int pzw_def=180, pzh_def=200;
@@ -104,8 +104,8 @@ static int pzv=0, pzm=0;
 static int imx=60, imy=35, imw=480, imh=340;
 static int imw_def=480, imh_def=340;
 
-static int npx=70, npy=45, npw=340, nph=185;
-static int npw_def=340, nph_def=185;
+static int npx=70, npy=45, npw=340, nph=215;
+static int npw_def=340, nph_def=215;
 int npv=0, npm=0;
 
 static int insx=80, insy=50, insw=340, insh=220;
@@ -679,9 +679,10 @@ void wm_init(void){
     wx=80;wy=52;ww=420;wh=200;wx2=100;wy2=70;ww2=180;wh2=90;ww2_def=180;wh2_def=90;
     wcx=95;wcy=50;wcw=170;wch=160;wcw_def=170;wch_def=160;
     cpx=85;cpy=50;cpw=310;cph=210;cpw_def=310;cph_def=210;
-    fmx=85;fmy=45;fmw=320;fmh=190;fmw_def=320;fmh_def=190;
+    fmx=85;fmy=45;fmw=440;fmh=260;fmw_def=440;fmh_def=260;
     edx=90;edy=60;edw=300;edh=200;edw_def=300;edh_def=200;
-    six=75;siy=40;siw=420;sih=220;siw_def=420;sih_def=220;
+    six=65;siy=40;siw=520;sih=250;siw_def=520;sih_def=250;
+    npx=70;npy=45;npw=340;nph=215;npw_def=340;nph_def=215;
     pzx=110;pzy=50;pzw=180;pzh=200;pzw_def=180;pzh_def=200;
     for(int i=0;i<11;i++){
         int col = i / 6;

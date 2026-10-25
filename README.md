@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.020)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.101)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -171,6 +171,22 @@
 - **🔇 关机停机画面静音与 DMA 彻底停止**：在退出系统进入经典 Safe to Turn Off 画面及重启前立即切断声卡 DMA 环形缓冲与静音输出，彻底消除关机停机时的硬件残余卡碟循环循环。
 - **💽 Intel H55 (ASUS P7H55-M LE) SATA / IDE Native PCI 驱动器自适应探测**：新增 PCI 存储控制器（Class 0101）全面枚举与 BAR0~BAR3 Native PCI I/O 端口识别，解决现代与近现代主板兼容 IDE 模式下找不到硬盘与光驱的问题。
 - **🏷️ 开机画面与系统内核版本号迭代同步**：开机 Boot Splash 及系统关于视窗全面联动动态版本号，正式迭代至 `Build 2010.010`。
+
+---
+
+## 💾 Build 2011.101 更新特性
+- **🖥️ 系统信息与音频设备排版修复**：
+  - System Information 默认窗口扩大至 `520×250`，为处理器型号、图形设备与音频设备留出更合理的显示空间；
+  - 长设备名不再越界覆盖窗口边框，改为按单词自动换行；其他系统字段增加边界裁切和省略号保护；
+  - 当前音频设备可完整分行显示控制器与 AK4540 / TR28023 (CT1297) 编解码器信息。
+- **🎵 NekoPlayer 边框与硬件信息布局修复**：
+  - 播放器面板改为严格按窗口客户区尺寸绘制，不再覆盖右侧和底部窗口边框；
+  - 窗口高度增加至 215px，硬件名称移至独立 `DEV:` 区域并自动换行，避免文字溢出播放器。
+- **📁 文件管理器默认尺寸优化**：首次打开由 `320×190` 扩大至 `440×260`，默认可显示更多文件和更长的文件名。
+- **⏸️ 暂停状态持续噪声修复**：
+  - 暂停时先静音硬件 PCM/主输出，再设置 DMA 暂停位，彻底阻断 Codec 重复输出最后一个采样造成的持续“滋滋”声；
+  - 暂停期间调整音量或静音不会意外解除硬件静音；
+  - 恢复播放时先恢复原音量，再解除 DMA 暂停；停止或关闭窗口后会恢复硬件混音器状态。
 
 ---
 

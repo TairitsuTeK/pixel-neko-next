@@ -70,6 +70,10 @@ static int g_active_dec = DEC_NONE;
 static int g_master_volume = 85;
 static int g_is_muted = 0;
 
+static int audio_requested_volume(void) {
+    return g_is_muted ? 0 : g_master_volume;
+}
+
 static short g_pcm_queue[PCM_QUEUE_SIZE / sizeof(short)];
 static unsigned int g_queue_read_idx = 0;
 static unsigned int g_queue_write_idx = 0;
@@ -473,7 +477,11 @@ int audio_play_file(const char* filepath) {
     }
 
     // 4. 启动声卡硬件 DMA 环形播放
-    if (g_active_driver) g_active_driver->start_dma();
+    if (g_active_driver) {
+        g_active_driver->start_dma();
+        int volume = audio_requested_volume();
+        g_active_driver->set_volume(volume, volume);
+    }
     g_audio_state = AUDIO_STATE_PLAYING;
 
     return 0;
@@ -481,14 +489,26 @@ int audio_play_file(const char* filepath) {
 
 void audio_pause(void) {
     if (g_audio_state == AUDIO_STATE_PLAYING) {
-        if (g_active_driver) g_active_driver->pause_dma(1);
+        if (g_active_driver) {
+            // Some codecs keep repeating the last DMA sample in pause mode.
+            // Mute the hardware path as well as setting the channel pause bit.
+            g_active_driver->set_volume(0, 0);
+            g_active_driver->pause_dma(1);
+        }
         g_audio_state = AUDIO_STATE_PAUSED;
+        for (int i = 0; i < 10; i++) g_spectrum_bands[i] = 0;
+        g_vu_l = 0;
+        g_vu_r = 0;
     }
 }
 
 void audio_resume(void) {
     if (g_audio_state == AUDIO_STATE_PAUSED) {
-        if (g_active_driver) g_active_driver->pause_dma(0);
+        if (g_active_driver) {
+            int volume = audio_requested_volume();
+            g_active_driver->set_volume(volume, volume);
+            g_active_driver->pause_dma(0);
+        }
         g_audio_state = AUDIO_STATE_PLAYING;
     }
 }
@@ -497,6 +517,10 @@ void audio_stop(void) {
     if (g_audio_state != AUDIO_STATE_STOPPED) {
         if (g_active_driver) g_active_driver->stop_dma();
         g_audio_state = AUDIO_STATE_STOPPED;
+        if (g_active_driver) {
+            int volume = audio_requested_volume();
+            g_active_driver->set_volume(volume, volume);
+        }
     }
     if (g_active_dec == DEC_WAV) wav_dec_close();
     else if (g_active_dec == DEC_FLAC) flac_dec_close();
@@ -581,7 +605,7 @@ void audio_set_volume(int vol) {
     if (vol > 100) vol = 100;
     g_master_volume = vol;
     if (g_active_driver) {
-        int v = g_is_muted ? 0 : g_master_volume;
+        int v = (g_audio_state == AUDIO_STATE_PAUSED) ? 0 : audio_requested_volume();
         g_active_driver->set_volume(v, v);
     }
 }
@@ -593,7 +617,7 @@ int audio_get_volume(void) {
 void audio_toggle_mute(void) {
     g_is_muted = !g_is_muted;
     if (g_active_driver) {
-        int v = g_is_muted ? 0 : g_master_volume;
+        int v = (g_audio_state == AUDIO_STATE_PAUSED) ? 0 : audio_requested_volume();
         g_active_driver->set_volume(v, v);
     }
 }
