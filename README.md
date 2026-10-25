@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.100)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.001)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -174,6 +174,19 @@
 
 ---
 
+## 💾 Build 2011.001 更新特性
+- **🎼 Creative CT4810 / Ensoniq ES1371 实体机与 Pcbox 无声修复**：
+  - **Bus Master 与 DMA 时序校正**：修正 ES1371 `CONTROL.BREQ` 为 Bit 7，播放启动时同时使能 PCI Bus Master 与 DAC2，恢复硬件从 64KB 环形缓冲区取数；
+  - **AC'97 冷/热复位与就绪握手**：补全 ES1371 AC'97 Link 热复位、CT5880/ES1373 修订版专用复位脉冲及 Codec RDY 等待，兼容 AK4540 与 TriTech TR28023 / Creative CT1297 两类 Codec；
+  - **SRC 与 DAC2 串行格式修正**：按 ALSA `ens1371` 的两阶段 SRC RAM 读取握手重写采样率配置，并补齐 DAC2 Start/End Offset、循环模式与 32KB 周期计数；
+  - **Codec 识别**：启动时读取 AC'97 Vendor ID，在 SysInfo 中显示 `AK4540 AC'97` 或 `TR28023 (CT1297) AC'97`。
+- **🔊 CMI8738 实体机无声回归修复**：
+  - **恢复 Dual DAC 输出路由**：重新设置 `CMI_MISC_ENDBDAC`，保持 `CMI_MISC_XCHGDAC = 0`，使 Channel 0 按 ALSA `cmipci` 定义输出至前置绿色接口并镜像到后置接口；
+  - **恢复扩展路由初始化**：向 `EXT_MISC` 写入 CMI8738 所需的 `0x00000920` 魔数，避免只清除该寄存器导致部分实体卡 DAC 无输出；
+  - **修正 SB Mixer 误操作**：移除对输入选择寄存器 `0x3D/0x3E` 的错误写入，保留 `0x3C = 0x1F` 的模拟输出开关使能。
+
+---
+
 ## 💾 Build 2011.100 更新特性
 - **🎼 Creative CT4810 (CT5880 / Ensoniq ES1371) PCI 声卡原生硬件驱动**：
   - **PCI 总线即插即用识别**：自动探测 Vendor ID `0x1274`（Ensoniq）及 Device ID `0x1371` / `0x5880`（Creative CT4810），配置 PCI Bus Mastering 与 Latency Timer；
@@ -187,6 +200,8 @@
 - **🔊 CMI8738 实体机模拟前置音频孔（绿色孔）出声彻底修复**：
   - **通道路由校准**：消除开启 `CMI_MISC_ENDBDAC`（双 DAC 结构）导致 Channel 0 播放被重定向至后置环绕插孔而使前置绿孔无声的硬件缺陷，回退至纯净 Single DAC 结构，并将 Channel 0 严格绑定至前置主输出并镜像至后置孔；
   - **SB16 模拟主控/PCM 开关全解禁**：在软复位后向 SB16 Mixer 寄存器 `0x3D` 与 `0x3E` 真实写入 `0x00`，彻底解除实体卡默认的 Master Output / Voice Mute 硬件拦截。
+
+> 注：本节中的 Single DAC 与 `0x3D/0x3E` 路由判断已在 Build 2011.001 中依据 ALSA `cmipci` 修正，最新行为以上一节为准。
 
 ---
 

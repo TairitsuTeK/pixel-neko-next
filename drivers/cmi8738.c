@@ -4,6 +4,7 @@
 
 static int g_cmi_present = 0;
 static unsigned short g_cmi_io_base = 0;
+static unsigned short g_cmi_device = 0;
 static const char* g_cmi_chip_name = "None";
 static unsigned char* g_dma_buf = 0;
 static unsigned int g_dma_phys = 0;
@@ -56,6 +57,7 @@ static inline unsigned char cmi_read_mixer(unsigned char idx) {
 int cmi8738_init(void) {
     g_cmi_present = 0;
     g_cmi_io_base = 0;
+    g_cmi_device = 0;
     g_cmi_chip_name = "None";
     g_dma_running = 0;
 
@@ -88,6 +90,7 @@ int cmi8738_init(void) {
                     if (!(bar0 & 1)) continue; // Must be I/O space
 
                     g_cmi_io_base = (unsigned short)(bar0 & 0xFFFC);
+                    g_cmi_device = device;
 
                     // Enable PCI Bus Mastering (bit 2), Memory Space (bit 1), and I/O Space (bit 0)
                     unsigned int cmd = pci_read_config(bus, dev, func, 0x04);
@@ -157,17 +160,22 @@ int cmi8738_init(void) {
     // 4. Configure MISC_CTRL:
     // - Clear CM_PWD (bit 31 = 0: normal power)
     // - Clear CM_RESET (bit 30 = 0: running)
-    // - Clear CM_ENDBDAC (bit 23 = 0: Single DAC mode, routes Channel 0 to Front Green Line-Out jack!)
-    // - Clear CM_XCHGDAC (bit 22 = 0: Front = CH0, green jack)
+    // - Set CM_ENDBDAC (bit 23 = 1: dual-DAC routing required by ALSA)
+    // - Clear CM_XCHGDAC (bit 22 = 0: front output = CH0, green jack)
     // - Set CM_TXVX (bit 27 = 1: PCI bus master burst timing)
     // - Set CM_N4SPK3D (bit 26 = 1: Copy Front to Rear / 4-Speaker, so both green & rear jacks output)
     unsigned int misc = cmi_read32(CMI_REG_MISC_CTRL);
-    misc &= ~(CMI_MISC_PWD | CMI_MISC_RESET | CMI_MISC_XCHGDAC | CMI_MISC_ENDBDAC | (3 << 28));
-    misc |= (CMI_MISC_N4SPK3D | CMI_MISC_TXVX);
+    misc &= ~(CMI_MISC_PWD | CMI_MISC_RESET | CMI_MISC_XCHGDAC);
+    misc |= (CMI_MISC_ENDBDAC | CMI_MISC_N4SPK3D);
+    if (g_cmi_device == CMI_DEV_8738) misc |= CMI_MISC_TXVX;
     cmi_write32(CMI_REG_MISC_CTRL, misc);
 
-    // 5. Extended misc initialization (0x90): clear 7.1/6ch multi-channel overrides
-    cmi_write32(CMI_REG_EXT_MISC, 0x00000000);
+    // 5. CMI8738-class parts require the ALSA cmipci extended-routing magic.
+    if (g_cmi_device == CMI_DEV_8338A || g_cmi_device == CMI_DEV_8338B) {
+        cmi_write32(CMI_REG_EXT_MISC, 0);
+    } else {
+        cmi_write32(CMI_REG_EXT_MISC, CMI_EXT_MISC_MAGIC);
+    }
 
     // 6. Ensure CM_NXCHG = 0 in LEGACY_CTRL
     unsigned int leg = cmi_read32(CMI_REG_LEGACY_CTRL);
@@ -200,8 +208,6 @@ int cmi8738_init(void) {
 
     // 11. Enable all output switches in SB16 MIXER_OUTMIX (0x3C)
     cmi_write_mixer(0x3C, 0x1F);
-    cmi_write_mixer(0x3D, 0x00); // Unmute PCM output switch
-    cmi_write_mixer(0x3E, 0x00); // Unmute Master output switch
 
     // 12. Unmute Speaker and Phone in extended mixer register 0xF0
     unsigned char ext = cmi_read_mixer(0xF0);
@@ -359,32 +365,18 @@ void cmi8738_set_volume(int master_vol, int pcm_vol) {
     m1 &= ~CMI_MIXER1_WSMUTE;
     outb(g_cmi_io_base + CMI_REG_MIXER1, m1);
 
-    // Scale 0..100 to 5-bit (0..31) for SB16 mixer registers
+    // ALSA cmipci uses 5-bit stereo SB mixer volumes at 0x22/0x23 (master)
+    // and 0x04/0x05 (PCM). Other apparent "output" registers are not mutes.
     unsigned char m5 = (unsigned char)((master_vol * 31) / 100);
     unsigned char p5 = (unsigned char)((pcm_vol * 31) / 100);
 
-    // SB16 Master Volume (0x30 Left, 0x31 Right: upper 5 bits [D7:D3])
-    cmi_write_mixer(0x30, (m5 << 3));
-    cmi_write_mixer(0x31, (m5 << 3));
+    cmi_write_mixer(0x22, (m5 << 3));
+    cmi_write_mixer(0x23, (m5 << 3));
+    cmi_write_mixer(0x04, (p5 << 3));
+    cmi_write_mixer(0x05, (p5 << 3));
 
-    // SB16 Voice/PCM Volume (0x32 Left, 0x33 Right: upper 5 bits [D7:D3])
-    cmi_write_mixer(0x32, (p5 << 3));
-    cmi_write_mixer(0x33, (p5 << 3));
-
-    // Also set legacy SB Pro Master (0x22) and Voice (0x04): 4 bits per channel
-    unsigned char m4 = (unsigned char)((master_vol * 15) / 100);
-    unsigned char p4 = (unsigned char)((pcm_vol * 15) / 100);
-    cmi_write_mixer(0x22, (m4 << 4) | m4);
-    cmi_write_mixer(0x04, (p4 << 4) | p4);
-
-    // Output switch (0x3C): enable all outputs; un-mute PCM (0x3D) and Master (0x3E)
+    // Output switch (0x3C): enable all analog mixer outputs.
     cmi_write_mixer(0x3C, 0x1F);
-    cmi_write_mixer(0x3D, 0x00);
-    cmi_write_mixer(0x3E, 0x00);
-
-    // Output gain control (0x41 L, 0x42 R)
-    cmi_write_mixer(0x41, 0x00);
-    cmi_write_mixer(0x42, 0x00);
 
     // Speaker and Phone mute control (0xF0): clear bit 3 (CM_VSPKM) and bit 4 (CM_VPHOM)
     unsigned char ext = cmi_read_mixer(0xF0);

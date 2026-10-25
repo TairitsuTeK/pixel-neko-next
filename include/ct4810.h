@@ -9,47 +9,75 @@
 #define CREATIVE_VENDOR_ID      0x1102
 #define EV1938_DEV_ID           0x8938
 
-// ES1371 / CT5880 Registers (BAR0 offsets)
-#define ES_REG_CONTROL          0x00 // Control register
-#define ES_REG_STATUS           0x04 // Status register
-#define ES_REG_UART_DATA        0x08 // UART Data
-#define ES_REG_UART_STATUS      0x09 // UART Status
-#define ES_REG_MEMPAGE          0x0C // Memory Page
-#define ES_REG_SRC              0x10 // Sample Rate Converter
-#define ES_REG_CODEC            0x14 // AC'97 Codec Port
-#define ES_REG_LEGACY           0x18 // Legacy Control
-#define ES_REG_SERIAL           0x20 // Serial Control / Channel Format
-#define ES_REG_DAC2_COUNT       0x28 // DAC2 Sample / Period Count
+// ES1371 / CT5880 direct I/O registers (BAR0 offsets).
+#define ES_REG_CONTROL          0x00
+#define ES_REG_STATUS           0x04
+#define ES_REG_MEMPAGE          0x0C
+#define ES_REG_SRC              0x10
+#define ES_REG_CODEC            0x14
+#define ES_REG_LEGACY           0x18
+#define ES_REG_SERIAL           0x20
+#define ES_REG_DAC2_COUNT       0x28
 
-// Registers mapped under PAGE 0x0C (ES_PAGE_DAC)
+// DAC page registers.
 #define ES_PAGE_DAC             0x0C
-#define ES_REG_DAC2_FRAME1      0x38 // DAC2 Buffer Base Physical Address
-#define ES_REG_DAC2_FRAME2      0x3C // DAC2 Current Count (31:16) & Frame Size (15:0)
+#define ES_REG_DAC2_FRAME       0x38
+#define ES_REG_DAC2_SIZE        0x3C
 
-// Control Register (0x00) Bits
-#define ES_CTL_BREQ             0x00000001 // Bus Master Request
-#define ES_CTL_ADC_EN           0x00000010 // ADC Enable (Bit 4)
-#define ES_CTL_DAC2_EN          0x00000020 // DAC2 Enable (Bit 5)
-#define ES_CTL_DAC1_EN          0x00000040 // DAC1 Enable (Bit 6)
+// Control register bits.
+#define ES_CTL_BYPASS_P2        (1U << 30) // ES1373-only SRC bypass
+#define ES_CTL_SYNC_RES         (1U << 14) // AC'97 warm reset
+#define ES_CTL_BREQ             (1U << 7)  // PCI bus-master request
+#define ES_CTL_DAC1_EN          (1U << 6)
+#define ES_CTL_DAC2_EN          (1U << 5)
+#define ES_CTL_ADC_EN           (1U << 4)
 
-// Serial Control Register (0x20) Bits
-#define ES_P2_MODEO(o)          (((o) & 0x03) << 2) // Mode: 0=8M, 1=8S, 2=16M, 3=16S
-#define ES_P2_MODEM             (0x03 << 2)
-#define ES_P2_INT_EN            (1 << 9)
-#define ES_P2_PAUSE             (1 << 12)
-#define ES_P2_LOOP_SEL          (1 << 14) // 0 = Loop mode, 1 = Stop mode
+// Status register bits.
+#define ES_STAT_AC97_RST        (1U << 29) // CT5880/ES1373 codec reset quirk
 
-// Sample Rate Converter (0x10) Bits & Masks
-#define ES_1371_DIS_R1          (1 << 19)
-#define ES_1371_DIS_P2          (1 << 20)
-#define ES_1371_DIS_P1          (1 << 21)
-#define ES_1371_SRC_DISABLE     (1 << 22)
-#define ES_1371_SRC_RAM_BUSY    (1 << 23)
-#define ES_1371_SRC_RAM_WE      (1 << 24)
+// Serial control register bits.
+#define ES_P2_END_INCO(o)       (((o) & 0x07) << 19)
+#define ES_P2_END_INCM          (0x07U << 19)
+#define ES_P2_ST_INCO(o)        (((o) & 0x07) << 16)
+#define ES_P2_ST_INCM           (0x07U << 16)
+#define ES_P2_LOOP_SEL          (1U << 14)
+#define ES_P2_PAUSE             (1U << 12)
+#define ES_P2_INT_EN            (1U << 9)
+#define ES_P2_DAC_SEN           (1U << 6)
+#define ES_P2_MODEO(o)          (((o) & 0x03) << 2)
+#define ES_P2_MODEM             (0x03U << 2)
 
-// AC'97 Codec Port (0x14) Bits
-#define ES_1371_CODEC_WIP       (1 << 30) // Codec Write/Access In Progress
-#define ES_1371_CODEC_PORD      (1 << 31) // Codec Read In Progress / Status
+// Sample rate converter register bits and RAM addresses.
+#define ES_1371_SRC_RAM_ADDRM   (0x7FU << 25)
+#define ES_1371_SRC_RAM_ADDRO(r) (((r) & 0x7FU) << 25)
+#define ES_1371_SRC_RAM_WE      (1U << 24)
+#define ES_1371_SRC_RAM_BUSY    (1U << 23)
+#define ES_1371_SRC_DISABLE     (1U << 22)
+#define ES_1371_DIS_P1          (1U << 21)
+#define ES_1371_DIS_P2          (1U << 20)
+#define ES_1371_DIS_R1          (1U << 19)
+
+#define ES_SMPREG_DAC1          0x70
+#define ES_SMPREG_DAC2          0x74
+#define ES_SMPREG_ADC           0x78
+#define ES_SMPREG_VOL_ADC       0x6C
+#define ES_SMPREG_VOL_DAC1      0x7C
+#define ES_SMPREG_VOL_DAC2      0x7E
+#define ES_SMPREG_TRUNC_N       0x00
+#define ES_SMPREG_INT_REGS      0x01
+#define ES_SMPREG_VFREQ_FRAC    0x03
+
+// AC'97 codec port bits and registers.
+#define ES_1371_CODEC_RDY       (1U << 31)
+#define ES_1371_CODEC_WIP       (1U << 30)
+#define ES_1371_CODEC_READ      (1U << 23)
+#define EV_1938_CODEC_MAGIC     (1U << 26)
+#define AC97_RESET              0x00
+#define AC97_MASTER_VOLUME      0x02
+#define AC97_HEADPHONE_VOLUME   0x04
+#define AC97_PCM_OUT_VOLUME     0x18
+#define AC97_VENDOR_ID1         0x7C
+#define AC97_VENDOR_ID2         0x7E
 
 // DMA Ring Buffer Dimensions: 64KB total, two 32KB halves
 #define CT_DMA_BUFFER_BYTES     65536

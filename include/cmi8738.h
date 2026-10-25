@@ -45,6 +45,9 @@
 #define CMI_MISC_ENDBDAC       0x00800000 // Enable Double DAC
 #define CMI_MISC_XCHGDAC       0x00400000 // 0: Front = CH0, 1: Front = CH1
 
+// Extended misc magic used by ALSA cmipci for CMI8738-class chips.
+#define CMI_EXT_MISC_MAGIC     0x00000920
+
 // MIXER1 (0x24) Bits
 #define CMI_MIXER1_FMMUTE      0x80       // FM Mute (1 = Mute, 0 = Unmute)
 #define CMI_MIXER1_WSMUTE      0x40       // PCM Wave Mute (1 = Mute, 0 = Unmute)
