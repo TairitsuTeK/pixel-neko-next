@@ -40,6 +40,7 @@
 // MISC_CTRL (0x18) Bits
 #define CMI_MISC_PWD           0x80000000 // Power Down (0 = normal, 1 = powered down)
 #define CMI_MISC_RESET         0x40000000 // Codec Reset (1 = in reset, 0 = normal)
+#define CMI_MISC_TXVX          0x08000000 // PCI Bus Master burst timing
 #define CMI_MISC_N4SPK3D       0x04000000 // Copy Front to Rear (4-Speaker mode, mirrors Front/LineOut to Rear)
 #define CMI_MISC_ENDBDAC       0x00800000 // Enable Double DAC
 #define CMI_MISC_XCHGDAC       0x00400000 // 0: Front = CH0, 1: Front = CH1
