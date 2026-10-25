@@ -31,15 +31,22 @@ static inline void cmi_write16(unsigned int reg, unsigned short val) {
     outw(g_cmi_io_base + reg, val);
 }
 
+static inline void cmi_io_wait(void) {
+    outb(0x80, 0);
+}
+
 static inline void cmi_write_mixer(unsigned char idx, unsigned char val) {
     if (!g_cmi_io_base) return;
     outb(g_cmi_io_base + CMI_REG_SB_INDEX, idx);
+    cmi_io_wait();
     outb(g_cmi_io_base + CMI_REG_SB_DATA, val);
+    cmi_io_wait();
 }
 
 static inline unsigned char cmi_read_mixer(unsigned char idx) {
     if (!g_cmi_io_base) return 0;
     outb(g_cmi_io_base + CMI_REG_SB_INDEX, idx);
+    cmi_io_wait();
     return inb(g_cmi_io_base + CMI_REG_SB_DATA);
 }
 
@@ -49,39 +56,45 @@ int cmi8738_init(void) {
     g_cmi_chip_name = "None";
     g_dma_running = 0;
 
-    // Scan PCI bus for C-Media CMI8738 / CMI8338
-    for (int bus = 0; bus < 8; bus++) {
-        for (int slot = 0; slot < 32; slot++) {
-            unsigned int id = pci_read_config(bus, slot, 0, 0);
-            if (id == 0xFFFFFFFF || id == 0) continue;
-
-            unsigned short vendor = id & 0xFFFF;
-            unsigned short device = (id >> 16) & 0xFFFF;
-
-            if (vendor == CMI_VENDOR_ID) {
-                if (device == CMI_DEV_8738) {
-                    g_cmi_chip_name = "C-Media CMI8738 PCI";
-                } else if (device == CMI_DEV_8338A) {
-                    g_cmi_chip_name = "C-Media CMI8338A PCI";
-                } else if (device == CMI_DEV_8338B) {
-                    g_cmi_chip_name = "C-Media CMI8338B PCI";
-                } else {
-                    g_cmi_chip_name = "C-Media PCI Audio";
+    // Scan PCI bus for C-Media CMI8738 / CMI8338 across all 256 buses, 32 devices, 8 functions
+    for (int bus = 0; bus < 256; bus++) {
+        for (int dev = 0; dev < 32; dev++) {
+            for (int func = 0; func < 8; func++) {
+                unsigned int id = pci_read_config(bus, dev, func, 0);
+                if (id == 0xFFFFFFFF || id == 0) {
+                    if (func == 0) break; // Slot empty
+                    continue;
                 }
 
-                // Read BAR0 (I/O base)
-                unsigned int bar0 = pci_read_config(bus, slot, 0, 0x10);
-                if (!(bar0 & 1)) continue; // Must be I/O space
+                unsigned short vendor = id & 0xFFFF;
+                unsigned short device = (id >> 16) & 0xFFFF;
 
-                g_cmi_io_base = (unsigned short)(bar0 & 0xFFFC);
+                if (vendor == CMI_VENDOR_ID) {
+                    if (device == CMI_DEV_8738) {
+                        g_cmi_chip_name = "C-Media CMI8738 PCI";
+                    } else if (device == CMI_DEV_8338A) {
+                        g_cmi_chip_name = "C-Media CMI8338A PCI";
+                    } else if (device == CMI_DEV_8338B) {
+                        g_cmi_chip_name = "C-Media CMI8338B PCI";
+                    } else {
+                        g_cmi_chip_name = "C-Media PCI Audio";
+                    }
 
-                // Enable PCI Bus Mastering, Memory Space, and I/O Space
-                unsigned int cmd = pci_read_config(bus, slot, 0, 0x04);
-                pci_write_config(bus, slot, 0, 0x04, cmd | 0x07); // Bus Master (0x04) + Mem (0x02) + I/O Space (0x01)
+                    // Read BAR0 (I/O base)
+                    unsigned int bar0 = pci_read_config(bus, dev, func, 0x10);
+                    if (!(bar0 & 1)) continue; // Must be I/O space
 
-                g_cmi_present = 1;
-                break;
+                    g_cmi_io_base = (unsigned short)(bar0 & 0xFFFC);
+
+                    // Enable PCI Bus Mastering (bit 2), Memory Space (bit 1), and I/O Space (bit 0)
+                    unsigned int cmd = pci_read_config(bus, dev, func, 0x04);
+                    pci_write_config(bus, dev, func, 0x04, cmd | 0x07);
+
+                    g_cmi_present = 1;
+                    break;
+                }
             }
+            if (g_cmi_present) break;
         }
         if (g_cmi_present) break;
     }
@@ -111,74 +124,79 @@ int cmi8738_init(void) {
     cmi_write32(CMI_REG_MISC_CTRL, CMI_MISC_RESET);
     for (volatile int d = 0; d < 2000; d++);
     cmi_write32(CMI_REG_MISC_CTRL, 0);
+    for (volatile int d = 0; d < 2000; d++);
 
     // 2. Disable interrupts
     cmi_write32(CMI_REG_INT_HLDCLR, 0);
 
-    // 3. Reset Channel A (Bit 18: RST_CH0)
+    // 3. Reset Channel 0 and configure FUNCTRL0:
+    // Bit 0 (CMI_CHADC0) = 0 -> PLAYBACK / DAC mode (Crucial! 1 = capture/record from ADC)
+    // Bit 2 (CMI_PAUSE0) = 0 -> Unpaused
+    // Bit 16 (CMI_CHEN0) = 0 -> DMA disabled initially
     unsigned int f0 = cmi_read32(CMI_REG_FUNCTRL0);
-    f0 |= (1 << 18);
+    f0 |= CMI_RST_CH0;
     cmi_write32(CMI_REG_FUNCTRL0, f0);
     for (volatile int d = 0; d < 2000; d++);
-    f0 &= ~(1 << 18);
-    f0 &= ~(1 << 2);  // ADC0 = 0 (Playback mode)
-    f0 &= ~(1 << 16); // CHEN0 = 0 (Stop DMA initially)
-    f0 &= ~(1 << 4);  // Clear PAUSE0
+    f0 &= ~CMI_RST_CH0;
+    f0 &= ~CMI_CHADC0; // 0 = Playback / DAC mode
+    f0 &= ~CMI_PAUSE0; // 0 = Unpaused
+    f0 &= ~CMI_CHEN0;  // 0 = Stopped
     cmi_write32(CMI_REG_FUNCTRL0, f0);
 
-    // 4. Configure MISC_CTRL (Routing & Master Amp):
-    // - Double DAC enabled (CMI_MISC_ENDBDAC)
-    // - Copy Front to Rear / 4-Speaker (CMI_MISC_N4SPK3D) -> green (front) & rear jacks both output!
-    // - Analog Master Amp +6dB gain (CMI_MISC_VMGAIN)
-    // - Chipset compat (CMI_MISC_TXVX)
-    // - Explicitly clear CM_XCHGDAC (Front = CH0, green jack!) and CM_PWD (Power Down)
+    // 4. Configure MISC_CTRL:
+    // - Clear CM_PWD (bit 31 = 0: normal power)
+    // - Clear CM_RESET (bit 30 = 0: running)
+    // - Clear CM_XCHGDAC (bit 22 = 0: Front = CH0, green jack!)
+    // - Clear CM_ENDBDAC (bit 23 = 0: Single DAC playback mode)
+    // - Clear bits 29:28 (Internal test monitor signals)
+    // - Set CM_N4SPK3D (bit 26 = 1: Copy Front to Rear / 4-Speaker, so both green & rear jacks output)
     unsigned int misc = cmi_read32(CMI_REG_MISC_CTRL);
-    misc &= ~(CMI_MISC_PWD | CMI_MISC_XCHGDAC | CMI_MISC_RESET);
-    misc |= (CMI_MISC_ENDBDAC | CMI_MISC_N4SPK3D | CMI_MISC_VMGAIN | CMI_MISC_TXVX);
+    misc &= ~(CMI_MISC_PWD | CMI_MISC_RESET | CMI_MISC_XCHGDAC | CMI_MISC_ENDBDAC | (3 << 28));
+    misc |= CMI_MISC_N4SPK3D;
     cmi_write32(CMI_REG_MISC_CTRL, misc);
 
-    // 5. Extended misc initialization magic for CMI8738
-    outb(g_cmi_io_base + CMI_REG_EXT_MISC, 0x20);
-    outb(g_cmi_io_base + CMI_REG_EXT_MISC + 1, 0x09);
-
-    // 6. Ensure CM_NXCHG = 0 in LEGACY_CTRL
+    // 5. Ensure CM_NXCHG = 0 in LEGACY_CTRL
     unsigned int leg = cmi_read32(CMI_REG_LEGACY_CTRL);
     leg &= ~0x80000000;
     cmi_write32(CMI_REG_LEGACY_CTRL, leg);
 
-    // 7. Configure FUNCTRL1:
-    // Default 44.1 kHz (ASFC = 011b, DSFC = 011b) AND Bus Master Request (CMI_BREQ, bit 4)!
+    // 6. Configure FUNCTRL1:
+    // Default 44.1 kHz (DSFC = 011b, ASFC = 011b) AND Bus Master Request (CMI_BREQ, bit 4)!
+    // All SPDIF bits are cleared to 0 (analog DAC mode)
     unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
-    f1 &= ~((7 << 10) | (7 << 13));
-    f1 |= ((3 << 10) | (3 << 13));
-    f1 |= CMI_BREQ;
+    f1 &= ~((7 << 10) | (7 << 13) | 0x000003C0); // clear rates & SPDIF bits
+    f1 |= ((3 << 10) | (3 << 13));               // 44.1 kHz default
+    f1 |= CMI_BREQ;                              // Bus Master Request
     cmi_write32(CMI_REG_FUNCTRL1, f1);
 
-    // 8. Format: 16-bit Stereo (CH0FMT = 11b in CHFORMAT)
+    // 7. Format: 16-bit Stereo (CH0FMT = 11b in CHFORMAT)
     unsigned int fmt = cmi_read32(CMI_REG_CHFORMAT);
     fmt &= ~0x03;
     fmt |= 0x03;
     cmi_write32(CMI_REG_CHFORMAT, fmt);
 
-    // 9. Unmute Native MIXER1 (0x24) and MIXER2 (0x25)
+    // 8. Native MIXER1 (0x24) and MIXER2 (0x25):
     // Writing 0x00 clears CMI_MIXER1_WSMUTE (0x40) to unmute PCM wave playback!
     outb(g_cmi_io_base + CMI_REG_MIXER1, 0x00);
     outb(g_cmi_io_base + CMI_REG_MIXER2, 0x00);
 
-    // 10. Reset SB16 Mixer
+    // 9. Reset SB16 Mixer
     cmi_write_mixer(0x00, 0x00);
 
-    // 11. Unmute Speaker in mixer register 0xF0
+    // 10. Enable all output switches in SB16 MIXER_OUTMIX (0x3C)
+    cmi_write_mixer(0x3C, 0x1F);
+
+    // 11. Unmute Speaker and Phone in extended mixer register 0xF0
     unsigned char ext = cmi_read_mixer(0xF0);
-    ext &= ~0x08; // Clear bit 3 (CM_VSPKM: Speaker mute)
+    ext &= ~0x18; // Clear bit 3 (CM_VSPKM: Speaker mute) and bit 4 (CM_VPHOM: Phone mute)
     cmi_write_mixer(0xF0, ext);
 
     // 12. Set DMA Base Address and Frame Counts
     cmi_write32(CMI_REG_CH0_FRAME1, g_dma_phys);
     cmi_write32(CMI_REG_CH0_FRAME2, ((unsigned int)0x1FFF << 16) | 0x3FFF);
 
-    // 13. Setup Mixer: Master volume and Voice volume to 85%
-    cmi8738_set_volume(85, 85);
+    // 13. Setup Mixer: Master volume and Voice volume to 90%
+    cmi8738_set_volume(90, 90);
 
     return 0;
 }
@@ -198,13 +216,19 @@ unsigned short cmi8738_get_io_base(void) {
 void cmi8738_set_format(int rate, int bits, int stereo) {
     if (!g_cmi_present || !g_cmi_io_base) return;
 
-    // Rate selection in FUNCTRL1 (bits 15:13 DSFC for DAC, bits 12:10 ASFC for ADC)
+    // Rate selection in FUNCTRL1 (bits 15:13 DSFC for DAC, bits 12:10 ASFC for ADC):
+    // Hardware frequency divider table:
+    // 0 = 5512, 1 = 11025, 2 = 22050, 3 = 44100
+    // 4 = 8000, 5 = 16000, 6 = 32000, 7 = 48000
     unsigned int asfc = 3; // 44100 default
-    if (rate >= 48000) asfc = 4;      // 100b = 48000
-    else if (rate >= 44100) asfc = 3; // 011b = 44100
-    else if (rate >= 22050) asfc = 2; // 010b = 22050
-    else if (rate >= 11025) asfc = 1; // 001b = 11025
-    else asfc = 0;                    // 000b = 5512
+    if (rate >= 48000)      asfc = 7; // 48000 Hz
+    else if (rate >= 44100) asfc = 3; // 44100 Hz
+    else if (rate >= 32000) asfc = 6; // 32000 Hz
+    else if (rate >= 22050) asfc = 2; // 22050 Hz
+    else if (rate >= 16000) asfc = 5; // 16000 Hz
+    else if (rate >= 11025) asfc = 1; // 11025 Hz
+    else if (rate >= 8000)  asfc = 4; // 8000 Hz
+    else                    asfc = 0; // 5512 Hz
 
     unsigned int f1 = cmi_read32(CMI_REG_FUNCTRL1);
     f1 &= ~((7 << 10) | (7 << 13));
@@ -212,7 +236,7 @@ void cmi8738_set_format(int rate, int bits, int stereo) {
     f1 |= CMI_BREQ; // Always preserve / assert Bus Master Request
     cmi_write32(CMI_REG_FUNCTRL1, f1);
 
-    // Format in CHFORMAT (bits 1:0 for Channel A)
+    // Format in CHFORMAT (bits 1:0 for Channel A / CH0)
     // 00 = 8-bit Mono, 01 = 8-bit Stereo, 10 = 16-bit Mono, 11 = 16-bit Stereo
     unsigned int chfmt = 0;
     if (bits == 16) chfmt |= 0x02;
@@ -245,10 +269,19 @@ void cmi8738_start_dma(void) {
         outb(g_cmi_io_base + CMI_REG_MIXER1, m1 & ~CMI_MIXER1_WSMUTE);
     }
 
-    // Enable DMA on Channel A (FUNCTRL0 Bit 16) and unpause
+    // Reset Channel 0 before starting
     unsigned int f0 = cmi_read32(CMI_REG_FUNCTRL0);
-    f0 &= ~(1 << 4); // Clear PAUSE0
-    f0 |= (1 << 16); // CHEN0 = 1
+    f0 |= CMI_RST_CH0;
+    cmi_write32(CMI_REG_FUNCTRL0, f0);
+    for (volatile int d = 0; d < 500; d++);
+    f0 &= ~CMI_RST_CH0;
+
+    // Configure Channel 0:
+    // CMI_CHADC0 (bit 0) = 0 -> PLAYBACK / DAC mode!
+    // CMI_PAUSE0 (bit 2) = 0 -> Unpaused
+    // CMI_CHEN0  (bit 16) = 1 -> Enable DMA
+    f0 &= ~(CMI_CHADC0 | CMI_PAUSE0);
+    f0 |= CMI_CHEN0;
     cmi_write32(CMI_REG_FUNCTRL0, f0);
 
     g_dma_running = 1;
@@ -257,11 +290,15 @@ void cmi8738_start_dma(void) {
 void cmi8738_stop_dma(void) {
     if (!g_cmi_present || !g_cmi_io_base) return;
 
-    // Disable DMA on Channel A (FUNCTRL0 Bit 16)
+    // Disable DMA on Channel 0 (FUNCTRL0 Bit 16)
     unsigned int f0 = cmi_read32(CMI_REG_FUNCTRL0);
-    f0 &= ~(1 << 16); // CHEN0 = 0
-    f0 |= (1 << 4);  // PAUSE0 = 1
+    f0 &= ~CMI_CHEN0;
     cmi_write32(CMI_REG_FUNCTRL0, f0);
+
+    // Pulse reset on Channel 0
+    cmi_write32(CMI_REG_FUNCTRL0, f0 | CMI_RST_CH0);
+    for (volatile int d = 0; d < 500; d++);
+    cmi_write32(CMI_REG_FUNCTRL0, f0 & ~CMI_RST_CH0);
 
     g_dma_running = 0;
     g_last_half_playing = -1;
@@ -278,8 +315,8 @@ void cmi8738_pause_dma(int pause) {
     if (!g_cmi_present || !g_cmi_io_base) return;
 
     unsigned int f0 = cmi_read32(CMI_REG_FUNCTRL0);
-    if (pause) f0 |= (1 << 4);  // PAUSE0 = 1
-    else       f0 &= ~(1 << 4); // PAUSE0 = 0
+    if (pause) f0 |= CMI_PAUSE0;
+    else       f0 &= ~CMI_PAUSE0;
     cmi_write32(CMI_REG_FUNCTRL0, f0);
 }
 
@@ -317,9 +354,9 @@ void cmi8738_set_volume(int master_vol, int pcm_vol) {
     // Output switch (0x3C): enable all outputs
     cmi_write_mixer(0x3C, 0x1F);
 
-    // Speaker mute control (0xF0): clear bit 3 (CM_VSPKM: 0 = unmuted)
+    // Speaker and Phone mute control (0xF0): clear bit 3 (CM_VSPKM) and bit 4 (CM_VPHOM)
     unsigned char ext = cmi_read_mixer(0xF0);
-    ext &= ~0x08;
+    ext &= ~0x18;
     cmi_write_mixer(0xF0, ext);
 }
 

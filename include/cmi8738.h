@@ -24,20 +24,28 @@
 #define CMI_REG_CH0_FRAME2     0x84
 #define CMI_REG_EXT_MISC       0x90
 
-// FUNCTRL1 Bits
-#define CMI_BREQ               0x00000010 // PCI Bus Master Enable
+// FUNCTRL0 (0x00) Bits
+#define CMI_CHADC0             0x00000001 // Channel 0 Direction: 0 = Playback (DAC), 1 = Capture (ADC)
+#define CMI_CHADC1             0x00000002 // Channel 1 Direction: 0 = Playback, 1 = Capture
+#define CMI_PAUSE0             0x00000004 // Channel 0 Pause: 1 = Paused, 0 = Running
+#define CMI_PAUSE1             0x00000008 // Channel 1 Pause
+#define CMI_CHEN0              0x00010000 // Channel 0 DMA Enable: 1 = Enabled, 0 = Disabled
+#define CMI_CHEN1              0x00020000 // Channel 1 DMA Enable
+#define CMI_RST_CH0            0x00040000 // Channel 0 Reset: 1 = Reset, 0 = Normal
+#define CMI_RST_CH1            0x00080000 // Channel 1 Reset
 
-// MISC_CTRL Bits
+// FUNCTRL1 (0x04) Bits
+#define CMI_BREQ               0x00000010 // PCI Bus Master Request Enable
+
+// MISC_CTRL (0x18) Bits
 #define CMI_MISC_PWD           0x80000000 // Power Down (0 = normal, 1 = powered down)
-#define CMI_MISC_RESET         0x40000000 // Codec Reset
-#define CMI_MISC_VMGAIN        0x10000000 // Analog Master Amp +6dB Gain
-#define CMI_MISC_TXVX          0x08000000 // Chipset Compatibility
-#define CMI_MISC_N4SPK3D       0x04000000 // Copy Front to Rear (4-Speaker mode)
+#define CMI_MISC_RESET         0x40000000 // Codec Reset (1 = in reset, 0 = normal)
+#define CMI_MISC_N4SPK3D       0x04000000 // Copy Front to Rear (4-Speaker mode, mirrors Front/LineOut to Rear)
 #define CMI_MISC_ENDBDAC       0x00800000 // Enable Double DAC
 #define CMI_MISC_XCHGDAC       0x00400000 // 0: Front = CH0, 1: Front = CH1
 
 // MIXER1 (0x24) Bits
-#define CMI_MIXER1_FMMUTE      0x80       // FM Mute
+#define CMI_MIXER1_FMMUTE      0x80       // FM Mute (1 = Mute, 0 = Unmute)
 #define CMI_MIXER1_WSMUTE      0x40       // PCM Wave Mute (1 = Mute, 0 = Unmute)
 
 // DMA Ring Buffer Dimensions: 64KB total, two 32KB halves

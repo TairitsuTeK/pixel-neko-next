@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.013)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202010.014)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -125,6 +125,17 @@
    ```bash
    make clean
    ```
+
+## 🚀 Build 2010.014 更新特性
+- **🔊 CMI8738 物理实体声卡物理 DAC 输出与通道方向致命修复**：
+  - **CH0 通道方向与暂停标志更正（FUNCTRL0）**：彻底清除 `CM_CHADC0`（Bit 0 = 0，强制配置为播放/DAC模式而非录音/ADC模式），修复因位定义错位导致实卡冷启动进入 ADC 捕获模式而实体 DAC 无法接收 PCM 数据出声的致命硬伤（86Box 模拟器因忽略录音标志强制播放而有声，实卡则彻底静音）。
+  - **PAUSE0 暂停标志位校准**：修正 `CM_PAUSE0` 掩码（Bit 2，0x04），修复以往误操作 Bit 4 导致 DMA 启动时无法真正清除硬件暂停状态的问题。
+  - **MISC_CTRL 寄存器纯净配置**：清除导致部分物理 CMI8738 声卡内部 DAC 路由异常与测试信号旁路的测试监听位（Bits 29:28）及 Double DAC 冲突位（`CM_ENDBDAC`）；保留四声道镜像（`CM_N4SPK3D`），确保 Front Out（绿色孔）与 Rear Out 同时畅响。
+  - **PCI 全总线/设备/功能深度枚举**：将声卡 PCI 扫描扩展至全部 256 个总线、32 个设备和 8 个功能，彻底解决 Intel H55（如 ASUS P7H55-M LE）等现代南桥下扩展槽位于高总线号或多功能桥下时探测不到独立声卡的隐患。
+  - **SB16 慢速混音器 I/O 时延与全通道解闭**：在混音器读写指令间引入 `io_wait()` 端口 0x80 硬件时延，消除现代 3GHz+ 高主频 CPU 突发 I/O 导致物理声卡丢失混音设置；清除 `0xF0` 扬声器与电话静音（Bits 3 & 4），激活 `0x3C` 全通道输出开关。
+  - **硬件分频比规范化**：校准 48000Hz 对应分频代码为 7（原代码误传 4 导致 48k 实际被配置为 8000Hz）。
+
+---
 
 ## 🚀 Build 2010.013 更新特性
 - **🔊 CMI8738 物理实体声卡绿色音频孔（Front Out）发声与硬件寄存器修正**：
