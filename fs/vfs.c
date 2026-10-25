@@ -499,11 +499,17 @@ int vfs_is_booted_from_cdrom(void) {
     if (mb_info && (mb_info[0] & (1 << 1))) {
         unsigned char mb_drv = (mb_info[3] >> 24) & 0xFF;
         if (mb_drv >= 0xE0) return 1;
+        if (mb_drv >= 0x80 && mb_drv < 0xE0) return 0;
+    }
+
+    if (bios_dl >= 0x80 && bios_dl < 0xE0) {
+        return 0;
     }
 
     vfs_dirent_t ent;
-    if (vfs_find_file("C:\\boot\\kernel.elf", &ent) != 0) {
-        return 1;
+    if (vfs_find_file("C:\\boot\\kernel.elf", &ent) == 0 ||
+        vfs_find_file("C:\\kernel.elf", &ent) == 0) {
+        return 0;
     }
 
     return 1;

@@ -788,11 +788,47 @@ int fat_rename(const char* old_name, const char* new_name) {
 // ---------------------------------------------------------
 // Creation
 // ---------------------------------------------------------
+static void ensure_free_calculated(fat_fs_t* vol) {
+    if (vol->is_free_calculated) return;
+    if (vol->type == 32) {
+        unsigned char fsinfo[512];
+        if (vol_read_sec(vol, 1, fsinfo) == 0) {
+            unsigned int lead_sig = *(unsigned int*)&fsinfo[0];
+            unsigned int struct_sig = *(unsigned int*)&fsinfo[484];
+            unsigned int free_count = *(unsigned int*)&fsinfo[488];
+            if (lead_sig == 0x41615252 && struct_sig == 0x61417272 && free_count != 0xFFFFFFFF && free_count <= vol->total_clusters) {
+                vol->free_clusters = free_count;
+                vol->is_free_calculated = 1;
+                return;
+            }
+        }
+    }
+    unsigned int free_cnt = 0;
+    for (unsigned int i = 2; i < vol->total_clusters + 2; i++) {
+        if (fat_read_entry(vol, i) == 0) free_cnt++;
+    }
+    vol->free_clusters = free_cnt;
+    vol->is_free_calculated = 1;
+}
+
+void fat_sync_fsinfo(fat_fs_t* vol) {
+    if (!vol || vol->type != 32 || !vol->dev || !vol->is_free_calculated) return;
+    unsigned char fsinfo[512];
+    if (vol_read_sec(vol, 1, fsinfo) != 0) return;
+    unsigned int lead_sig = *(unsigned int*)&fsinfo[0];
+    unsigned int struct_sig = *(unsigned int*)&fsinfo[484];
+    if (lead_sig == 0x41615252 && struct_sig == 0x61417272) {
+        *(unsigned int*)&fsinfo[488] = vol->free_clusters;
+        vol_write_sec(vol, 1, fsinfo);
+    }
+}
+
 static unsigned int allocate_cluster(fat_fs_t* vol) {
+    ensure_free_calculated(vol);
     for (unsigned int i = 2; i < vol->total_clusters + 2; i++) {
         if (fat_read_entry(vol, i) == 0) {
             fat_write_entry(vol, i, 0x0FFFFFFF);
-            if (vol->is_free_calculated && vol->free_clusters > 0) vol->free_clusters--;
+            if (vol->free_clusters > 0) vol->free_clusters--;
             return i;
         }
     }
@@ -808,35 +844,8 @@ int fat_get_volume_space(char letter, unsigned int* total_kb, unsigned int* free
     unsigned int total_k = (unsigned int)(((unsigned long long)vol->total_clusters * vol->sectors_per_cluster * 512) / 1024);
     if (total_kb) *total_kb = total_k;
 
-    if (vol->is_free_calculated) {
-        if (free_kb) *free_kb = (unsigned int)(((unsigned long long)vol->free_clusters * vol->sectors_per_cluster * 512) / 1024);
-        return 0;
-    }
-
-    // Try reading FSInfo sector if FAT32
-    if (vol->type == 32) {
-        unsigned char fsinfo[512];
-        if (vol_read_sec(vol, 1, fsinfo) == 0) {
-            unsigned int lead_sig = *(unsigned int*)&fsinfo[0];
-            unsigned int struct_sig = *(unsigned int*)&fsinfo[484];
-            unsigned int free_count = *(unsigned int*)&fsinfo[488];
-            if (lead_sig == 0x41615252 && struct_sig == 0x61417272 && free_count != 0xFFFFFFFF && free_count <= vol->total_clusters) {
-                vol->free_clusters = free_count;
-                vol->is_free_calculated = 1;
-                if (free_kb) *free_kb = (unsigned int)(((unsigned long long)free_count * vol->sectors_per_cluster * 512) / 1024);
-                return 0;
-            }
-        }
-    }
-
-    // Otherwise scan FAT table to count 0x00 entries
-    unsigned int free_cnt = 0;
-    for (unsigned int i = 2; i < vol->total_clusters + 2; i++) {
-        if (fat_read_entry(vol, i) == 0) free_cnt++;
-    }
-    vol->free_clusters = free_cnt;
-    vol->is_free_calculated = 1;
-    if (free_kb) *free_kb = (unsigned int)(((unsigned long long)free_cnt * vol->sectors_per_cluster * 512) / 1024);
+    ensure_free_calculated(vol);
+    if (free_kb) *free_kb = (unsigned int)(((unsigned long long)vol->free_clusters * vol->sectors_per_cluster * 512) / 1024);
     return 0;
 }
 
@@ -989,6 +998,12 @@ static int update_cb(fat_fs_t* vol, dir_entry_t* entry, const char* lfn_name, un
     return 0;
 }
 
+static void (*g_fat_write_progress_cb)(unsigned int written, unsigned int total) = 0;
+
+void fat_set_write_progress_cb(void (*cb)(unsigned int written, unsigned int total)) {
+    g_fat_write_progress_cb = cb;
+}
+
 int fat_write_file(const char* name, const unsigned char* buf, unsigned int size) {
     file_info_t info;
     if (fat_find(name, &info) == 0) {
@@ -1016,6 +1031,7 @@ int fat_write_file(const char* name, const unsigned char* buf, unsigned int size
         unsigned int current_cluster = 0;
         unsigned int remaining = size;
         unsigned int offset = 0;
+        unsigned int last_cb_offset = 0;
         unsigned char sector_buf[512];
         
         while (remaining > 0) {
@@ -1036,6 +1052,10 @@ int fat_write_file(const char* name, const unsigned char* buf, unsigned int size
                 vol_write_sec(vol, cluster_to_sector(vol, new_cluster) + i, sector_buf);
                 remaining -= to_write;
                 offset += to_write;
+                if (g_fat_write_progress_cb && (offset - last_cb_offset >= 65536 || remaining == 0)) {
+                    last_cb_offset = offset;
+                    g_fat_write_progress_cb(offset, size);
+                }
             }
         }
     }
@@ -1050,5 +1070,10 @@ int fat_write_file(const char* name, const unsigned char* buf, unsigned int size
 
 extern void disk_flush_all(void);
 void fat_flush_all(void) {
+    for (int i = 0; i < MAX_VOLUMES; i++) {
+        if (g_volumes[i].type == 32) {
+            fat_sync_fsinfo(&g_volumes[i]);
+        }
+    }
     disk_flush_all();
 }

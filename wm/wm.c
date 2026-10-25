@@ -230,7 +230,7 @@ static void window(unsigned char* v, int wx, int wy, const char* t, int ww, int 
 
 static void about_win(unsigned char* v, int wx, int wy)
 {
-    window(v,wx,wy,"About",ww,wh,0, (z_order[4]==0));
+    window(v,wx,wy,"About",ww,wh,0, (z_order[10]==0));
     int lx=wx+(ww-41)/2,ly=wy+25;
     for(int y=ly+3;y<ly+18;y++)for(int x=lx-7;x<lx+48;x++)PUT_PIXEL(v, x, y, 1);
     for(int x=lx-4;x<lx+45;x++)PUT_PIXEL(v, x, (ly+3), 9);
@@ -614,7 +614,7 @@ static void draw_menubar(unsigned char* v)
             font_draw_text(v, 10, 24+36, "Restart Computer", 0);
             font_draw_text(v, 10, 24+54, "Shut Down Computer", 0);
         } else if (menu_index == 0) { // File
-            if (z_order[9] == 5 && edv && !edm) { // Notepad active
+            if (z_order[10] == 5 && edv && !edm) { // Notepad active
                 draw_menu_popup(v, 30, 20, 130, 4*18+4);
                 font_draw_text(v, 38, 24, "New", 0);
                 font_draw_text(v, 38, 24+18, "Save", 0);
@@ -627,7 +627,7 @@ static void draw_menubar(unsigned char* v)
         } else if (menu_index == 1) { // Edit
             draw_menu_popup(v, 66, 20, 120, 6*18+4);
             font_draw_text(v, 74, 24, "Undo", 8);
-            int ed_active = (z_order[9] == 5 && edv && !edm);
+            int ed_active = (z_order[10] == 5 && edv && !edm);
             int has_sel = (ed_active && editor_has_selection());
             font_draw_text(v, 74, 24+18, "Cut", has_sel ? 0 : 8);
             font_draw_text(v, 74, 24+36, "Copy", has_sel ? 0 : 8);
@@ -858,7 +858,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
                 }
             }
         } else if (menu_index == 0) { // File
-            if (z_order[9] == 5 && edv && !edm && mx >= 30 && mx < 30 + 130 && my >= 20 && my < 20 + 4*18 + 4) {
+            if (z_order[10] == 5 && edv && !edm && mx >= 30 && mx < 30 + 130 && my >= 20 && my < 20 + 4*18 + 4) {
                 int item = (my - 24) / 18;
                 extern void editor_init(void);
                 extern void editor_save(void);
@@ -869,7 +869,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
                 else if (item == 3) { edv = 0; editor_init(); redraw = 1; }
             }
         } else if (menu_index == 1) { // Edit
-            if (z_order[9] == 5 && edv && !edm && mx >= 66 && mx < 66 + 120 && my >= 20 && my < 20 + 6*18 + 4) {
+            if (z_order[10] == 5 && edv && !edm && mx >= 66 && mx < 66 + 120 && my >= 20 && my < 20 + 6*18 + 4) {
                 int item = (my - 24) / 18;
                 extern void editor_cut(void);
                 extern void editor_copy(void);
@@ -920,19 +920,21 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
         else { menu_open = 0; redraw = 1; }
         return;
     }
-    if (z_order[9] == 4 && fmv && !fmm) {
-        fm_update(v, mx, my, mb, fmx, fmy, fmw, fmh);
-    }
     if ((mb & 1)) {
-        if (z_order[9] == 5 && edv && !edm && mx >= edx && mx < edx+edw && my >= edy+20 && my < edy+edh) {
+        if (z_order[10] == 4 && fmv && !fmm) {
+            if (fm_drag(mx, my, fmx, fmy, fmw, fmh)) {
+                redraw = 1;
+            }
+        }
+        if (z_order[10] == 5 && edv && !edm && mx >= edx && mx < edx+edw && my >= edy+20 && my < edy+edh) {
             if (editor_drag(mx, my, edx, edy+20, edw, edh-20)) {
                 redraw = 1;
             }
         }
-        if (z_order[9] == 8 && imv && !imm && mx >= imx && mx < imx+imw && my >= imy+20 && my < imy+imh) {
+        if (z_order[10] == 8 && imv && !imm && mx >= imx && mx < imx+imw && my >= imy+20 && my < imy+imh) {
             imageviewer_drag(mx, my, imx, imy, imw, imh);
         }
-        if (!dragging && z_order[9] == 9 && npv && !npm) {
+        if (!dragging && z_order[10] == 9 && npv && !npm) {
             if (audioplayer_drag(mx, my, npx, npy, npw, nph)) {
                 redraw = 1;
             }
@@ -948,15 +950,15 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
     // Keyboard input to active window
     int key = keyboard_get_key();
     while (key != 0) {
-        if (z_order[9] == 4 && fmv && !fmm) {
+        if (z_order[10] == 4 && fmv && !fmm) {
             fm_handle_key(key);
             redraw = 1;
         }
-        if (z_order[9] == 5 && edv && !edm) {
+        if (z_order[10] == 5 && edv && !edm) {
             editor_handle_key(key);
             redraw = 1;
         }
-        if (z_order[9] == 8 && imv && !imm) {
+        if (z_order[10] == 8 && imv && !imm) {
             imageviewer_handle_key(key);
             redraw = 1;
         }
@@ -1110,7 +1112,7 @@ void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_re
             if (id == 5 && edv && !edm && rs_dir(mx,my,edx,edy,edw,edh)){resizing=1;dgw=5;rs_active=0;bring_to_top(5);break;}
             if (id == 5 && edv && !edm && mx>=edx && mx<edx+edw && my>=edy && my<edy+edh) { hit_window=1; bring_to_top(5); editor_click(mx, my, edx, edy+20, edw, edh-20); redraw=1; break; }
             if (id == 4 && fmv && !fmm && rs_dir(mx,my,fmx,fmy,fmw,fmh)){resizing=1;dgw=4;rs_active=0;bring_to_top(4);break;}
-            if (id == 4 && fmv && !fmm && mx>=fmx && mx<fmx+fmw && my>=fmy && my<fmy+fmh) { hit_window=1; bring_to_top(4); fm_update(v, mx, my, mb, fmx, fmy, fmw, fmh); redraw=1; break; }
+            if (id == 4 && fmv && !fmm && mx>=fmx && mx<fmx+fmw && my>=fmy && my<fmy+fmh) { hit_window=1; bring_to_top(4); fm_click(v, mx, my, mb, fmx, fmy, fmw, fmh); redraw=1; break; }
             if (id == 3 && cpv && !cpm && rs_dir(mx,my,cpx,cpy,cpw,cph)){resizing=1;dgw=3;rs_active=0;bring_to_top(3);break;}
             if (id == 3 && cpv && !cpm && mx>=cpx && mx<cpx+cpw && my>=cpy && my<cpy+cph) { hit_window=1; bring_to_top(3); redraw=1; break; }
             if (id == 2 && clv && !clm && rs_dir(mx,my,wcx,wcy,wcw,wch)){resizing=1;dgw=2;rs_active=0;bring_to_top(2);break;}

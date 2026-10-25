@@ -91,6 +91,7 @@ int fat_rename(const char* old_name, const char* new_name);
 int fat_create(const char* name);
 int fat_create_dir(const char* name);
 int fat_write_file(const char* name, const unsigned char* buf, unsigned int size);
+void fat_set_write_progress_cb(void (*cb)(unsigned int written, unsigned int total));
 void fat_flush_all(void);
 
 int fat_mount_dev(char letter, blkdev_t* dev, unsigned int lba);

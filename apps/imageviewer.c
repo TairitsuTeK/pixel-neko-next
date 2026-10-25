@@ -6,6 +6,7 @@
 #include "mm.h"
 #include "vfs.h"
 #include "speaker.h"
+#include "settings.h"
 
 int imv = 0;
 int imm = 0;
@@ -360,6 +361,8 @@ void imageviewer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww,
             if (item >= 0 && item < 4 && g_img_loaded) {
                 wallpaper_mode_t m = (wallpaper_mode_t)item;
                 wallpaper_set_image(&g_img, m);
+                settings_set_wallpaper(g_img_path, m);
+                settings_save();
             }
         }
         g_wp_menu_open = 0;

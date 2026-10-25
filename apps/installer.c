@@ -57,6 +57,42 @@ static void str_cat_inst(char* dst, const char* src) {
     *dst = '\0';
 }
 
+static int g_progress_percent = 0;
+static char g_progress_text[64] = "Preparing installation...";
+static char g_progress_subtext[64] = "";
+
+static void update_progress_ui(int percent, const char* text, const char* subtext) {
+    g_progress_percent = percent;
+    int k = 0; while (text && text[k] && k < 63) { g_progress_text[k] = text[k]; k++; }
+    g_progress_text[k] = '\0';
+    k = 0; while (subtext && subtext[k] && k < 63) { g_progress_subtext[k] = subtext[k]; k++; }
+    g_progress_subtext[k] = '\0';
+
+    extern unsigned char backbuffer[];
+    extern void copy_fullscreen_to_lfb(const unsigned char* s_buf);
+    wm_draw(backbuffer);
+    copy_fullscreen_to_lfb(backbuffer);
+}
+
+static void on_kernel_write_progress(unsigned int written, unsigned int total) {
+    if (total == 0) return;
+    int pct = 30 + (int)(((unsigned long long)written * 45) / total);
+    if (pct > 75) pct = 75;
+    char num_buf[48];
+    unsigned int wr_kb = written / 1024;
+    unsigned int tot_kb = total / 1024;
+    char w_str[16], t_str[16];
+    my_itoa_inst(wr_kb, w_str);
+    my_itoa_inst(tot_kb, t_str);
+    num_buf[0] = '\0';
+    str_cat_inst(num_buf, "Writing kernel: ");
+    str_cat_inst(num_buf, w_str);
+    str_cat_inst(num_buf, " / ");
+    str_cat_inst(num_buf, t_str);
+    str_cat_inst(num_buf, " KB");
+    update_progress_ui(pct, "Copying system kernel...", num_buf);
+}
+
 static void scan_targets(void) {
     g_part_count = 0;
     for (int i = 0; i < 26; i++) {
@@ -148,6 +184,8 @@ static int do_installation(char target_letter) {
     blkdev_t* dev = d->dev;
     unsigned int part_lba = d->start_lba;
 
+    update_progress_ui(5, "Writing GRUB4DOS MBR to disk...", "Master Boot Record LBA 0-15");
+
     // 1. Write GRUB4DOS MBR to disk (LBA 0..15)
     unsigned char orig_mbr[512];
     if (dev->read_sectors(dev, 0, 1, orig_mbr) != 0) return -2;
@@ -180,6 +218,8 @@ static int do_installation(char target_letter) {
     if (dev->write_sectors(dev, 0, 1, new_mbr) != 0) return -3;
     if (dev->write_sectors(dev, 1, 15, g_grldr_mbr + 512) != 0) return -4;
 
+    update_progress_ui(15, "Writing GRUB4DOS PBR to partition...", "Partition Boot Record");
+
     // 2. Write GRUB4DOS PBR (to partition start_lba)
     unsigned char orig_pbr[512];
     if (dev->read_sectors(dev, part_lba, 1, orig_pbr) != 0) return -5;
@@ -207,12 +247,16 @@ static int do_installation(char target_letter) {
     char cd_let = vfs_get_boot_cdrom_letter();
     if (!cd_let) return -7;
 
+    update_progress_ui(25, "Creating destination directories...", "Target: \\boot");
+
     // 4. Create destination \boot directory
     char boot_dir[16];
     boot_dir[0] = target_letter; boot_dir[1] = ':'; boot_dir[2] = '\\';
     boot_dir[3] = 'b'; boot_dir[4] = 'o'; boot_dir[5] = 'o'; boot_dir[6] = 't';
     boot_dir[7] = '\0';
     fat_create_dir(boot_dir);
+
+    update_progress_ui(30, "Reading kernel.elf from CD-ROM...", "Loading OS image into memory");
 
     // 5. Copy kernel.elf
     char src_kernel[32];
@@ -237,16 +281,12 @@ static int do_installation(char target_letter) {
     dst_kernel[11] = 'n'; dst_kernel[12] = 'e'; dst_kernel[13] = 'l'; dst_kernel[14] = '.';
     dst_kernel[15] = 'e'; dst_kernel[16] = 'l'; dst_kernel[17] = 'f'; dst_kernel[18] = '\0';
 
+    fat_set_write_progress_cb(on_kernel_write_progress);
     int cp_k = copy_vfs_file(src_kernel, dst_kernel);
+    fat_set_write_progress_cb(0);
     if (cp_k != 0) return -(80 + cp_k);
 
-    // Also copy to root of target drive (C:\kernel.elf)
-    char dst_kernel_root[32];
-    dst_kernel_root[0] = target_letter; dst_kernel_root[1] = ':'; dst_kernel_root[2] = '\\';
-    dst_kernel_root[3] = 'k'; dst_kernel_root[4] = 'e'; dst_kernel_root[5] = 'r'; dst_kernel_root[6] = 'n';
-    dst_kernel_root[7] = 'e'; dst_kernel_root[8] = 'l'; dst_kernel_root[9] = '.'; dst_kernel_root[10] = 'e';
-    dst_kernel_root[11] = 'l'; dst_kernel_root[12] = 'f'; dst_kernel_root[13] = '\0';
-    copy_vfs_file(src_kernel, dst_kernel_root);
+    update_progress_ui(78, "Copying GRUB bootloader...", "Copying grldr to root directory");
 
     // 6. Copy grldr
     char src_grldr[32];
@@ -275,8 +315,9 @@ static int do_installation(char target_letter) {
     dst_grldr_boot[3] = 'b'; dst_grldr_boot[4] = 'o'; dst_grldr_boot[5] = 'o'; dst_grldr_boot[6] = 't';
     dst_grldr_boot[7] = '\\'; dst_grldr_boot[8] = 'g'; dst_grldr_boot[9] = 'r'; dst_grldr_boot[10] = 'l';
     dst_grldr_boot[11] = 'd'; dst_grldr_boot[12] = 'r'; dst_grldr_boot[13] = '\0';
-
     copy_vfs_file(src_grldr, dst_grldr_boot);
+
+    update_progress_ui(88, "Writing GRUB configuration...", "Creating menu.lst");
 
     // 7. Write menu.lst (to root and to \boot)
     static const char g_menulst_text[] = 
@@ -302,8 +343,15 @@ static int do_installation(char target_letter) {
     dst_menu_boot[12] = '.'; dst_menu_boot[13] = 'l'; dst_menu_boot[14] = 's'; dst_menu_boot[15] = 't'; dst_menu_boot[16] = '\0';
     vfs_write_file(dst_menu_boot, (const unsigned char*)g_menulst_text, mlen);
 
+    update_progress_ui(95, "Flushing disk cache and syncing filesystem...", "Writing FAT FSInfo & buffers");
+
     // 8. Flush disk writes
     fat_flush_all();
+
+    // 9. Refresh drive space cache
+    vfs_get_drive_space(target_letter, 0, 0, 0);
+
+    update_progress_ui(100, "Installation completed successfully!", "System files ready to boot");
 
     return 0;
 }
@@ -416,6 +464,49 @@ void installer_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         draw_btn(v, wx + ww - 100, wy + wh - 30, 88, 22, "Install Now", 7, 0);
         draw_btn(v, wx + ww - 185, wy + wh - 30, 75, 22, "< Back", 7, 0);
 
+    } else if (g_step == STEP_PROGRESS) {
+        font_draw_text(v, wx + 12, wy + 26, "Installing Pixel Neko...", 0);
+        font_draw_text(v, wx + 12, wy + 48, g_progress_text, 8);
+
+        // Progress bar container
+        int bx = wx + 12, by = wy + 72, bw = ww - 24, bh = 20;
+        // Inset border
+        for (int x = bx; x < bx + bw; x++) {
+            PUT_PIXEL(v, x, by, 8);
+            PUT_PIXEL(v, x, by + bh - 1, 15);
+        }
+        for (int y = by; y < by + bh; y++) {
+            PUT_PIXEL(v, bx, y, 8);
+            PUT_PIXEL(v, bx + bw - 1, y, 15);
+        }
+        // Background
+        for (int y = by + 1; y < by + bh - 1; y++) {
+            for (int x = bx + 1; x < bx + bw - 1; x++) {
+                PUT_PIXEL(v, x, y, 15);
+            }
+        }
+        // Fill bar
+        int fill_w = ((bw - 4) * g_progress_percent) / 100;
+        if (fill_w > bw - 4) fill_w = bw - 4;
+        if (fill_w < 0) fill_w = 0;
+        for (int y = by + 2; y < by + bh - 2; y++) {
+            for (int x = bx + 2; x < bx + 2 + fill_w; x++) {
+                PUT_PIXEL(v, x, y, 1);
+            }
+        }
+        // Progress percentage text
+        char pct_str[16];
+        my_itoa_inst(g_progress_percent, pct_str);
+        str_cat_inst(pct_str, "%");
+        font_draw_text(v, bx + (bw / 2) - 12, by + 4, pct_str, (fill_w > (bw / 2)) ? 15 : 0);
+
+        // Status subtext
+        font_draw_text(v, wx + 12, wy + 102, g_progress_subtext, 0);
+        font_draw_text(v, wx + 12, wy + 128, "Please do not turn off your computer.", 8);
+
+        // Disabled button indicating background operation
+        draw_btn(v, wx + ww - 100, wy + wh - 30, 88, 22, "Working...", 8, 7);
+
     } else if (g_step == STEP_COMPLETE) {
         if (g_install_error == 0) {
             font_draw_text(v, wx + 12, wy + 26, "Installation Succeeded!", 2);
@@ -495,6 +586,8 @@ void installer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, i
         // Install Now button
         int ibx = wx + ww - 100, iby = wy + wh - 30;
         if (mx >= ibx && mx < ibx + 88 && my >= iby && my < iby + 22) {
+            g_step = STEP_PROGRESS;
+            update_progress_ui(0, "Starting installation...", "Preparing disk and partitions");
             int err = do_installation(g_target_letter);
             g_install_error = err;
             g_step = STEP_COMPLETE;
@@ -510,6 +603,10 @@ void installer_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, i
             redraw = 1;
             return;
         }
+
+    } else if (g_step == STEP_PROGRESS) {
+        // While installing, user clicks are ignored to protect disk operations
+        return;
 
     } else if (g_step == STEP_COMPLETE) {
         if (g_install_error == 0) {

@@ -7,6 +7,7 @@
 #include "audio.h"
 #include "cpu.h"
 #include "splash.h"
+#include "settings.h"
 
 int screen_w = 320;
 int screen_h = 200;
@@ -489,6 +490,9 @@ void kernel_main(void)
 
     unsigned char* v = backbuffer;
     int mx, my, mb, last_mx = -1, last_my = -1, last_mb = 0;
+
+    settings_init();
+    settings_load();
 
     wm_init();
     wm_draw(v);

@@ -21,6 +21,7 @@ C_SOURCES = kernel/kernel.c \
             kernel/panic.c \
             kernel/image_dec.c \
             kernel/wallpaper.c \
+            kernel/settings.c \
             kernel/audio.c \
             kernel/wav_dec.c \
             kernel/flac_dec.c \

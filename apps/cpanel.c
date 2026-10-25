@@ -5,6 +5,7 @@
 #include "port.h"
 #include "gfx_accel.h"
 #include "wallpaper.h"
+#include "settings.h"
 
 static int slider_val = 2;
 int revert_timer = 0;
@@ -283,6 +284,8 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     // Pattern Previous '<'
     if (mx >= wx+120 && mx < wx+140 && my >= wy+102 && my < wy+120) {
         g_desktop_pattern = (g_desktop_pattern + 5) % 6;
+        settings_set_pattern(g_desktop_pattern);
+        settings_save();
         redraw = 1;
         return;
     }
@@ -290,6 +293,8 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     // Pattern Next '>'
     if (mx >= wx+260 && mx < wx+280 && my >= wy+102 && my < wy+120) {
         g_desktop_pattern = (g_desktop_pattern + 1) % 6;
+        settings_set_pattern(g_desktop_pattern);
+        settings_save();
         redraw = 1;
         return;
     }
@@ -299,22 +304,28 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
         if (my >= wy+126 && my < wy+144) {
             if (mx >= wx+95 && mx < wx+131) {
                 wallpaper_set_mode(WP_MODE_FILL);
+                settings_save();
                 redraw = 1;
                 return;
             } else if (mx >= wx+135 && mx < wx+167) {
                 wallpaper_set_mode(WP_MODE_FIT);
+                settings_save();
                 redraw = 1;
                 return;
             } else if (mx >= wx+171 && mx < wx+217) {
                 wallpaper_set_mode(WP_MODE_STRETCH);
+                settings_save();
                 redraw = 1;
                 return;
             } else if (mx >= wx+221 && mx < wx+257) {
                 wallpaper_set_mode(WP_MODE_TILE);
+                settings_save();
                 redraw = 1;
                 return;
             } else if (mx >= wx+261 && mx < wx+293) {
                 wallpaper_clear();
+                settings_clear_wallpaper();
+                settings_save();
                 redraw = 1;
                 return;
             }
@@ -325,6 +336,8 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
     if (revert_timer > 0) {
         if (mx >= wx+165 && mx < wx+270 && my >= wy+180 && my < wy+202) {
             revert_timer = 0;
+            settings_set_resolution(screen_w, screen_h, screen_bpp);
+            settings_save();
             redraw = 1;
         }
         return;
@@ -360,6 +373,9 @@ void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int 
             }
         }
         revert_timer = 0;
+        settings_set_resolution(screen_w, screen_h, screen_bpp);
+        settings_set_pattern(g_desktop_pattern);
+        settings_save();
         redraw = 1;
         return;
     }
