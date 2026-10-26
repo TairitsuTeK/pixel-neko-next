@@ -14,7 +14,7 @@
 #define CMD_SENSE_INT 0x08
 #define CMD_SEEK      0x0F
 
-static unsigned char fdc_dma_buf[18 * 512] __attribute__((aligned(32768)));
+static unsigned char fdc_dma_buf[512] __attribute__((aligned(512)));
 static int drive_types[2] = {0, 0}; // 4 = 1.44M, 3 = 720K, etc.
 static int current_cyl[2] = {-1, -1};
 static int motor_running[2] = {0, 0};

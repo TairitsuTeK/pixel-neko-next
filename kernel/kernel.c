@@ -14,6 +14,7 @@
 #include "irq.h"
 #include "log.h"
 #include "version.h"
+#include "usb_core.h"
 
 int screen_w = 320;
 int screen_h = 200;
@@ -553,6 +554,8 @@ void kernel_main(void)
     // Play Mac OS 9 & Windows 3.1 retro boot splash animation
     splash_run();
 
+    usb_init();
+
     unsigned char* v = backbuffer;
     int mx, my, mb, last_mx = -1, last_my = -1, last_mb = 0;
 
@@ -579,6 +582,7 @@ void kernel_main(void)
     if (hardware_cursor) gfx_accel_set_cursor(mx, my, 1);
 
     while (1) {
+        usb_poll();
         audio_poll();
         timer_update();
         check_revert_timer();

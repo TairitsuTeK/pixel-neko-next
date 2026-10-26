@@ -1,7 +1,7 @@
 #!/bin/bash
 # build_counter.sh - 每次编译递增 build number
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 VERSION_FILE="$ROOT_DIR/include/version.h"
