@@ -82,6 +82,7 @@ jobs:
           - Build 2012.001 fixes stalled SVGA presentation and frozen PS/2 input by using software-cursor and polling fallbacks.
           - Build 2012.100 adds Intel/VMware HDAudio, VIA VT1708S routing, 44.1/48kHz streams and explicit SVGA 3D-capable 2D compatibility.
           - Build 2012.101 fixes hidden PCI devices in System Information and adds exact VMware 15AD:1977 HDAudio probing with detailed fallback status.
+          - Build 2012.102 fixes HDA Connection List Node ID decoding for routable VMware HDA Codec output paths.
         draft: false
         prerelease: false
         files: |

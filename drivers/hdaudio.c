@@ -444,13 +444,23 @@ static int hda_add_widget(unsigned int codec, unsigned short nid, int depth)
         int long_form = (length & 0x80) != 0;
         if (count > HDA_MAX_CONNECTIONS) count = HDA_MAX_CONNECTIONS;
         widget->conn_count = (unsigned char)count;
-        for (int index = 0; index < count; index += long_form ? 1 : 2) {
+        int step = long_form ? 2 : 4;
+        for (int index = 0; index < count; index += step) {
             unsigned int list = 0;
             hda_command(codec, nid, HDA_VERB_GET_CONNECT_LIST,
                         (unsigned short)index, &list);
-            widget->conn[index] = (unsigned short)(list & 0xFFFFU);
-            if (!long_form && index + 1 < count) {
-                widget->conn[index + 1] = (unsigned short)(list >> 16);
+            if (long_form) {
+                widget->conn[index] = (unsigned short)(list & 0xFFFFU);
+                if (index + 1 < count) {
+                    widget->conn[index + 1] =
+                        (unsigned short)(list >> 16);
+                }
+            } else {
+                for (int offset = 0; offset < 4 && index + offset < count;
+                     offset++) {
+                    widget->conn[index + offset] =
+                        (unsigned short)((list >> (offset * 8)) & 0xFFU);
+                }
             }
         }
     }
