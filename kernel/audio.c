@@ -2,6 +2,7 @@
 #include "audio.h"
 #include "cmi8738.h"
 #include "ct4810.h"
+#include "hdaudio.h"
 #include "wav_dec.h"
 #include "flac_dec.h"
 #include "mp3_dec.h"
@@ -48,6 +49,21 @@ static const audio_driver_ops_t g_cmi8738_ops = {
     .get_dma_buffer = cmi8738_get_dma_buffer,
 };
 
+static const audio_driver_ops_t g_hdaudio_ops = {
+    .get_name = hdaudio_get_name,
+    .is_present = hdaudio_is_present,
+    .set_format = hdaudio_set_format,
+    .start_dma = hdaudio_start_dma,
+    .stop_dma = hdaudio_stop_dma,
+    .pause_dma = hdaudio_pause_dma,
+    .set_volume = hdaudio_set_volume,
+    .poll_half_needed = hdaudio_poll_half_needed,
+    .write_half = hdaudio_write_half,
+    .silence_half = hdaudio_silence_half,
+    .get_dma_frame_pos = hdaudio_get_dma_frame_pos,
+    .get_dma_buffer = hdaudio_get_dma_buffer,
+};
+
 static const audio_driver_ops_t g_ct4810_ops = {
     .get_name = ct4810_get_name,
     .is_present = ct4810_is_present,
@@ -72,6 +88,20 @@ static int probe_cmi8738_driver(void)
 {
     return cmi8738_init() == 0 && cmi8738_is_present();
 }
+
+static int probe_hdaudio_driver(void)
+{
+    return hdaudio_init() == 0 && hdaudio_is_present();
+}
+
+static const driver_descriptor_t g_hdaudio_driver = {
+    "Intel/VIA High Definition Audio",
+    DRIVER_CATEGORY_AUDIO,
+    120,
+    probe_hdaudio_driver,
+    0,
+    0
+};
 
 static const driver_descriptor_t g_ct4810_driver = {
     "Ensoniq AudioPCI / CT4810",
@@ -186,12 +216,16 @@ void audio_init(void) {
     g_vu_l = 0;
     g_vu_r = 0;
 
-    // 智能硬件识别：优先检测 Creative CT4810 (CT5880 / ES1371)，其次检测 C-Media CMI8738
+    // Probe HDA first, then the existing AC'97 and CMI8738 paths.
     g_active_driver = 0;
+    driver_register(&g_hdaudio_driver);
     driver_register(&g_ct4810_driver);
     driver_register(&g_cmi8738_driver);
     driver_probe_category(DRIVER_CATEGORY_AUDIO);
     if (driver_is_active(DRIVER_CATEGORY_AUDIO,
+                         "Intel/VIA High Definition Audio")) {
+        g_active_driver = &g_hdaudio_ops;
+    } else if (driver_is_active(DRIVER_CATEGORY_AUDIO,
                          "Ensoniq AudioPCI / CT4810")) {
         g_active_driver = &g_ct4810_ops;
     } else if (driver_is_active(DRIVER_CATEGORY_AUDIO, "C-Media CMI8738")) {

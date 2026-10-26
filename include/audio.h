@@ -2,7 +2,7 @@
 #define AUDIO_H
 
 // Unified Kernel Audio Engine & DSP Processor
-// Supported hardware: C-Media CMI8738/PCI (Native Hardware DMA)
+// Supported hardware: Intel HDA, C-Media CMI8738, Ensoniq ES1371/CT4810
 
 typedef enum {
     AUDIO_STATE_STOPPED = 0,
@@ -24,7 +24,7 @@ typedef struct {
 } audio_info_t;
 
 void audio_init(void);
-void audio_poll(void); // Call in OS main loop to pump PCM to CMI8738 DMA
+void audio_poll(void); // Call in OS main loop to pump PCM to the active DMA backend
 void enable_fpu(void); // Initialize/re-enable x87 FPU and SSE
 
 int audio_has_hardware(void);

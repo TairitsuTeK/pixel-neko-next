@@ -80,6 +80,7 @@ jobs:
           - Existing ATI Mach64, CT4810/ES1371, CMI8738 and standard VBE fallback paths remain available.
           - SVGA 3D-capable VMware profiles are accepted for 2D acceleration; full 3D rendering is not part of this release.
           - Build 2012.001 fixes stalled SVGA presentation and frozen PS/2 input by using software-cursor and polling fallbacks.
+          - Build 2012.100 adds Intel/VMware HDAudio, VIA VT1708S routing, 44.1/48kHz streams and explicit SVGA 3D-capable 2D compatibility.
         draft: false
         prerelease: false
         files: |

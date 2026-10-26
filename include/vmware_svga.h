@@ -14,6 +14,7 @@
 
 int vmware_svga_probe(void);
 int vmware_svga_is_active(void);
+int vmware_svga_is_3d_capable(void);
 int vmware_svga_supports_mode(int width, int height, int bpp);
 int vmware_svga_set_mode(int width, int height, int bpp);
 const char* vmware_svga_get_name(void);

@@ -452,8 +452,12 @@ int vmware_svga_set_mode(int width, int height, int bpp)
     }
 
     if (g_fifo_ready) {
-        g_status = g_cursor_ready ? "FIFO 2D + hardware cursor"
-                                  : "FIFO 2D (software cursor fallback)";
+        if (g_capabilities & SVGA_CAP_3D) {
+            g_status = "3D-capable profile: FIFO 2D, 2D-only mode";
+        } else {
+            g_status = g_cursor_ready ? "FIFO 2D + hardware cursor"
+                                      : "FIFO 2D (software cursor fallback)";
+        }
     } else {
         g_status = "Linear framebuffer fallback";
     }
@@ -462,12 +466,20 @@ int vmware_svga_set_mode(int width, int height, int bpp)
                width, height, bpp, pitch, framebuffer,
                g_fifo_ready ? "ready" : "fallback",
                g_cursor_ready ? "ready" : "software");
+    if (g_capabilities & SVGA_CAP_3D) {
+        log_write("[SVGA] 3D-capable profile accepted; FIFO 2D retained\n");
+    }
     return 1;
 }
 
 int vmware_svga_is_active(void)
 {
     return g_active;
+}
+
+int vmware_svga_is_3d_capable(void)
+{
+    return (g_capabilities & SVGA_CAP_3D) != 0;
 }
 
 int vmware_svga_supports_mode(int width, int height, int bpp)

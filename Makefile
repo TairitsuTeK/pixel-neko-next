@@ -33,6 +33,7 @@ C_SOURCES = kernel/kernel.c \
             drivers/ati_mach64.c \
             drivers/pci.c \
             drivers/vmware_svga.c \
+            drivers/hdaudio.c \
             drivers/cmi8738.c \
             drivers/ct4810.c \
             drivers/gfx_accel.c \
