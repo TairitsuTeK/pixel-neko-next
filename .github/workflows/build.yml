@@ -79,6 +79,7 @@ jobs:
           - PIT, PS/2 keyboard and PS/2 mouse now use hardware IRQs; CMI8738 and CT4810/ES1371 DMA buffers use the common DMA allocator.
           - Existing ATI Mach64, CT4810/ES1371, CMI8738 and standard VBE fallback paths remain available.
           - SVGA 3D-capable VMware profiles are accepted for 2D acceleration; full 3D rendering is not part of this release.
+          - Build 2012.001 fixes stalled SVGA presentation and frozen PS/2 input by using software-cursor and polling fallbacks.
         draft: false
         prerelease: false
         files: |

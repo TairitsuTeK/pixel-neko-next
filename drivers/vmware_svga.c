@@ -44,6 +44,7 @@
 #define SVGA_CMD_RECT_FILL   2
 #define SVGA_CMD_RECT_COPY   3
 #define SVGA_CMD_DEFINE_CURSOR 19
+#define SVGA_CMD_MOVE_CURSOR   20
 
 #define SVGA_CURSOR_HIDE 0
 #define SVGA_CURSOR_SHOW 1
@@ -51,6 +52,11 @@
 #define SVGA_FIFO_MIN_BYTES 4096U
 #define SVGA_FIFO_MIN_SIZE  16384U
 #define SVGA_WAIT_LOOPS     500000
+
+// 2012.001 keeps hardware cursor disabled until VMware host behavior is
+// validated. The cursor previously shared the command FIFO with UPDATE and a
+// rejected cursor command could stop all subsequent screen updates.
+#define VMWARE_ENABLE_HARDWARE_CURSOR 0
 
 static const pci_device_t* g_pci;
 static int g_probed;
@@ -127,6 +133,8 @@ void vmware_svga_sync(void)
         if (!(svga_read_reg(SVGA_REG_BUSY) & 1U)) return;
         outb(0x80, 0);
     }
+    g_fifo_ready = 0;
+    g_status = "FIFO timeout (linear framebuffer fallback)";
     log_printf("[SVGA] FIFO sync timeout (busy=%u)\n",
                svga_read_reg(SVGA_REG_BUSY));
 }
@@ -165,6 +173,7 @@ static int svga_fifo_emit(const unsigned int* words, unsigned int count)
         }
 
         vmware_svga_sync();
+        if (!g_fifo_ready) return 0;
     }
     return 0;
 }
@@ -184,6 +193,7 @@ static int svga_normalize_rect(int* x, int* y, int* width, int* height)
     return *width > 0 && *height > 0 && *x >= 0 && *y >= 0;
 }
 
+#if VMWARE_ENABLE_HARDWARE_CURSOR
 static int svga_define_cursor(void)
 {
     static const char* shape[16] = {
@@ -205,9 +215,7 @@ static int svga_define_cursor(void)
         "     XX         "
     };
 
-    unsigned int command[24];
-    unsigned char masks[64];
-    for (unsigned int i = 0; i < sizeof(masks); i++) masks[i] = 0;
+    unsigned int command[40];
 
     for (int row = 0; row < 16; row++) {
         unsigned short and_mask = 0;
@@ -224,10 +232,8 @@ static int svga_define_cursor(void)
                 and_mask |= bit;
             }
         }
-        masks[row * 2] = (unsigned char)(and_mask & 0xFF);
-        masks[row * 2 + 1] = (unsigned char)(and_mask >> 8);
-        masks[32 + row * 2] = (unsigned char)(xor_mask & 0xFF);
-        masks[32 + row * 2 + 1] = (unsigned char)(xor_mask >> 8);
+        command[8 + row] = and_mask;
+        command[8 + 16 + row] = xor_mask;
     }
 
     command[0] = SVGA_CMD_DEFINE_CURSOR;
@@ -238,16 +244,14 @@ static int svga_define_cursor(void)
     command[5] = 16;
     command[6] = 1;
     command[7] = 1;
-    for (int i = 0; i < 16; i++) {
-        unsigned int offset = (unsigned int)i * 4U;
-        command[8 + i] =
-            (unsigned int)masks[offset] |
-            ((unsigned int)masks[offset + 1] << 8) |
-            ((unsigned int)masks[offset + 2] << 16) |
-            ((unsigned int)masks[offset + 3] << 24);
-    }
-    return svga_fifo_emit(command, 24);
+    return svga_fifo_emit(command, 40);
 }
+#else
+static int svga_define_cursor(void)
+{
+    return 0;
+}
+#endif
 
 static int svga_init_fifo(void)
 {
@@ -437,20 +441,19 @@ int vmware_svga_set_mode(int width, int height, int bpp)
     svga_init_fifo();
     svga_write_reg(SVGA_REG_CONFIG_DONE, 1);
 
-    if (g_fifo_ready) {
+    if (g_fifo_ready && VMWARE_ENABLE_HARDWARE_CURSOR) {
         g_cursor_ready = svga_define_cursor();
         if (g_cursor_ready) {
             svga_write_reg(SVGA_REG_CURSOR_ID, 0);
             svga_write_reg(SVGA_REG_CURSOR_ON, SVGA_CURSOR_HIDE);
         }
+    } else {
+        svga_write_reg(SVGA_REG_CURSOR_ON, SVGA_CURSOR_HIDE);
     }
 
     if (g_fifo_ready) {
-        if (g_cursor_ready) {
-            g_status = "FIFO 2D + hardware cursor";
-        } else {
-            g_status = "FIFO 2D";
-        }
+        g_status = g_cursor_ready ? "FIFO 2D + hardware cursor"
+                                  : "FIFO 2D (software cursor fallback)";
     } else {
         g_status = "Linear framebuffer fallback";
     }
@@ -533,7 +536,12 @@ void vmware_svga_present_rect(int x, int y, int width, int height)
     command[2] = (unsigned int)y;
     command[3] = (unsigned int)width;
     command[4] = (unsigned int)height;
-    if (svga_fifo_emit(command, 5)) vmware_svga_sync();
+    if (svga_fifo_emit(command, 5)) {
+        vmware_svga_sync();
+    } else {
+        g_fifo_ready = 0;
+        g_status = "FIFO full (linear framebuffer fallback)";
+    }
 }
 
 static void svga_software_fill(int x, int y, int width, int height,
@@ -669,6 +677,14 @@ int vmware_svga_set_cursor(int x, int y, int visible)
     if (y < 0) y = 0;
     if (x >= g_width) x = g_width - 1;
     if (y >= g_height) y = g_height - 1;
+
+    unsigned int command[4];
+    command[0] = SVGA_CMD_MOVE_CURSOR;
+    command[1] = 0;
+    command[2] = (unsigned int)x;
+    command[3] = (unsigned int)y;
+    int moved = svga_fifo_emit(command, 4);
+    if (moved) vmware_svga_sync();
 
     svga_write_reg(SVGA_REG_CURSOR_X, (unsigned int)x);
     svga_write_reg(SVGA_REG_CURSOR_Y, (unsigned int)y);

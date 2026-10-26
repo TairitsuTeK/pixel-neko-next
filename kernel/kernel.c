@@ -495,10 +495,9 @@ static void timer_irq_dispatch(unsigned int irq, void* context)
     timer_handle_irq();
 }
 
-static void ps2_irq_dispatch(unsigned int irq, void* context)
+static void ps2_poll_input(void)
 {
-    (void)irq;
-    (void)context;
+    unsigned int flags = irq_save_flags();
     int drained = 0;
     while ((inb(0x64) & 0x01) && drained++ < 32) {
         unsigned char status = inb(0x64);
@@ -506,6 +505,14 @@ static void ps2_irq_dispatch(unsigned int irq, void* context)
         if (status & 0x20) mouse_handle_byte(data);
         else keyboard_handle_byte(data);
     }
+    irq_restore_flags(flags);
+}
+
+static void ps2_irq_dispatch(unsigned int irq, void* context)
+{
+    (void)irq;
+    (void)context;
+    ps2_poll_input();
 }
 
 void kernel_main(void)
@@ -577,6 +584,7 @@ void kernel_main(void)
         check_revert_timer();
         hardware_cursor = gfx_accel_has_hardware_cursor();
 
+        ps2_poll_input();
         mouse_get(&mx, &my, &mb);
         int mb_press = (mb & 1) && !(last_mb & 1);
         int mb_release = !(mb & 1) && (last_mb & 1);
