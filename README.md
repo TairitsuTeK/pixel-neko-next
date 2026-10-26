@@ -3,9 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202012.104)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202012.200)-brightgreen.svg)]()
 
-**Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
+**Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、USB 2.0 键鼠输入、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
 ---
 
@@ -23,6 +23,12 @@
   - **阶梯式关机策略**：依序执行 ACPI S5 状态切换、标准 APM 1.2 握手切断电源、模拟器 I/O 关机端口。
   - **经典安全停机画面（Safe to Turn Off）**：针对 Baby AT 架构物理机械开关主板（如奔腾 Pro 华硕 KN97），关机后呈现 Windows 95/98 经典全屏 *"It is now safe to turn off your computer."*，并永久挂起 CPU，绝不静默返回保护模式桌面。
   - **可靠硬件重启**：通过 8042 键盘控制器复位脉冲（0xFE）与 PCI 复位向量（0xCF9）实现秒级干净重启。
+- **⌨️ USB 2.0 主机控制器与 HID 键鼠输入**
+  - **统一 USB 核心层**：提供 Host Controller Interface 抽象（控制传输 / 中断 IN / 批量传输 / 根端口复位）、标准描述符解析与 `GET_DESCRIPTOR`、`SET_ADDRESS`、`SET_CONFIGURATION` 完整枚举流程，最多管理 4 个控制器与 8 个设备。
+  - **UHCI（USB 1.1）**：自动探测 PCI I/O BAR，使用帧列表 + QH/TD 调度完成全速 / 低速设备枚举，支持 2 个根端口复位与低速设备识别。
+  - **EHCI（USB 2.0）**：解析 MMIO 能力寄存器与运行寄存器，使用 qTD 完成高速传输，支持最多 8 个根端口；遇到 64 位 EHCI 时明确记录不支持。
+  - **HID 启动协议键鼠**：USB 键盘 / 鼠标报告经 HID Usage → PS/2 Set-1 扫描码转换后注入现有输入管线，可与 PS/2 键鼠同时使用，最多支持 4 个 HID 设备。
+  - **安全降级与诊断**：OHCI / xHCI 自动识别并记录"暂不支持"，不影响 PS/2 输入；枚举与驱动状态通过 COM1 串口日志（`[USB ]`、`[UHCI]`、`[EHCI]`、`[HID ]`）输出。
 - **💾 全新统一虚拟文件系统（VFS）与存储子系统**
   - **Windows 对齐盘符体系**：A: 与 B: 专给软驱预留；硬盘数据分区从 C: 开始依次分配；光驱紧随已分配硬盘分区之后（若无硬盘则光驱自动为 C: 盘）；自动隐藏 EFI 系统分区与扩展容器分区。
   - **CDFS 光盘驱动 (ISO9660 + Joliet)**：完整支持标准 ISO9660 与 Joliet 长文件名扩展，解决 CD/DVD 点开为空的问题，支持只读浏览与读取光盘文件。
@@ -63,6 +69,10 @@
 │   ├── blkdev.c          # 块设备抽象层
 │   ├── disk.c            # ATA / ATAPI 存储驱动
 │   ├── fdc.c             # 原生软驱控制器驱动 (FDC 82077AA)
+│   ├── usb_core.c        # USB 2.0 核心层、描述符解析与设备枚举
+│   ├── usb_uhci.c        # UHCI (USB 1.1 全速/低速) 主机控制器驱动
+│   ├── usb_ehci.c        # EHCI (USB 2.0 高速) 主机控制器驱动
+│   ├── usb_hid.c         # HID 启动协议键盘/鼠标驱动
 │   ├── isadma.c          # ISA DMA 控制器驱动
 │   ├── font.c            # 基础字体渲染
 │   ├── keyboard.c        # PS/2 键盘与按键缓冲
@@ -83,7 +93,7 @@
 │   ├── sysinfo.c         # 系统信息工具与全 PCI 总线设备浏览器
 │   └── puzzle.c          # 经典 15 数字推盘小游戏
 ├── include/              # 全局公共头文件
-│   └── *.h               # ati_mach64.h, gfx_accel.h, panic.h, sysinfo.h, puzzle.h, etc.
+│   └── *.h               # ati_mach64.h, gfx_accel.h, usb_core.h, usb_uhci.h, usb_ehci.h, usb_hid.h, panic.h, sysinfo.h, puzzle.h, etc.
 ├── scripts/              # 编译与构建辅助脚本
 │   ├── build_counter.sh
 │   └── build_number.txt
@@ -97,11 +107,13 @@
 ## 🛠️ 构建与运行环境
 
 ### 依赖项
-- **GCC**（支持 `-m32` 交叉编译）
+- **GCC**（支持 `-m32`；Windows 下需 `i686-elf-gcc` 交叉工具链，Linux / MSYS2 / WSL2 可直接使用原生 `gcc`）
 - **NASM**（汇编器）
-- **GNU ld**
+- **GNU ld**（Windows 下对应 `i686-elf-ld`）
 - **grub-mkrescue** 与 **xorriso**（用于生成可启动 ISO）
-- **QEMU**（推荐 `qemu-system-i386` 用于本地模拟运行）
+- **QEMU**（推荐 `qemu-system-i386` 用于本地模拟运行）与 **qemu-img**（`make run` 自动创建 `disk.img`）
+
+> Windows 下 `make` 需要可用的 POSIX Shell（w64devkit 或 MSYS2 自带），因为构建计数器与文件清理依赖 `sh`；生成 ISO 还需要 `grub-mkrescue` 与 `xorriso`，建议在 MSYS2 或 WSL2 中完成。
 
 ### 编译与启动
 
@@ -109,22 +121,51 @@
    ```bash
    make
    ```
-   编译完成后会在根目录生成 `pixel_neko_build_1700.000.iso`。
+   编译完成后会在根目录生成固定命名的 `pixel_neko.iso`；内核与 GRUB 菜单内嵌的版本号取自 `include/version.h` 的 `KERNEL_BUILD`（当前为 `2012.200`）。
 
-2. **在 QEMU 虚拟机中一键运行**
+2. **在 QEMU 虚拟机中一键运行（ISO + 64MB 数据盘）**
    ```bash
    make run
    ```
 
-3. **GDB 远程调试模式**
+3. **不生成 ISO，直接以 `-kernel` 启动内核 ELF**
+   ```bash
+   make run-kernel
+   ```
+
+4. **USB 输入自测模式**
+   ```bash
+   make run-usb
+   ```
+   自动附加 `piix3-usb-uhci` 控制器与 USB 键盘 / 鼠标，并将 `[USB ]`、`[UHCI]`、`[EHCI]`、`[HID ]` 枚举日志写入 `usb_log.txt`。
+
+5. **GDB 远程调试模式**
    ```bash
    make debug
    ```
 
-4. **清理构建生成物**
+6. **清理构建生成物**
    ```bash
    make clean
    ```
+
+---
+
+## 💾 Build 2012.200 更新特性
+- **⌨️ 全新 USB 2.0 子系统与 HID 键鼠输入**：
+  - 新增 USB 核心层 `drivers/usb_core.c`，提供 Host Controller Interface 抽象、标准描述符（Device / Config / Interface / Endpoint / HID）解析与 `GET_DESCRIPTOR`、`SET_ADDRESS`、`SET_CONFIGURATION` 完整枚举流程；最多支持 4 个控制器与 8 个设备；
+  - 新增 UHCI（USB 1.1 全速 / 低速）驱动 `drivers/usb_uhci.c`：PCI I/O BAR 探测、帧列表与 QH/TD 调度、控制 / 中断 IN / 批量传输、2 个根端口复位及低速设备识别；
+  - 新增 EHCI（USB 2.0 高速）驱动 `drivers/usb_ehci.c`：MMIO 能力 / 运行寄存器解析、qTD 传输、最多 8 个根端口，64 位 EHCI 明确记录不支持；
+  - 新增 HID 类驱动 `drivers/usb_hid.c`：请求 Boot Protocol，将 HID Usage 映射为 PS/2 Set-1 扫描码并注入既有键盘 / 鼠标输入管线，最多 4 个 HID 设备，可与 PS/2 键鼠同时工作；
+  - `usb_init()` 在开机动画结束后扫描 PCI 类代码 `0C/03` 的控制器，`usb_poll()` 并入桌面主循环；OHCI / xHCI 自动识别并记录“暂不支持”，不影响原有 PS/2 输入。
+- **🧰 构建系统与工具链适配**：
+  - Windows 下自动使用 `i686-elf-` 交叉工具链（可通过 `TOOLCHAIN_PREFIX` 覆盖），Linux 保持原生 `gcc` / `ld`；
+  - ISO 输出改为固定文件名 `pixel_neko.iso`，不再随版本号变化；版本头生成物统一放入 `build/generated`，`include/version.h` 不再随每次编译被重写；
+  - 新增 `make run-kernel`（直接启动 ELF）、`make run-usb`（USB 键鼠自测 + 串口日志）目标，`make run` / `make debug` 自动通过 `qemu-img` 创建 64MB `disk.img`；
+  - 头文件依赖改为递归发现并排除自动生成的版本头，避免仅版本号变化触发全量重编译。
+- **🏷️ 版本号同步**：内核、开机画面、系统关于视窗、README 与 CI 发布说明统一为 `C2.0 Build 2012.200`。
+
+---
 
 ## 🚀 Build 2010.015 更新特性
 - **📂 文件管理器完整目录浏览与右侧经典垂直滚动条（Scrollbar）**：

@@ -85,6 +85,7 @@ jobs:
           - Build 2012.102 fixes HDA Connection List Node ID decoding for routable VMware HDA Codec output paths.
           - Build 2012.103 fixes the HDA init return contract so the successfully routed codec is selected by the Audio HAL.
           - Build 2012.104 fixes the 16-byte HDA Buffer Descriptor List layout required for valid VMware audio DMA.
+          - Build 2012.200 adds a USB 2.0 subsystem with UHCI/EHCI host controllers, HID boot-protocol keyboard and mouse input, and a Windows i686-elf build path.
         draft: false
         prerelease: false
         files: |

@@ -9,17 +9,15 @@
 
 ifeq ($(OS),Windows_NT)
 TOOLCHAIN_PREFIX ?= i686-elf-
-# Shell helpers for Windows-native make (cmd). If you build in MSYS2/WSL
-# this branch is not taken.
-RM      = del /Q /F
-RMDIR   = rmdir /S /Q
-MKDIR   = mkdir
 else
 TOOLCHAIN_PREFIX ?=
-RM      = rm -f
-RMDIR   = rm -rf
-MKDIR   = mkdir -p
 endif
+
+# Shell helpers. POSIX sh is assumed on every supported host (Linux, MSYS2,
+# WSL2 or w64devkit); plain cmd.exe cannot run the build counter anyway.
+RM    = rm -f
+RMDIR = rm -rf
+MKDIR = mkdir -p
 
 CC            = $(TOOLCHAIN_PREFIX)gcc
 LD            = $(TOOLCHAIN_PREFIX)ld
@@ -118,13 +116,11 @@ DISK_SIZE = 64M
 all: $(GEN_VERSION) $(ISO_FILE)
 
 # Always run the build counter. It writes to build/generated/version.h.
-# We mark it .PHONY and use `cmp`/copy semantics inside the script so that
-# if the content did not change we do not touch the mtime.
+# include/version.h stays untouched so the checked-in version is stable.
 $(GEN_VERSION): scripts/build_counter.sh
 	@echo "  build counter..."
 	@$(MKDIR) $(GEN_DIR)
-	@chmod +x scripts/build_counter.sh 2>NUL || true
-	@VERSION_OUT=$(GEN_VERSION) ./scripts/build_counter.sh
+	@VERSION_OUT=$(GEN_VERSION) sh scripts/build_counter.sh
 
 # Make sure every object depends on the generated header but NOT in a way
 # that causes a full rebuild when only the counter value changes. The
@@ -184,18 +180,10 @@ debug: $(ISO_FILE) $(DISK_IMG)
 	$(QEMU) -cdrom $(ISO_FILE) -m 128M -hda $(DISK_IMG) -s -S
 
 clean:
-ifeq ($(OS),Windows_NT)
-	-$(RM) $(subst /,\,$(C_OBJECTS) $(ASM_OBJECTS)) 2>NUL
-	-$(RM) $(subst /,\,$(KERNEL_ELF)) 2>NUL
-	-$(RM) pixel_neko*.iso 2>NUL
-	-$(RMDIR) build 2>NUL
-	-$(RMDIR) iso 2>NUL
-else
 	$(RM) $(C_OBJECTS) $(ASM_OBJECTS)
 	$(RM) $(KERNEL_ELF)
 	$(RM) pixel_neko*.iso
 	$(RMDIR) build
 	$(RMDIR) iso
-endif
 
 rebuild: clean all

@@ -11,7 +11,7 @@ BUILD_FILE="$SCRIPT_DIR/build_number.txt"
 if [ -f "$BUILD_FILE" ]; then
     RAW_VER=$(tr -d '\r\n' < "$BUILD_FILE")
 else
-    RAW_VER="1700.000"
+    RAW_VER="2012.200"
 fi
 
 BUILD_VER="$RAW_VER"
@@ -19,8 +19,14 @@ BUILD_VER="$RAW_VER"
 # 保存
 echo "$BUILD_VER" > "$BUILD_FILE"
 
-# 生成 include/version.h
-cat > "$VERSION_FILE" << EOF
+# 输出目标：Makefile 通过 VERSION_OUT 指定 build/generated/version.h，
+# 手动单独执行脚本时退回 include/version.h。
+OUT_FILE="${VERSION_OUT:-$VERSION_FILE}"
+OUT_DIR="$(dirname "$OUT_FILE")"
+[ -d "$OUT_DIR" ] || mkdir -p "$OUT_DIR"
+
+# 生成版本头
+cat > "$OUT_FILE" << EOF
 #ifndef VERSION_H 
 #define VERSION_H 
 #define VER_STRING1       "Codename Pixel Neko Next" 
