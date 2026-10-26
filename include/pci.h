@@ -1,7 +1,7 @@
 #ifndef PCI_H
 #define PCI_H
 
-#define PCI_MAX_DEVICES 256
+#define PCI_MAX_DEVICES 512
 #define PCI_BAR_COUNT 6
 
 typedef struct {

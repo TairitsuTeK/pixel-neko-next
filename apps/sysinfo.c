@@ -13,20 +13,6 @@
 static int active_tab = 0; // 0: System, 1: PCI Bus, 2: Drives
 static int pci_page = 0;
 
-typedef struct {
-    unsigned char bus;
-    unsigned char dev;
-    unsigned char func;
-    unsigned short vendor;
-    unsigned short device;
-    unsigned char base_class;
-} pci_entry_t;
-
-#define MAX_PCI_DEVS 24
-static pci_entry_t pci_list[MAX_PCI_DEVS];
-static int pci_count = 0;
-static int pci_scanned = 0;
-
 static const char* get_vendor_name(unsigned short vendor) {
     switch (vendor) {
         case 0x8086: return "Intel";
@@ -60,23 +46,7 @@ static const char* get_class_name(unsigned char base_class) {
 }
 
 static void scan_pci_bus(void) {
-    if (pci_scanned) return;
-    pci_count = 0;
     pci_scan_all();
-    int count = pci_get_device_count();
-    for (int i = 0; i < count && pci_count < MAX_PCI_DEVS; i++) {
-        const pci_device_t* dev = pci_get_device(i);
-        if (dev) {
-            pci_list[pci_count].bus = dev->bus;
-            pci_list[pci_count].dev = dev->slot;
-            pci_list[pci_count].func = dev->function;
-            pci_list[pci_count].vendor = dev->vendor;
-            pci_list[pci_count].device = dev->device;
-            pci_list[pci_count].base_class = dev->class_code;
-            pci_count++;
-        }
-    }
-    pci_scanned = 1;
 }
 
 void sysinfo_init(void) {
@@ -327,7 +297,7 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
                                             audio_get_hardware_name(), 0);
         } else {
             audio_lines = draw_text_wrapped(v, value_x, ly, max_value_chars, 2,
-                                            "PC Speaker (No PCI Sound Card)", 8);
+                                            audio_get_probe_status(), 8);
         }
         ly += (audio_lines - 1) * 16;
 
@@ -343,6 +313,7 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
     } else if (active_tab == 1) {
         // Tab 1: PCI Devices (6 items per page)
         scan_pci_bus();
+        int pci_count = pci_get_device_count();
         int lx = fx + 8, ly = fy + 6;
         font_draw_text(v, lx, ly, "PCI Devices (Bus 0..255):", 0);
 
@@ -352,25 +323,27 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
 
         ly += 14;
         for (int i = start_idx; i < start_idx + 6 && i < pci_count; i++) {
+            const pci_device_t* pci = pci_get_device(i);
+            if (!pci) continue;
             char line[64];
             const char* hex = "0123456789ABCDEF";
-            line[0] = hex[(pci_list[i].bus >> 4) & 0xF];
-            line[1] = hex[pci_list[i].bus & 0xF];
+            line[0] = hex[(pci->bus >> 4) & 0xF];
+            line[1] = hex[pci->bus & 0xF];
             line[2] = ':';
-            line[3] = '0' + (pci_list[i].dev / 10);
-            line[4] = '0' + (pci_list[i].dev % 10);
+            line[3] = '0' + (pci->slot / 10);
+            line[4] = '0' + (pci->slot % 10);
             line[5] = '.';
-            line[6] = '0' + pci_list[i].func;
+            line[6] = '0' + pci->function;
             line[7] = ' '; line[8] = '[';
-            hex16_to_str(pci_list[i].vendor, &line[9]);
+            hex16_to_str(pci->vendor, &line[9]);
             line[13] = ':';
-            hex16_to_str(pci_list[i].device, &line[14]);
+            hex16_to_str(pci->device, &line[14]);
             line[18] = ']'; line[19] = ' ';
-            const char* vname = get_vendor_name(pci_list[i].vendor);
+            const char* vname = get_vendor_name(pci->vendor);
             int li = 20;
             while (*vname && li < 32) line[li++] = *vname++;
             while (li < 33) line[li++] = ' ';
-            const char* cname = get_class_name(pci_list[i].base_class);
+            const char* cname = get_class_name(pci->class_code);
             while (*cname && li < 50) line[li++] = *cname++;
             line[li] = '\0';
 
@@ -440,6 +413,7 @@ void sysinfo_click(int mx, int my, int wx, int wy, int ww, int wh) {
 
     // Check PCI Page clicks
     if (active_tab == 1) {
+        int pci_count = pci_get_device_count();
         int fx = wx + 10, fy = wy + 46;
         int fw = ww - 20, fh = wh - 54;
         int pbtn_y = fy + fh - 20;

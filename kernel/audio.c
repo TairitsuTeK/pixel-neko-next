@@ -248,6 +248,11 @@ const char* audio_get_hardware_name(void) {
     return "No Audio Device";
 }
 
+const char* audio_get_probe_status(void) {
+    if (g_active_driver) return g_active_driver->get_name();
+    return hdaudio_get_status();
+}
+
 void audio_flush_queue(void) {
     g_queue_read_idx = 0;
     g_queue_write_idx = 0;

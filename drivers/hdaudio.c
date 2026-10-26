@@ -435,7 +435,10 @@ static int hda_add_widget(unsigned int codec, unsigned short nid, int depth)
                     &widget->config_default);
     }
 
-    if (widget->caps & HDA_WCAP_CONN_LIST) {
+    if ((widget->caps & HDA_WCAP_CONN_LIST) ||
+        widget->type == HDA_WIDGET_MIXER ||
+        widget->type == HDA_WIDGET_SELECTOR ||
+        widget->type == HDA_WIDGET_PIN) {
         unsigned int length = hda_param(codec, nid, HDA_PAR_CONNECTION_LEN);
         int count = length & 0x7F;
         int long_form = (length & 0x80) != 0;
@@ -659,7 +662,10 @@ static int hda_select_codec(void)
             hda_delay();
         }
     }
-    if (!g_codec_mask) return 0;
+    if (!g_codec_mask) {
+        log_write("[HDA ] STATESTS empty; probing codec addresses 0..3\n");
+        g_codec_mask = 0xF;
+    }
 
     for (unsigned int codec = 0; codec < 4; codec++) {
         if (!(g_codec_mask & (1U << codec))) continue;
@@ -791,7 +797,10 @@ int hdaudio_init(void)
     pci_scan_all();
     for (int i = 0; i < pci_get_device_count(); i++) {
         const pci_device_t* dev = pci_get_device(i);
-        if (!dev || dev->class_code != 0x04 || dev->subclass != 0x03) {
+        if (!dev) continue;
+        int is_vmware_hda = dev->vendor == 0x15AD && dev->device == 0x1977;
+        int is_hda_class = dev->class_code == 0x04 && dev->subclass == 0x03;
+        if (!is_vmware_hda && !is_hda_class) {
             continue;
         }
         if (hda_try_controller(dev)) {

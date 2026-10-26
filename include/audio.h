@@ -29,6 +29,7 @@ void enable_fpu(void); // Initialize/re-enable x87 FPU and SSE
 
 int audio_has_hardware(void);
 const char* audio_get_hardware_name(void);
+const char* audio_get_probe_status(void);
 
 // High-level File Playback & Controls
 int audio_play_file(const char* filepath);
