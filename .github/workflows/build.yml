@@ -84,6 +84,7 @@ jobs:
           - Build 2012.101 fixes hidden PCI devices in System Information and adds exact VMware 15AD:1977 HDAudio probing with detailed fallback status.
           - Build 2012.102 fixes HDA Connection List Node ID decoding for routable VMware HDA Codec output paths.
           - Build 2012.103 fixes the HDA init return contract so the successfully routed codec is selected by the Audio HAL.
+          - Build 2012.104 fixes the 16-byte HDA Buffer Descriptor List layout required for valid VMware audio DMA.
         draft: false
         prerelease: false
         files: |

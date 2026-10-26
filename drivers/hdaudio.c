@@ -126,10 +126,14 @@ typedef struct {
 } hda_rirb_entry_t;
 
 typedef struct {
-    unsigned int address;
+    unsigned int address_low;
+    unsigned int address_high;
     unsigned int length;
     unsigned int flags;
 } hda_bdl_entry_t;
+
+_Static_assert(sizeof(hda_bdl_entry_t) == 16,
+               "HDA BDL entries must be exactly 16 bytes");
 
 typedef struct {
     unsigned short nid;
@@ -719,7 +723,8 @@ static void hda_init_bdl(void)
     volatile hda_bdl_entry_t* bdl =
         (volatile hda_bdl_entry_t*)g_bdl.virt;
     for (unsigned int i = 0; i < HDA_PERIOD_COUNT; i++) {
-        bdl[i].address = g_pcm.phys + i * HDA_PERIOD_BYTES;
+        bdl[i].address_low = g_pcm.phys + i * HDA_PERIOD_BYTES;
+        bdl[i].address_high = 0;
         bdl[i].length = HDA_PERIOD_BYTES;
         bdl[i].flags = 0;
     }
