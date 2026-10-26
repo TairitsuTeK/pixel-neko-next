@@ -12,7 +12,7 @@
 ## 🌟 核心特性
 
 - **🎬 经典复古开机动画（Boot Splash Animation）**
-  - **Happy Neko（阶段 1）**：致敬经典 Mac OS 9 "Happy Mac"，在 50% 棋盘灰度背景上呈现复古一体机与可爱的 Happy Neko 像素猫笑脸，并伴随 PC 扬声器 4 音符升调开机和弦。
+  - **Happy Neko（阶段 1）**：致敬经典 Mac OS 9 "Happy Mac"，在 50% 棋盘灰度背景上呈现复古一体机与可爱的 Happy Neko 像素猫笑脸，并伴随 PC 扬声器 4 音符升调开机和弦。 
   - **欢迎窗口 & 扩展游行（阶段 2）**：融合 Windows 3.1 徽标与 Mac OS 9 风格的 3D 浮雕视窗；搭载经典的 **45° 动态斜向条纹进度条（Barber-Pole Striped Progress Bar）** 与屏幕底部 **Extension Parade** 硬件图标流（CPU、内存、显卡、键盘、鼠标、硬盘、文件卷、桌面环境）。
   - **平滑缩放过渡（阶段 3）**：通过 Finder 风格经典虚线缩放矩形动画平滑切入桌面，启动期间随时按 `Esc` / `Space` / `Enter` 或点击鼠标即可立即跳过动画直达桌面。
 - **💻 全面而精准的 CPU 识别（完美兼容奔腾 Pro 及以上全系处理器）**
