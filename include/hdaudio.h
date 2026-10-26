@@ -1,7 +1,7 @@
 #ifndef HDAUDIO_H
 #define HDAUDIO_H
 
-int hdaudio_init(void);
+int hdaudio_init(void); /* 0 = success, negative = failure */
 int hdaudio_is_present(void);
 const char* hdaudio_get_name(void);
 const char* hdaudio_get_status(void);

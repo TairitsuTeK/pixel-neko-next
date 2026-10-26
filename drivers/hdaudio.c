@@ -835,11 +835,11 @@ int hdaudio_init(void)
             log_printf("[HDA ] active controller=%X codec=%X pin=%u path=%u\n",
                        g_controller_id, g_codec_id, g_output_pin,
                        (unsigned int)g_best_route_count);
-            return 1;
+            return 0;
         }
         hda_free_buffers();
     }
-    return 0;
+    return -1;
 }
 
 int hdaudio_is_present(void)
