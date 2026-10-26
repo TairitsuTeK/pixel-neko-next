@@ -1,4 +1,5 @@
 #include "keyboard.h"
+#include "irq.h"
 
 static int shift = 0;
 static int ctrl = 0;
@@ -8,7 +9,7 @@ static int e0_flag = 0;
 
 #define KEY_BUF_SIZE 64
 static int key_buf[KEY_BUF_SIZE];
-static int key_head = 0, key_tail = 0;
+static volatile int key_head = 0, key_tail = 0;
 
 static void push_key(int key) {
     int next = (key_head + 1) % KEY_BUF_SIZE;
@@ -19,9 +20,15 @@ static void push_key(int key) {
 }
 
 int keyboard_get_key(void) {
-    if (key_head == key_tail) return 0;
-    int key = key_buf[key_tail];
-    key_tail = (key_tail + 1) % KEY_BUF_SIZE;
+    unsigned int flags = irq_save_flags();
+    if (key_head == key_tail) {
+        irq_restore_flags(flags);
+        return 0;
+    }
+    int tail = key_tail;
+    int key = key_buf[tail];
+    key_tail = (tail + 1) % KEY_BUF_SIZE;
+    irq_restore_flags(flags);
     return key;
 }
 

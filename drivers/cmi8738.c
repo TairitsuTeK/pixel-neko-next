@@ -1,6 +1,8 @@
 #include "cmi8738.h"
 #include "port.h"
 #include "mm.h"
+#include "dma.h"
+#include "pci.h"
 
 static int g_cmi_present = 0;
 static unsigned short g_cmi_io_base = 0;
@@ -8,6 +10,7 @@ static unsigned short g_cmi_device = 0;
 static const char* g_cmi_chip_name = "None";
 static unsigned char* g_dma_buf = 0;
 static unsigned int g_dma_phys = 0;
+static dma_buffer_t g_dma;
 static int g_dma_running = 0;
 static int g_last_half_playing = -1;
 static int g_half_filled[2] = {0, 0};
@@ -61,54 +64,41 @@ int cmi8738_init(void) {
     g_cmi_chip_name = "None";
     g_dma_running = 0;
 
-    // Scan PCI bus for C-Media CMI8738 / CMI8338 across all 256 buses, 32 devices, 8 functions
-    for (int bus = 0; bus < 256; bus++) {
-        for (int dev = 0; dev < 32; dev++) {
-            for (int func = 0; func < 8; func++) {
-                unsigned int id = pci_read_config(bus, dev, func, 0);
-                if (id == 0xFFFFFFFF || id == 0) {
-                    if (func == 0) break; // Slot empty
-                    continue;
-                }
+    pci_scan_all();
+    for (int index = 0; index < pci_get_device_count(); index++) {
+        const pci_device_t* pci = pci_get_device(index);
+        if (!pci || pci->vendor != CMI_VENDOR_ID) continue;
+        unsigned short device = pci->device;
 
-                unsigned short vendor = id & 0xFFFF;
-                unsigned short device = (id >> 16) & 0xFFFF;
-
-                if (vendor == CMI_VENDOR_ID) {
-                    if (device == CMI_DEV_8738) {
-                        g_cmi_chip_name = "C-Media CMI8738 PCI";
-                    } else if (device == CMI_DEV_8338A) {
-                        g_cmi_chip_name = "C-Media CMI8338A PCI";
-                    } else if (device == CMI_DEV_8338B) {
-                        g_cmi_chip_name = "C-Media CMI8338B PCI";
-                    } else {
-                        g_cmi_chip_name = "C-Media PCI Audio";
-                    }
-
-                    // Read BAR0 (I/O base)
-                    unsigned int bar0 = pci_read_config(bus, dev, func, 0x10);
-                    if (!(bar0 & 1)) continue; // Must be I/O space
-
-                    g_cmi_io_base = (unsigned short)(bar0 & 0xFFFC);
-                    g_cmi_device = device;
-
-                    // Enable PCI Bus Mastering (bit 2), Memory Space (bit 1), and I/O Space (bit 0)
-                    unsigned int cmd = pci_read_config(bus, dev, func, 0x04);
-                    pci_write_config(bus, dev, func, 0x04, cmd | 0x07);
-
-                    // Configure PCI Latency Timer (offset 0x0C, bits 15:8): ensure >= 0x40 (64 clocks)
-                    unsigned int lat = pci_read_config(bus, dev, func, 0x0C);
-                    if ((lat & 0xFF00) < 0x2000) {
-                        pci_write_config(bus, dev, func, 0x0C, (lat & 0xFFFF00FF) | 0x4000);
-                    }
-
-                    g_cmi_present = 1;
-                    break;
-                }
-            }
-            if (g_cmi_present) break;
+        if (device == CMI_DEV_8738) {
+            g_cmi_chip_name = "C-Media CMI8738 PCI";
+        } else if (device == CMI_DEV_8338A) {
+            g_cmi_chip_name = "C-Media CMI8338A PCI";
+        } else if (device == CMI_DEV_8338B) {
+            g_cmi_chip_name = "C-Media CMI8338B PCI";
+        } else {
+            g_cmi_chip_name = "C-Media PCI Audio";
         }
-        if (g_cmi_present) break;
+
+        if (!pci->bar_valid[0] || !pci->bar_is_io[0]) continue;
+
+        g_cmi_io_base = (unsigned short)pci->bar[0];
+        g_cmi_device = device;
+
+        pci_enable_io(pci);
+        pci_enable_memory(pci);
+        pci_enable_bus_master(pci);
+
+        // Configure PCI latency to at least 64 clocks for reliable DMA bursts.
+        unsigned int lat = pci_config_read(pci->bus, pci->slot,
+                                           pci->function, 0x0C);
+        if ((lat & 0xFF00) < 0x2000) {
+            pci_config_write(pci->bus, pci->slot, pci->function,
+                             0x0C, (lat & 0xFFFF00FF) | 0x4000);
+        }
+
+        g_cmi_present = 1;
+        break;
     }
 
     if (!g_cmi_present || !g_cmi_io_base) {
@@ -116,13 +106,14 @@ int cmi8738_init(void) {
     }
 
     // Allocate 64KB physically contiguous memory for DMA ring buffer (16 pages, 64KB aligned)
-    if (!g_dma_buf) {
-        g_dma_buf = (unsigned char*)pmm_alloc_pages_aligned(16, 16);
-        if (!g_dma_buf) {
+    if (!dma_is_valid(&g_dma)) {
+        g_dma = dma_alloc_aligned(CMI_DMA_BUFFER_BYTES, 65536);
+        if (!dma_is_valid(&g_dma)) {
             g_cmi_present = 0;
             return -2;
         }
-        g_dma_phys = (unsigned int)g_dma_buf;
+        g_dma_buf = (unsigned char*)g_dma.virt;
+        g_dma_phys = g_dma.phys;
     }
 
     // Clear DMA buffer with silence (0 for 16-bit signed PCM)
@@ -418,6 +409,7 @@ void cmi8738_write_half(int half_idx, const void* data, unsigned int bytes) {
     for (unsigned int i = bytes; i < CMI_DMA_HALF_BYTES; i++) {
         dst[i] = 0;
     }
+    dma_flush(&g_dma);
     g_half_filled[half_idx] = 1;
 }
 
@@ -429,6 +421,7 @@ void cmi8738_silence_half(int half_idx) {
     for (unsigned int i = 0; i < CMI_DMA_HALF_BYTES; i++) {
         dst[i] = 0;
     }
+    dma_flush(&g_dma);
     g_half_filled[half_idx] = 1;
 }
 

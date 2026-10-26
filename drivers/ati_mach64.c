@@ -1,5 +1,6 @@
 #include "ati_mach64.h"
 #include "port.h"
+#include "pci.h"
 
 // ----------------------------------------------------------------------------
 // ATI Mach64 / 3D Rage II+DVD 2D hardware driver.
@@ -21,18 +22,6 @@ static inline unsigned int mach64_read32(unsigned int reg) {
 static inline void mach64_write32(unsigned int reg, unsigned int val) {
     if (!g_ati_regs) return;
     *(volatile unsigned int*)(g_ati_regs + reg) = val;
-}
-
-static unsigned int mach64_bytes_per_pixel(int bpp) {
-    if (bpp <= 8) return 1;
-    if (bpp <= 16) return 2;
-    if (bpp <= 24) return 3;
-    return 4;
-}
-
-static unsigned int mach64_pitch_bytes(int w, int bpp) {
-    unsigned int bytes = (unsigned int)w * mach64_bytes_per_pixel(bpp);
-    return (bytes + 7U) & ~7U;
 }
 
 static unsigned int mach64_pitch_units(int w) {
@@ -95,14 +84,12 @@ int ati_mach64_probe(void) {
     g_ati_regs = 0;
     g_ati_lfb = 0;
 
-    for (int bus = 0; bus < 8; bus++) {
-        for (int slot = 0; slot < 32; slot++) {
-            unsigned int id = pci_read_config(bus, slot, 0, 0);
-            if (id == 0xFFFFFFFF || id == 0) continue;
+    pci_scan_all();
+    for (int index = 0; index < pci_get_device_count(); index++) {
+            const pci_device_t* pci = pci_get_device(index);
+            if (!pci || pci->vendor != ATI_VENDOR_ID) continue;
 
-            unsigned short vendor = id & 0xFFFF;
-            unsigned short device = (id >> 16) & 0xFFFF;
-            if (vendor != ATI_VENDOR_ID) continue;
+            unsigned short device = pci->device;
 
             const char* name = 0;
             switch (device) {
@@ -123,17 +110,19 @@ int ati_mach64_probe(void) {
             }
             if (!name) continue;
 
-            unsigned int raw_bar0 = pci_read_config(bus, slot, 0, 0x10);
-            unsigned int raw_bar2 = pci_read_config(bus, slot, 0, 0x18);
-            unsigned int bar0 = raw_bar0 & 0xFFFFFFF0U;
+            unsigned int bar0 = 0;
             unsigned int bar2 = 0;
-            if (raw_bar2 && raw_bar2 != 0xFFFFFFFFU && !(raw_bar2 & 1)) {
-                bar2 = raw_bar2 & 0xFFFFFFF0U;
+            if (pci->bar_valid[0] && !pci->bar_is_io[0]) {
+                bar0 = pci->bar[0];
             }
-            if (!bar0) return 0;
+            if (pci->bar_valid[2] && !pci->bar_is_io[2]) {
+                bar2 = pci->bar[2];
+            }
+            if (!bar0) continue;
 
-            unsigned int cmd = pci_read_config(bus, slot, 0, 0x04);
-            pci_write_config(bus, slot, 0, 0x04, cmd | 0x07);
+            pci_enable_io(pci);
+            pci_enable_memory(pci);
+            pci_enable_bus_master(pci);
 
             g_ati_chip_name = name;
             g_ati_lfb = (volatile unsigned char*)bar0;
@@ -207,7 +196,6 @@ int ati_mach64_probe(void) {
 
             g_ati_active = 1;
             return 1;
-        }
     }
     return 0;
 }

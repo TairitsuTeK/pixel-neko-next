@@ -9,6 +9,11 @@
 #include "splash.h"
 #include "settings.h"
 #include "ati_mach64.h"
+#include "gfx_accel.h"
+#include "pci.h"
+#include "irq.h"
+#include "log.h"
+#include "version.h"
 
 int screen_w = 320;
 int screen_h = 200;
@@ -58,40 +63,26 @@ extern void check_revert_timer(void);
 
 extern void bios_set_mode(int mode);
 
-struct pci_vga_info {
-    int found;
-    unsigned short vendor;
-    unsigned short device;
-    unsigned int bar0;
-    unsigned int bar1;
-};
-
-static struct pci_vga_info pci_vga = {0, 0, 0, 0, 0};
-
+static const pci_device_t* pci_vga;
 
 static void pci_scan_vga(void)
 {
-    pci_vga.found = 0;
-    for (int bus = 0; bus < 8; bus++) {
-        for (int slot = 0; slot < 32; slot++) {
-            unsigned int id = pci_read_config(bus, slot, 0, 0);
-            if (id == 0xFFFFFFFF || id == 0) continue;
-            unsigned int class_rev = pci_read_config(bus, slot, 0, 8);
-            unsigned char base_class = (class_rev >> 24) & 0xFF;
-            if (base_class == 0x03) { // Display Controller
-                pci_vga.found = 1;
-                pci_vga.vendor = id & 0xFFFF;
-                pci_vga.device = (id >> 16) & 0xFFFF;
-                pci_vga.bar0 = pci_read_config(bus, slot, 0, 0x10) & 0xFFFFFFF0;
-                pci_vga.bar1 = pci_read_config(bus, slot, 0, 0x14) & 0xFFFFFFF0;
-                
-                // Enable PCI Bus Mastering, Memory Space, and I/O Space
-                unsigned int cmd = pci_read_config(bus, slot, 0, 0x04);
-                pci_write_config(bus, slot, 0, 0x04, cmd | 0x07);
-                return;
-            }
+    pci_vga = 0;
+    pci_scan_all();
+    for (int i = 0; i < pci_get_device_count(); i++) {
+        const pci_device_t* dev = pci_get_device(i);
+        if (dev && dev->class_code == 0x03) {
+            pci_vga = dev;
+            pci_enable_io(dev);
+            pci_enable_memory(dev);
+            pci_enable_bus_master(dev);
+            log_printf("[VGA ] %X:%X bus=%u slot=%u func=%u bar0=0x%X\n",
+                       dev->vendor, dev->device, dev->bus, dev->slot,
+                       dev->function, dev->bar[0]);
+            return;
         }
     }
+    log_write("[VGA ] no PCI display controller found\n");
 }
 
 static void s3_enable_law(void)
@@ -197,6 +188,7 @@ void copy_rect_to_lfb(const unsigned char* src, int rx, int ry, int rw, int rh)
             d[i] = s[i];
         }
     }
+    gfx_accel_present_rect(rx, ry, rw, rh);
 }
 
 void copy_fullscreen_to_lfb(const unsigned char* s_buf)
@@ -226,6 +218,7 @@ void copy_fullscreen_to_lfb(const unsigned char* s_buf)
             }
         }
     }
+    gfx_accel_present_rect(0, 0, screen_w, screen_h);
 }
 
 static int try_set_vbe_mode(int mode, int req_w, int req_h, int req_bpp)
@@ -248,11 +241,12 @@ static int try_set_vbe_mode(int mode, int req_w, int req_h, int req_bpp)
         // Attempt 2: VBE 1.2 banked mode (without 0x4000) + PCI LFB fallback
         ret_set = vbe_set_mode(mode);
         if (ret_set == 0x004F) {
-            if (pci_vga.found && pci_vga.bar0 != 0) {
-                if (pci_vga.vendor == 0x5333) {
+            if (pci_vga && pci_vga->bar_valid[0] &&
+                !pci_vga->bar_is_io[0] && pci_vga->bar[0] != 0) {
+                if (pci_vga->vendor == 0x5333) {
                     s3_enable_law();
                 }
-                found_lfb = pci_vga.bar0;
+                found_lfb = pci_vga->bar[0];
             }
         }
     }
@@ -358,12 +352,17 @@ int vbe_supports_mode(int w, int h, int bpp)
     return gfx_accel_supports_bpp(w, h, bpp);
 }
 
-void set_resolution(int w, int h, int bpp)
+static void set_resolution_locked(int w, int h, int bpp)
 {
     // Bounds check to ensure resolution fits within backbuffer
     if (w <= 0 || h <= 0 || w > 1024 || h > 768) return;
     int bpp_bytes = (bpp <= 8) ? 1 : ((bpp <= 16) ? 2 : ((bpp <= 24) ? 3 : 4));
     if ((unsigned int)(w * h * bpp_bytes) > sizeof(backbuffer)) return;
+
+    if (gfx_accel_try_set_mode(w, h, bpp)) {
+        set_vga_palette_full(0, 1);
+        return;
+    }
 
     if (w == 320 && h == 200 && bpp == 8) {
         asm volatile("cli");
@@ -386,7 +385,7 @@ void set_resolution(int w, int h, int bpp)
     asm volatile("cli");
     
     // Ensure PCI devices are scanned
-    if (!pci_vga.found) {
+    if (!pci_vga) {
         pci_scan_vga();
     }
     
@@ -479,8 +478,41 @@ void set_resolution(int w, int h, int bpp)
     gfx_accel_set_mode(320, 200, 8);
 }
 
+void set_resolution(int w, int h, int bpp)
+{
+    irq_bios_state_t irq_state;
+    irq_bios_suspend(&irq_state);
+    set_resolution_locked(w, h, bpp);
+    idt_reload();
+    pic_remap();
+    irq_bios_resume(&irq_state);
+}
+
+static void timer_irq_dispatch(unsigned int irq, void* context)
+{
+    (void)irq;
+    (void)context;
+    timer_handle_irq();
+}
+
+static void ps2_irq_dispatch(unsigned int irq, void* context)
+{
+    (void)irq;
+    (void)context;
+    int drained = 0;
+    while ((inb(0x64) & 0x01) && drained++ < 32) {
+        unsigned char status = inb(0x64);
+        unsigned char data = inb(0x60);
+        if (status & 0x20) mouse_handle_byte(data);
+        else keyboard_handle_byte(data);
+    }
+}
+
 void kernel_main(void)
 {
+    log_init();
+    log_printf("[BOOT] Pixel Neko Next %s P0/P1 bring-up\n", KERNEL_BUILD);
+
     // Ensure CPU L1/L2 Cache is active and x87 FPU is enabled
     asm volatile (
         "movl %%cr0, %%eax\n\t"
@@ -493,13 +525,21 @@ void kernel_main(void)
     );
 
     idt_init();
+    irq_init();
     timer_init();
+    irq_register_handler(0, timer_irq_dispatch, 0);
     cpu_detect();
+    log_printf("[CPU ] %s at %uMHz\n", cpu_model_string,
+               g_cpu_info.mhz > 0 ? g_cpu_info.mhz : 200);
     pmm_init();
+    log_printf("[MM  ] usable=%uMB free=%uMB\n",
+               usable_ram_mb, pmm_get_free_mb());
+    pci_scan_all();
     pci_scan_vga();
     speaker_init();
     audio_init();
-    set_resolution(800, 600, 16);
+    log_printf("[AUD ] %s\n", audio_get_hardware_name());
+    set_resolution(800, 600, 32);
     enable_fpu(); // Re-enable x87 FPU / SSE after real-mode VBE switch
     timer_init(); // Re-verify PIT timer after real-mode VBE switch
     
@@ -517,17 +557,26 @@ void kernel_main(void)
     copy_fullscreen_to_lfb(v);
     mouse_init();
 
+    irq_register_handler(1, ps2_irq_dispatch, 0);
+    irq_register_handler(12, ps2_irq_dispatch, 0);
+    timer_set_irq_mode(1);
+    irq_unmask(0);
+    irq_unmask(1);
+    irq_unmask(12);
+    irq_global_enable();
+    log_printf("[IRQ ] active timer/keyboard/mouse, IF=%u\n",
+               (unsigned int)irq_interrupts_enabled());
+
+    mouse_get(&mx, &my, &mb);
+    int hardware_cursor = gfx_accel_has_hardware_cursor();
+    if (hardware_cursor) gfx_accel_set_cursor(mx, my, 1);
+
     while (1) {
         audio_poll();
         timer_update();
         check_revert_timer();
-        
-        while (inb(0x64) & 0x01) {
-            unsigned char st = inb(0x64);
-            unsigned char data = inb(0x60);
-            if (st & 0x20) mouse_handle_byte(data);
-            else keyboard_handle_byte(data);
-        }
+        hardware_cursor = gfx_accel_has_hardware_cursor();
+
         mouse_get(&mx, &my, &mb);
         int mb_press = (mb & 1) && !(last_mb & 1);
         int mb_release = !(mb & 1) && (last_mb & 1);
@@ -536,7 +585,7 @@ void kernel_main(void)
         int mr = wm_need_mouse_reset();
         int moved = (mx != last_mx || my != last_my);
         
-        if (mr || moved) {
+        if (!hardware_cursor && (mr || moved)) {
             if (last_mx >= 0) {
                 mouse_reset(v);
                 copy_rect_to_lfb(v, last_mx, last_my, 16, 16);
@@ -554,7 +603,13 @@ void kernel_main(void)
         
         wm_draw(v);
 
-        if (need_full_copy) {
+        if (hardware_cursor) {
+            if (need_full_copy) {
+                copy_fullscreen_to_lfb(v);
+                last_mx = mx; last_my = my;
+            }
+            gfx_accel_set_cursor(mx, my, 1);
+        } else if (need_full_copy) {
             extern void mouse_invalidate(void);
             mouse_invalidate();
             mouse_draw(v);

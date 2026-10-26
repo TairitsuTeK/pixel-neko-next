@@ -5,6 +5,8 @@
 #include "wav_dec.h"
 #include "flac_dec.h"
 #include "mp3_dec.h"
+#include "driver.h"
+#include "log.h"
 
 #define DEC_NONE 0
 #define DEC_WAV  1
@@ -59,6 +61,34 @@ static const audio_driver_ops_t g_ct4810_ops = {
     .silence_half = ct4810_silence_half,
     .get_dma_frame_pos = ct4810_get_dma_frame_pos,
     .get_dma_buffer = ct4810_get_dma_buffer,
+};
+
+static int probe_ct4810_driver(void)
+{
+    return ct4810_init() == 0 && ct4810_is_present();
+}
+
+static int probe_cmi8738_driver(void)
+{
+    return cmi8738_init() == 0 && cmi8738_is_present();
+}
+
+static const driver_descriptor_t g_ct4810_driver = {
+    "Ensoniq AudioPCI / CT4810",
+    DRIVER_CATEGORY_AUDIO,
+    100,
+    probe_ct4810_driver,
+    0,
+    0
+};
+
+static const driver_descriptor_t g_cmi8738_driver = {
+    "C-Media CMI8738",
+    DRIVER_CATEGORY_AUDIO,
+    90,
+    probe_cmi8738_driver,
+    0,
+    0
 };
 
 static const audio_driver_ops_t* g_active_driver = 0;
@@ -158,9 +188,13 @@ void audio_init(void) {
 
     // 智能硬件识别：优先检测 Creative CT4810 (CT5880 / ES1371)，其次检测 C-Media CMI8738
     g_active_driver = 0;
-    if (ct4810_init() == 0 && ct4810_is_present()) {
+    driver_register(&g_ct4810_driver);
+    driver_register(&g_cmi8738_driver);
+    driver_probe_category(DRIVER_CATEGORY_AUDIO);
+    if (driver_is_active(DRIVER_CATEGORY_AUDIO,
+                         "Ensoniq AudioPCI / CT4810")) {
         g_active_driver = &g_ct4810_ops;
-    } else if (cmi8738_init() == 0 && cmi8738_is_present()) {
+    } else if (driver_is_active(DRIVER_CATEGORY_AUDIO, "C-Media CMI8738")) {
         g_active_driver = &g_cmi8738_ops;
     }
 

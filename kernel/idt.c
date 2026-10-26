@@ -4,8 +4,7 @@
 #include "wm.h"
 #include "font.h"
 #include "panic.h"
-
-extern volatile int global_tick;
+#include "log.h"
 
 struct idt_entry {
     unsigned short base_low;
@@ -38,9 +37,6 @@ extern void irq0(void);  extern void irq1(void);  extern void irq2(void);  exter
 extern void irq4(void);  extern void irq5(void);  extern void irq6(void);  extern void irq7(void);
 extern void irq8(void);  extern void irq9(void);  extern void irq10(void); extern void irq11(void);
 extern void irq12(void); extern void irq13(void); extern void irq14(void); extern void irq15(void);
-
-extern void mouse_handle_byte(unsigned char d);
-extern void keyboard_handle_byte(unsigned char d);
 
 static void (*isr_table[32])(void) = {
     isr0,  isr1,  isr2,  isr3,  isr4,  isr5,  isr6,  isr7,
@@ -89,44 +85,11 @@ static void idt_set_gate(unsigned char num, unsigned int base, unsigned short se
     idt[num].flags = flags;
 }
 
-static void serial_init(void) {
-    outb(0x3F8 + 1, 0x00); // Disable all interrupts
-    outb(0x3F8 + 3, 0x80); // Enable DLAB
-    outb(0x3F8 + 0, 0x03); // 38400 baud (divisor 3)
-    outb(0x3F8 + 1, 0x00);
-    outb(0x3F8 + 3, 0x03); // 8 bits, no parity, one stop bit
-    outb(0x3F8 + 2, 0xC7); // FIFO
-    outb(0x3F8 + 4, 0x0B); // IRQs enabled, RTS/DSR set
-}
-
-static void serial_putc(char c) {
-    int timeout = 50000;
-    while (((inb(0x3F8 + 5) & 0x20) == 0) && --timeout);
-    outb(0x3F8, c);
-}
-
-static void serial_puts(const char* s) {
-    while (*s) {
-        if (*s == '\n') serial_putc('\r');
-        serial_putc(*s++);
-    }
-}
-
-static void serial_puthex32(unsigned int val) {
-    const char hex[] = "0123456789ABCDEF";
-    serial_puts("0x");
-    for (int i = 28; i >= 0; i -= 4) {
-        serial_putc(hex[(val >> i) & 0xF]);
-    }
-}
-
 void idt_reload(void) {
     idt_flush((unsigned int)&idtp);
 }
 
 void idt_init(void) {
-    serial_init();
-
     idtp.limit = (sizeof(struct idt_entry) * 256) - 1;
     idtp.base  = (unsigned int)&idt;
 
@@ -148,6 +111,7 @@ void idt_init(void) {
 
     idt_reload();
     asm volatile("cli");
+    log_printf("[IDT ] exception and IRQ gates installed\n");
 }
 
 void pic_remap(void) {
@@ -166,85 +130,27 @@ void pic_remap(void) {
     outb(0xA1, 0xFF);
 }
 
-void irq_handler(struct trap_frame* frame) {
-    if (frame->int_no == 32) {
-        // IRQ0: Timer
-        global_tick++;
-    } else if (frame->int_no == 33 || frame->int_no == 44) {
-        // IRQ1 Keyboard or IRQ12 Mouse
-        for (;;) {
-            unsigned char st = inb(0x64);
-            if (!(st & 0x01)) break;
-            unsigned char data = inb(0x60);
-            if (st & 0x20) mouse_handle_byte(data);
-            else keyboard_handle_byte(data);
-        }
-    }
-
-    // Spurious IRQ7 handling: check Master In-Service Register
-    if (frame->int_no == 39) {
-        outb(0x20, 0x0B);
-        unsigned char isr = inb(0x20);
-        if (!(isr & 0x80)) return; // Spurious IRQ7: do not send EOI
-    }
-
-    // Spurious IRQ15 handling: check Slave In-Service Register
-    if (frame->int_no == 47) {
-        outb(0xA0, 0x0B);
-        unsigned char isr = inb(0xA0);
-        if (!(isr & 0x80)) {
-            outb(0x20, 0x20); // Spurious IRQ15: send EOI only to Master
-            return;
-        }
-    }
-
-    // Send EOI to Slave then Master
-    if (frame->int_no >= 40) {
-        outb(0xA0, 0x20); // EOI to Slave PIC
-    }
-    outb(0x20, 0x20); // EOI to Master PIC
-}
-
 void isr_handler(struct trap_frame* frame) {
     asm volatile("cli");
 
-    serial_puts("\n\n====================================================\n");
-    serial_puts("             *** KERNEL EXCEPTION PANIC ***\n");
-    serial_puts("====================================================\n");
+    log_write("\n\n====================================================\n");
+    log_write("             *** KERNEL EXCEPTION PANIC ***\n");
+    log_write("====================================================\n");
     if (frame->int_no < 32) {
-        serial_puts("Exception : ");
-        serial_puts(exception_names[frame->int_no]);
-        serial_puts("\n");
+        log_printf("Exception : %s\n", exception_names[frame->int_no]);
     } else {
-        serial_puts("Interrupt Vector: ");
-        serial_puthex32(frame->int_no);
-        serial_puts("\n");
+        log_printf("Interrupt Vector: 0x%X\n", frame->int_no);
     }
 
-    serial_puts("EIP       : "); serial_puthex32(frame->eip);
-    serial_puts("  CS    : "); serial_puthex32(frame->cs);
-    serial_puts("  EFLAGS: "); serial_puthex32(frame->eflags);
-    serial_puts("\n");
-
-    serial_puts("Error Code: "); serial_puthex32(frame->err_code);
-    serial_puts("\n");
-
-    serial_puts("EAX: "); serial_puthex32(frame->eax);
-    serial_puts("  EBX: "); serial_puthex32(frame->ebx);
-    serial_puts("  ECX: "); serial_puthex32(frame->ecx);
-    serial_puts("  EDX: "); serial_puthex32(frame->edx);
-    serial_puts("\n");
-
-    serial_puts("ESI: "); serial_puthex32(frame->esi);
-    serial_puts("  EDI: "); serial_puthex32(frame->edi);
-    serial_puts("  EBP: "); serial_puthex32(frame->ebp);
-    serial_puts("  ESP: "); serial_puthex32(frame->esp_dummy);
-    serial_puts("\n");
-
-    serial_puts("CPU Model : ");
-    serial_puts(cpu_model_string);
-    serial_puts("\n");
-    serial_puts("System halted safely. Triple-fault reboot prevented.\n");
+    log_printf("EIP=0x%X CS=0x%X EFLAGS=0x%X\n",
+               frame->eip, frame->cs, frame->eflags);
+    log_printf("Error Code=0x%X\n", frame->err_code);
+    log_printf("EAX=0x%X EBX=0x%X ECX=0x%X EDX=0x%X\n",
+               frame->eax, frame->ebx, frame->ecx, frame->edx);
+    log_printf("ESI=0x%X EDI=0x%X EBP=0x%X ESP=0x%X\n",
+               frame->esi, frame->edi, frame->ebp, frame->esp_dummy);
+    log_printf("CPU Model: %s\n", cpu_model_string);
+    log_write("System halted safely. Triple-fault reboot prevented.\n");
 
     const char* name = (frame->int_no < 32) ? exception_names[frame->int_no] : "Fatal Exception";
     panic_show_exception(frame, name);

@@ -2,6 +2,8 @@
 #include "port.h"
 #include "mm.h"
 #include "timer.h"
+#include "dma.h"
+#include "pci.h"
 
 #define CT_SRC_STATE_MASK \
     (ES_1371_SRC_DISABLE | ES_1371_DIS_P1 | ES_1371_DIS_P2 | ES_1371_DIS_R1)
@@ -15,6 +17,7 @@ static const char* g_ct_chip_name = "None";
 static char g_ct_display_name[72];
 static unsigned char* g_ct_dma_buf = 0;
 static unsigned int g_ct_dma_phys = 0;
+static dma_buffer_t g_ct_dma;
 static int g_ct_dma_running = 0;
 static int g_ct_last_half_playing = -1;
 static int g_ct_half_filled[2] = {0, 0};
@@ -262,67 +265,59 @@ int ct4810_init(void) {
     g_ct_revision = 0;
     g_ct_is_ev1938 = 0;
 
-    for (int bus = 0; bus < 256 && !g_ct_present; bus++) {
-        for (int dev = 0; dev < 32 && !g_ct_present; dev++) {
-            for (int func = 0; func < 8; func++) {
-                unsigned int id = pci_read_config(bus, dev, func, 0);
-                if (id == 0xFFFFFFFF || id == 0) {
-                    if (func == 0) break;
-                    continue;
-                }
+    pci_scan_all();
+    for (int index = 0; index < pci_get_device_count(); index++) {
+        const pci_device_t* pci = pci_get_device(index);
+        if (!pci) continue;
+        vendor = pci->vendor;
+        device = pci->device;
+        if (!ct_device_supported(vendor, device)) continue;
 
-                vendor = (unsigned short)(id & 0xFFFF);
-                device = (unsigned short)(id >> 16);
-
-                if (!ct_device_supported(vendor, device)) continue;
-
-                for (int bar = 0; bar < 6; bar++) {
-                    unsigned int value =
-                        pci_read_config(bus, dev, func, 0x10 + bar * 4);
-                    if (value && value != 0xFFFFFFFFU && (value & 1)) {
-                        g_ct_io_base = (unsigned short)(value & 0xFFFC);
-                        break;
-                    }
-                }
-                if (!g_ct_io_base) continue;
-
-                unsigned int command = pci_read_config(bus, dev, func, 0x04);
-                pci_write_config(bus, dev, func, 0x04, command | 0x07);
-
-                unsigned int latency = pci_read_config(bus, dev, func, 0x0C);
-                if ((latency & 0xFF00) < 0x4000) {
-                    pci_write_config(bus, dev, func, 0x0C,
-                                     (latency & 0xFFFF00FF) | 0x4000);
-                }
-
-                g_ct_revision =
-                    (unsigned char)(pci_read_config(bus, dev, func, 0x08) & 0xFF);
-                g_ct_is_ev1938 = (device == EV1938_DEV_ID);
-
-                if (device == CT5880_DEV_ID) {
-                    g_ct_chip_name = "Creative CT4810 (CT5880) PCI";
-                } else if (g_ct_is_ev1938) {
-                    g_ct_chip_name = "Creative AudioPCI (EV1938) PCI";
-                } else if (device == ES1371_COMPAT_DEV_ID) {
-                    g_ct_chip_name = "Ensoniq AudioPCI (CT4810 compatible) PCI";
-                } else {
-                    g_ct_chip_name = "Ensoniq AudioPCI (ES1371) PCI";
-                }
-                g_ct_present = 1;
+        for (int bar = 0; bar < 6; bar++) {
+            if (pci->bar_valid[bar] && pci->bar_is_io[bar]) {
+                g_ct_io_base = (unsigned short)pci->bar[bar];
                 break;
             }
         }
+        if (!g_ct_io_base) continue;
+
+        pci_enable_io(pci);
+        pci_enable_memory(pci);
+        pci_enable_bus_master(pci);
+
+        unsigned int latency = pci_config_read(pci->bus, pci->slot,
+                                               pci->function, 0x0C);
+        if ((latency & 0xFF00) < 0x4000) {
+            pci_config_write(pci->bus, pci->slot, pci->function,
+                             0x0C, (latency & 0xFFFF00FF) | 0x4000);
+        }
+
+        g_ct_revision = pci->revision;
+        g_ct_is_ev1938 = (device == EV1938_DEV_ID);
+
+        if (device == CT5880_DEV_ID) {
+            g_ct_chip_name = "Creative CT4810 (CT5880) PCI";
+        } else if (g_ct_is_ev1938) {
+            g_ct_chip_name = "Creative AudioPCI (EV1938) PCI";
+        } else if (device == ES1371_COMPAT_DEV_ID) {
+            g_ct_chip_name = "Ensoniq AudioPCI (CT4810 compatible) PCI";
+        } else {
+            g_ct_chip_name = "Ensoniq AudioPCI (ES1371) PCI";
+        }
+        g_ct_present = 1;
+        break;
     }
 
     if (!g_ct_present || !g_ct_io_base) return -1;
 
-    if (!g_ct_dma_buf) {
-        g_ct_dma_buf = (unsigned char*)pmm_alloc_pages_aligned(16, 16);
-        if (!g_ct_dma_buf) {
+    if (!dma_is_valid(&g_ct_dma)) {
+        g_ct_dma = dma_alloc_aligned(CT_DMA_BUFFER_BYTES, 65536);
+        if (!dma_is_valid(&g_ct_dma)) {
             g_ct_present = 0;
             return -2;
         }
-        g_ct_dma_phys = (unsigned int)g_ct_dma_buf;
+        g_ct_dma_buf = (unsigned char*)g_ct_dma.virt;
+        g_ct_dma_phys = g_ct_dma.phys;
     }
 
     for (int i = 0; i < CT_DMA_BUFFER_BYTES; i++) g_ct_dma_buf[i] = 0;
@@ -527,6 +522,7 @@ void ct4810_write_half(int half_idx, const void* data, unsigned int bytes) {
     for (unsigned int i = 0; i < bytes; i++) dest[i] = src[i];
     for (unsigned int i = bytes; i < CT_DMA_HALF_BYTES; i++) dest[i] = 0;
 
+    dma_flush(&g_ct_dma);
     g_ct_half_filled[half_idx] = 1;
 }
 
@@ -534,6 +530,7 @@ void ct4810_silence_half(int half_idx) {
     if (!g_ct_dma_buf || half_idx < 0 || half_idx > 1) return;
     unsigned char* dest = g_ct_dma_buf + half_idx * CT_DMA_HALF_BYTES;
     for (unsigned int i = 0; i < CT_DMA_HALF_BYTES; i++) dest[i] = 0;
+    dma_flush(&g_ct_dma);
     g_ct_half_filled[half_idx] = 0;
 }
 

@@ -8,6 +8,7 @@
 #include "vfs.h"
 #include "audio.h"
 #include "version.h"
+#include "pci.h"
 
 static int active_tab = 0; // 0: System, 1: PCI Bus, 2: Drives
 static int pci_page = 0;
@@ -41,6 +42,7 @@ static const char* get_vendor_name(unsigned short vendor) {
         case 0x121A: return "3dfx";
         case 0x10DE: return "NVIDIA";
         case 0x13F6: return "C-Media";
+        case 0x15AD: return "VMware";
         default:     return "Generic";
     }
 }
@@ -60,35 +62,18 @@ static const char* get_class_name(unsigned char base_class) {
 static void scan_pci_bus(void) {
     if (pci_scanned) return;
     pci_count = 0;
-    for (int bus = 0; bus < 8; bus++) {
-        for (int dev = 0; dev < 32; dev++) {
-            for (int func = 0; func < 8; func++) {
-                unsigned int id = pci_read_config(bus, dev, func, 0);
-                if (id == 0xFFFFFFFF || id == 0) {
-                    if (func == 0) break; // Not a multi-function device
-                    continue;
-                }
-                unsigned short vendor = id & 0xFFFF;
-                unsigned short device = (id >> 16) & 0xFFFF;
-                unsigned int class_rev = pci_read_config(bus, dev, func, 8);
-                unsigned char base_class = (class_rev >> 24) & 0xFF;
-
-                if (pci_count < MAX_PCI_DEVS) {
-                    pci_list[pci_count].bus = bus;
-                    pci_list[pci_count].dev = dev;
-                    pci_list[pci_count].func = func;
-                    pci_list[pci_count].vendor = vendor;
-                    pci_list[pci_count].device = device;
-                    pci_list[pci_count].base_class = base_class;
-                    pci_count++;
-                }
-
-                // If function 0 is not a multi-function device, skip other functions
-                if (func == 0) {
-                    unsigned int hdr = pci_read_config(bus, dev, 0, 0x0C);
-                    if (!((hdr >> 16) & 0x80)) break;
-                }
-            }
+    pci_scan_all();
+    int count = pci_get_device_count();
+    for (int i = 0; i < count && pci_count < MAX_PCI_DEVS; i++) {
+        const pci_device_t* dev = pci_get_device(i);
+        if (dev) {
+            pci_list[pci_count].bus = dev->bus;
+            pci_list[pci_count].dev = dev->slot;
+            pci_list[pci_count].func = dev->function;
+            pci_list[pci_count].vendor = dev->vendor;
+            pci_list[pci_count].device = dev->device;
+            pci_list[pci_count].base_class = dev->class_code;
+            pci_count++;
         }
     }
     pci_scanned = 1;
@@ -323,11 +308,16 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         font_draw_text(v, lx, ly, "2D Engine:", 0);
         if (gfx_accel_is_active()) {
             draw_text_fitted(v, value_x, ly, max_value_chars,
-                             "ATI Mach64 GUI Accelerator (Active)", 2);
+                             "Hardware 2D (Active)", 2);
         } else {
             draw_text_fitted(v, value_x, ly, max_value_chars,
-                             "Software Rasterizer (VBE Mode)", 8);
+                             "Software Rasterizer (Fallback)", 8);
         }
+
+        ly += 16;
+        font_draw_text(v, lx, ly, "Driver Status:", 0);
+        draw_text_fitted(v, value_x, ly, max_value_chars,
+                         gfx_accel_get_status(), 8);
 
         ly += 16;
         font_draw_text(v, lx, ly, "Audio Device:", 0);
@@ -354,7 +344,7 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         // Tab 1: PCI Devices (6 items per page)
         scan_pci_bus();
         int lx = fx + 8, ly = fy + 6;
-        font_draw_text(v, lx, ly, "PCI Devices on Bus 0..7:", 0);
+        font_draw_text(v, lx, ly, "PCI Devices (Bus 0..255):", 0);
 
         int start_idx = pci_page * 6;
         int max_pages = (pci_count + 5) / 6;
@@ -363,7 +353,10 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         ly += 14;
         for (int i = start_idx; i < start_idx + 6 && i < pci_count; i++) {
             char line[64];
-            line[0] = '0'; line[1] = '0' + pci_list[i].bus; line[2] = ':';
+            const char* hex = "0123456789ABCDEF";
+            line[0] = hex[(pci_list[i].bus >> 4) & 0xF];
+            line[1] = hex[pci_list[i].bus & 0xF];
+            line[2] = ':';
             line[3] = '0' + (pci_list[i].dev / 10);
             line[4] = '0' + (pci_list[i].dev % 10);
             line[5] = '.';

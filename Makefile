@@ -6,7 +6,7 @@ QEMU = qemu-system-i386
 
 CFLAGS = -m32 -march=pentiumpro -ffreestanding -nostdlib -nostartfiles -fno-builtin \
          -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 \
-         -Os -Wall -Wextra -Iinclude -I.
+         -std=gnu11 -Os -Wall -Wextra -Iinclude -I.
 
 LDFLAGS = -m elf_i386
 ASMFLAGS = -f elf32
@@ -14,6 +14,10 @@ ASMFLAGS = -f elf32
 C_SOURCES = kernel/kernel.c \
             kernel/mm.c \
             kernel/idt.c \
+            kernel/irq.c \
+            kernel/dma.c \
+            kernel/driver.c \
+            kernel/log.c \
             kernel/timer.c \
             kernel/cpu.c \
             kernel/splash.c \
@@ -27,6 +31,8 @@ C_SOURCES = kernel/kernel.c \
             kernel/flac_dec.c \
             kernel/mp3_dec.c \
             drivers/ati_mach64.c \
+            drivers/pci.c \
+            drivers/vmware_svga.c \
             drivers/cmi8738.c \
             drivers/ct4810.c \
             drivers/gfx_accel.c \

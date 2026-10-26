@@ -1,6 +1,7 @@
 // mouse.c
 #include "port.h"
 #include "wm.h"
+#include "irq.h"
 
 static int mx = 160, my = 100;
 static int btn = 0;
@@ -30,13 +31,13 @@ static inline int kbc_wait_read(void) {
 void mouse_init(void)
 {
     for (volatile int i = 0; i < 100000; i++);
-    
+
     // Drain any leftover data from controller
     for (int i = 0; i < 100; i++) {
         if (inb(0x64) & 0x01) inb(0x60);
         for (volatile int j = 0; j < 1000; j++);
     }
-    
+
     // Enable second PS/2 port (auxiliary device)
     kbc_wait_write();
     outb(0x64, 0xA8);
@@ -49,8 +50,8 @@ void mouse_init(void)
     if (!kbc_wait_read()) return;
     unsigned char cfg = inb(0x60);
 
-    // Enable mouse IRQ12 (bit 1) and enable mouse clock (clear bit 5)
-    cfg |= 0x02;
+    // Enable keyboard IRQ1 and mouse IRQ12, and enable the mouse clock.
+    cfg |= 0x03;
     cfg &= ~0x20;
 
     // Write back controller configuration byte
@@ -119,16 +120,20 @@ void mouse_handle_byte(unsigned char d)
 
 void mouse_get(int* x, int* y, int* b)
 {
+    unsigned int flags = irq_save_flags();
     if (x) *x = mx;
     if (y) *y = my;
     if (b) *b = btn;
+    irq_restore_flags(flags);
 }
 
 void mouse_draw(unsigned char* vga)
 {
     if (!init_done) return;
     int bpp_bytes = (screen_bpp <= 8) ? 1 : ((screen_bpp <= 16) ? 2 : ((screen_bpp <= 24) ? 3 : 4));
+    unsigned int flags = irq_save_flags();
     int x = mx, y = my;
+    irq_restore_flags(flags);
     for (int i = 0; i < 16; i++)
         for (int j = 0; j < 16; j++) {
             if (y+i < screen_h && x+j < screen_w) {
@@ -146,7 +151,7 @@ void mouse_draw(unsigned char* vga)
         }
     saved_x = x;
     saved_y = y;
-    
+
     static const char* cursor_shape[16] = {
         "X               ",
         "XX              ",

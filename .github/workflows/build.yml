@@ -73,11 +73,12 @@ jobs:
           - QEMU: `qemu-system-i386 -cdrom pixel_neko_build_${{ env.VERSION }}.iso -m 128M -boot d`
           - VirtualBox / VMware: create a 32-bit Other/Unknown virtual machine and boot this ISO.
 
-          ### Fixes
-          - Creative CT4810 / Ensoniq ES1371 playback, alternate PCI BAR and physical CMI8738 output fixes are included.
-          - ATI Mach64 / 3D Rage II+DVD 32-bit color modes include corrected scanline pitch.
-          - NekoPlayer, System Information and File Manager layout improvements are included.
-          - Pausing playback now mutes the hardware output path to prevent residual noise.
+          ### Highlights
+          - P0 kernel foundation: PCI/BAR management, shared IRQ dispatch, DMA/MMIO helpers, serial ring logging and prioritized driver registration.
+          - P1 VMware SVGA II: 32bpp modes, FIFO 2D fill/copy/update, dirty-rectangle presentation, hardware cursor and safe VBE/linear-framebuffer fallback.
+          - PIT, PS/2 keyboard and PS/2 mouse now use hardware IRQs; CMI8738 and CT4810/ES1371 DMA buffers use the common DMA allocator.
+          - Existing ATI Mach64, CT4810/ES1371, CMI8738 and standard VBE fallback paths remain available.
+          - SVGA 3D-capable VMware profiles are accepted for 2D acceleration; full 3D rendering is not part of this release.
         draft: false
         prerelease: false
         files: |

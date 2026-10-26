@@ -383,7 +383,7 @@ void splash_run(void)
     boot_step_t steps[8] = {
         { "Initializing processor...", cpu_model_string, 0, 15, 140, NULL },
         { "Verifying memory map...", "Physical Page Bitmap OK", 1, 28, 140, NULL },
-        { "Scanning PCI bus & 2D Accelerator...", "Probing ATI Mach64 / VBE", 2, 42, 140, gfx_accel_init },
+        { "Scanning PCI bus & 2D Accelerator...", "VMware SVGA II / ATI / VBE", 2, 42, 140, gfx_accel_init },
         { "Configuring PS/2 keyboard buffer...", "IRQ1 Remapped", 3, 56, 140, NULL },
         { "Initializing PS/2 mouse streaming...", "Auxiliary Device Enabled", 4, 70, 160, mouse_init },
         { "Probing ATA IDE storage & partitions...", "Master/Slave Drive Check", 5, 82, 180, NULL },

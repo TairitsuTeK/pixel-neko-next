@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202011.110)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202012.000)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -171,6 +171,22 @@
 - **🔇 关机停机画面静音与 DMA 彻底停止**：在退出系统进入经典 Safe to Turn Off 画面及重启前立即切断声卡 DMA 环形缓冲与静音输出，彻底消除关机停机时的硬件残余卡碟循环循环。
 - **💽 Intel H55 (ASUS P7H55-M LE) SATA / IDE Native PCI 驱动器自适应探测**：新增 PCI 存储控制器（Class 0101）全面枚举与 BAR0~BAR3 Native PCI I/O 端口识别，解决现代与近现代主板兼容 IDE 模式下找不到硬盘与光驱的问题。
 - **🏷️ 开机画面与系统内核版本号迭代同步**：开机 Boot Splash 及系统关于视窗全面联动动态版本号，正式迭代至 `Build 2010.010`。
+
+---
+
+## 💾 Build 2012.000 更新特性
+- **🧱 P0 内核基础设施**：
+  - 新增统一的 PCI 0..255 总线枚举、设备缓存、32/64 位 BAR 解码和显存控制器资源查询；
+  - 新增可共享 IRQ 的注册/注销、PIC 屏蔽控制、BIOS 调用掩码保存恢复和 spurious IRQ 处理；
+  - PIT、PS/2 键盘与鼠标改为真实硬件 IRQ 驱动，100Hz 系统 tick 不再依赖桌面主循环轮询；
+  - 新增 DMA 连续缓冲区、MMIO 屏障、串口/内存环形日志和按优先级探测的驱动注册表；
+  - CMI8738、CT4810/ES1371 的 DMA 缓冲区改由统一 DMA 层分配。
+- **🖥️ P1 VMware SVGA II 2D 显卡**：
+  - 支持 VMware SVGA II、Fusion 与 SVGA Adapter 的寄存器与能力探测，`800×600×32` 及动态 2D 模式切换；
+  - 初始化 VMware FIFO，使用 `UPDATE`、`RECT_FILL`、`RECT_COPY` 完成 dirty-rectangle present 与 2D 加速命令；
+  - 支持 16×16 硬件光标，FIFO 或光标不可用时自动回退到软件光标；
+  - 保留线性 framebuffer、ATI Mach64 和标准 VBE 的安全回退路径；
+  - 识别声明 `SVGA_CAP_3D` 的高版本 VMware 显卡配置，但系统仍只使用 2D 加速，不实现完整 3D 管线。
 
 ---
 
