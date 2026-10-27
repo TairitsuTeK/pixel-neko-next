@@ -8,6 +8,7 @@ static int ctrl = 0;
 static int caps = 0;
 static int alt = 0;
 static int e0_flag = 0;
+static volatile int ps2_keyboard_active = 0;
 
 #define KEY_BUF_SIZE 64
 static int key_buf[KEY_BUF_SIZE];
@@ -146,7 +147,8 @@ static unsigned char kbdus_shift[128] =
 
 static int e1_skip = 0;
 
-void keyboard_handle_byte(unsigned char scancode) {
+static void keyboard_handle_scancode(unsigned char scancode, int from_usb) {
+    if (!from_usb) ps2_keyboard_active = 1;
     if (scancode == 0xE1) {
         e1_skip = 2; // Pause key sends E1 1D 45 ... skip next bytes
         return;
@@ -219,4 +221,18 @@ void keyboard_handle_byte(unsigned char scancode) {
             }
         }
     }
+}
+
+void keyboard_handle_byte(unsigned char scancode) {
+    keyboard_handle_scancode(scancode, 0);
+}
+
+/* USB HID reports are translated into Set-1 scancodes but must not make the
+ * System Information page claim that a PS/2 keyboard is active. */
+void keyboard_handle_usb_scancode(unsigned char scancode) {
+    keyboard_handle_scancode(scancode, 1);
+}
+
+int keyboard_is_ps2_active(void) {
+    return ps2_keyboard_active;
 }

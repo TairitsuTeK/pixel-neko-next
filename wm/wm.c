@@ -95,8 +95,8 @@ static int wv=0, cv=0, clv=0, cpv=0;
 static int am=0, cm=0, clm=0, cpm=0;
 static int edx=90, edy=60, edw=300, edh=200;
 static int edw_def=300, edh_def=200;
-static int six=65, siy=35, siw=520, sih=250;
-static int siw_def=520, sih_def=250;
+static int six=65, siy=35, siw=520, sih=280;
+static int siw_def=520, sih_def=280;
 static int siv=0, sim=0;
 static int pzx=110, pzy=50, pzw=180, pzh=200;
 static int pzw_def=180, pzh_def=200;
@@ -681,7 +681,7 @@ void wm_init(void){
     cpx=85;cpy=50;cpw=310;cph=210;cpw_def=310;cph_def=210;
     fmx=85;fmy=45;fmw=440;fmh=260;fmw_def=440;fmh_def=260;
     edx=90;edy=60;edw=300;edh=200;edw_def=300;edh_def=200;
-    six=65;siy=40;siw=520;sih=250;siw_def=520;sih_def=250;
+    six=65;siy=40;siw=520;sih=280;siw_def=520;sih_def=280;
     npx=70;npy=45;npw=340;nph=215;npw_def=340;nph_def=215;
     pzx=110;pzy=50;pzw=180;pzh=200;pzw_def=180;pzh_def=200;
     for(int i=0;i<11;i++){

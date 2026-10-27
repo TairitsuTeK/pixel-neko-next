@@ -18,6 +18,8 @@ typedef struct {
 
 static usb_hid_dev_t g_hids[USB_HID_MAX_DEVICES];
 static int g_hid_count = 0;
+static int g_usb_keyboard_count = 0;
+static int g_usb_mouse_count = 0;
 
 /* Translate a HID keyboard usage code to PS/2 scancode set 1.
  * Sets *e0 to 1 when an E0 prefix must be emitted first. */
@@ -87,8 +89,8 @@ static void hid_send_key(unsigned char usage, int release)
     if (sc == 0) return;
     if (release) sc |= 0x80;
 
-    if (e0) keyboard_handle_byte(0xE0);
-    keyboard_handle_byte(sc);
+    if (e0) keyboard_handle_usb_scancode(0xE0);
+    keyboard_handle_usb_scancode(sc);
 }
 
 static void hid_process_keyboard(usb_hid_dev_t* h, const unsigned char* report)
@@ -196,11 +198,23 @@ int usb_hid_attach(usb_device_t* dev)
     h->ep_in = ep_in;
     h->is_keyboard = is_kbd;
     h->is_mouse = is_mouse;
+    if (is_kbd) g_usb_keyboard_count++;
+    else if (is_mouse) g_usb_mouse_count++;
     g_hid_count++;
 
     log_printf("[HID ] %s attached (ep 0x%X)\n",
                is_kbd ? "keyboard" : "mouse", ep_in->address);
     return 0;
+}
+
+int usb_hid_keyboard_count(void)
+{
+    return g_usb_keyboard_count;
+}
+
+int usb_hid_mouse_count(void)
+{
+    return g_usb_mouse_count;
 }
 
 void usb_hid_poll(void)

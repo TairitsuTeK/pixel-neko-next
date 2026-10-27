@@ -9,6 +9,9 @@
 #include "audio.h"
 #include "version.h"
 #include "pci.h"
+#include "keyboard.h"
+#include "mouse.h"
+#include "usb_hid.h"
 
 static int active_tab = 0; // 0: System, 1: PCI Bus, 2: Drives
 static int pci_page = 0;
@@ -83,6 +86,33 @@ static void draw_text_fitted(unsigned char* v, int x, int y, int max_chars,
         out[max_chars] = '\0';
     }
     font_draw_text(v, x, y, out, color);
+}
+
+static void append_input_name(char* out, int cap, int* pos, const char* name) {
+    if (*pos > 0 && *pos + 3 < cap) {
+        out[(*pos)++] = ' ';
+        out[(*pos)++] = '+';
+        out[(*pos)++] = ' ';
+    }
+    while (*name && *pos < cap - 1) out[(*pos)++] = *name++;
+    out[*pos] = '\0';
+}
+
+static int build_input_summary(char* out, int cap) {
+    int pos = 0;
+    out[0] = '\0';
+
+    if (keyboard_is_ps2_active()) append_input_name(out, cap, &pos, "PS/2 kbd");
+    if (usb_hid_keyboard_count() > 0) append_input_name(out, cap, &pos, "USB kbd");
+    if (mouse_is_ps2_active()) append_input_name(out, cap, &pos, "PS/2 mouse");
+    if (usb_hid_mouse_count() > 0) append_input_name(out, cap, &pos, "USB mouse");
+
+    if (pos == 0) {
+        const char* none = "None detected";
+        while (*none && pos < cap - 1) out[pos++] = *none++;
+        out[pos] = '\0';
+    }
+    return pos;
 }
 
 static int draw_text_wrapped(unsigned char* v, int x, int y, int max_chars,
@@ -309,6 +339,19 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         } else {
             draw_text_fitted(v, value_x, ly, max_value_chars, "Disabled", 8);
         }
+
+        ly += 16;
+        int input_y = ly;
+        int input_bottom = fy + fh - 10;
+        if (input_y > input_bottom) input_y = input_bottom;
+        font_draw_text(v, lx, input_y, "Input Devices:", 0);
+        char input_summary[96];
+        build_input_summary(input_summary, sizeof(input_summary));
+        int input_active = keyboard_is_ps2_active() || mouse_is_ps2_active() ||
+                           usb_hid_keyboard_count() > 0 ||
+                           usb_hid_mouse_count() > 0;
+        draw_text_fitted(v, value_x, input_y, max_value_chars, input_summary,
+                         input_active ? 2 : 8);
 
     } else if (active_tab == 1) {
         // Tab 1: PCI Devices (6 items per page)

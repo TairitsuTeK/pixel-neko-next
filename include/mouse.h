@@ -4,6 +4,7 @@
 void mouse_init(void);
 void mouse_handle_byte(unsigned char d);
 void mouse_handle_usb_report(unsigned char buttons, int dx, int dy);
+int mouse_is_ps2_active(void);
 void mouse_get(int* x, int* y, int* btn);
 void mouse_draw(unsigned char* vga);
 void mouse_reset(unsigned char* vga);

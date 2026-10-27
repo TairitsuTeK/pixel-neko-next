@@ -9,6 +9,7 @@ static int btn = 0;
 static int cycle = 0;
 static unsigned char buf[3];
 static int init_done = 1;
+static volatile int ps2_mouse_active = 0;
 
 static unsigned int saved[16][16];
 static int saved_x = -1, saved_y = -1;
@@ -173,6 +174,7 @@ void mouse_handle_byte(unsigned char d)
     buf[cycle++] = d;
     if (cycle == 3) {
         cycle = 0;
+        ps2_mouse_active = 1;
         btn = buf[0] & 0x07;
         int dx = buf[1];
         int dy = buf[2];
@@ -185,6 +187,11 @@ void mouse_handle_byte(unsigned char d)
         if (my < 0) my = 0;
         if (my > screen_h - 1) my = screen_h - 1;
     }
+}
+
+int mouse_is_ps2_active(void)
+{
+    return ps2_mouse_active;
 }
 
 /* USB HID mouse reports must not share the PS/2 3-byte packet state in
