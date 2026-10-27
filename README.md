@@ -5,7 +5,7 @@
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
 [![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202012.200)-brightgreen.svg)]()
 
-**Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、USB 2.0 键鼠输入、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
+**Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、USB 2.0（UHCI / EHCI / xHCI）键鼠输入、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
 ---
 
@@ -30,6 +30,7 @@
   - **xHCI（USB 2.0 侧）**：现代 Intel PCH（Skylake 起）已取消 EHCI/UHCI，USB 2.0 端口全部挂在 xHCI 上。新驱动 `drivers/usb_xhci.c` 完成 BIOS Legacy USB 交接（`USBLEGSUP` / OS Owned）、命令环与事件环（ERST）、DCBAA 与 scratchpad、`Enable Slot` / `Address Device` / `Evaluate Context` / `Configure Endpoint` 命令，以及 EP0 控制传输与中断 IN 传输；仅枚举低速 / 全速 / 高速设备，SuperSpeed 端口自动跳过。
   - **HID 启动协议键鼠**：USB 键盘 / 鼠标报告经 HID Usage → PS/2 Set-1 扫描码转换后注入现有输入管线，可与 PS/2 键鼠同时使用，最多支持 4 个 HID 设备。
   - **安全降级与诊断**：OHCI 自动识别并记录"暂不支持"；xHCI 交接失败时主动放过控制器，不影响固件的 PS/2 模拟；枚举与驱动状态通过 COM1 串口日志（`[USB ]`、`[XHCI]`、`[UHCI]`、`[EHCI]`、`[HID ]`）输出。
+  - **已知限制**：xHCI 驱动仅实现 USB 2.0 侧（低速 / 全速 / 高速），不驱动 SuperSpeed 与 OHCI；暂不支持外接 USB Hub 与运行期热插拔——键鼠需在开机时已插入并尽量直连主板后置端口。
 - **💾 全新统一虚拟文件系统（VFS）与存储子系统**
   - **Windows 对齐盘符体系**：A: 与 B: 专给软驱预留；硬盘数据分区从 C: 开始依次分配；光驱紧随已分配硬盘分区之后（若无硬盘则光驱自动为 C: 盘）；自动隐藏 EFI 系统分区与扩展容器分区。
   - **CDFS 光盘驱动 (ISO9660 + Joliet)**：完整支持标准 ISO9660 与 Joliet 长文件名扩展，解决 CD/DVD 点开为空的问题，支持只读浏览与读取光盘文件。
@@ -73,6 +74,7 @@
 │   ├── usb_core.c        # USB 2.0 核心层、描述符解析与设备枚举
 │   ├── usb_uhci.c        # UHCI (USB 1.1 全速/低速) 主机控制器驱动
 │   ├── usb_ehci.c        # EHCI (USB 2.0 高速) 主机控制器驱动
+│   ├── usb_xhci.c        # xHCI (USB 2.0 侧) 主机控制器驱动、BIOS Legacy USB 交接
 │   ├── usb_hid.c         # HID 启动协议键盘/鼠标驱动
 │   ├── isadma.c          # ISA DMA 控制器驱动
 │   ├── font.c            # 基础字体渲染
@@ -94,7 +96,7 @@
 │   ├── sysinfo.c         # 系统信息工具与全 PCI 总线设备浏览器
 │   └── puzzle.c          # 经典 15 数字推盘小游戏
 ├── include/              # 全局公共头文件
-│   └── *.h               # ati_mach64.h, gfx_accel.h, usb_core.h, usb_uhci.h, usb_ehci.h, usb_hid.h, panic.h, sysinfo.h, puzzle.h, etc.
+│   └── *.h               # ati_mach64.h, gfx_accel.h, usb_core.h, usb_uhci.h, usb_ehci.h, usb_xhci.h, usb_hid.h, panic.h, sysinfo.h, puzzle.h, etc.
 ├── scripts/              # 编译与构建辅助脚本
 │   ├── build_counter.sh
 │   └── build_number.txt
@@ -134,18 +136,24 @@
    make run-kernel
    ```
 
-4. **USB 输入自测模式**
+4. **USB 输入自测模式（UHCI 传统平台）**
    ```bash
    make run-usb
    ```
-   自动附加 `piix3-usb-uhci` 控制器与 USB 键盘 / 鼠标，并将 `[USB ]`、`[UHCI]`、`[EHCI]`、`[HID ]` 枚举日志写入 `usb_log.txt`。
+   自动附加 `piix3-usb-uhci` 控制器与 USB 键盘 / 鼠标，并将 `[USB ]`、`[UHCI]`、`[HID ]` 枚举日志写入 `usb_log.txt`。
 
-5. **GDB 远程调试模式**
+5. **xHCI 输入自测模式（现代 Intel PCH 路径）**
+   ```bash
+   make run-xhci
+   ```
+   自动附加 `qemu-xhci` 控制器与 USB 键盘 / 鼠标，模拟 Skylake 之后的平台（PCH 已取消 EHCI/UHCI，USB 2.0 端口全部挂在 xHCI 上），枚举日志写入 `xhci_log.txt`；窗口内可直接用键盘 / 鼠标验证输入。
+
+6. **GDB 远程调试模式**
    ```bash
    make debug
    ```
 
-6. **清理构建生成物**
+7. **清理构建生成物**
    ```bash
    make clean
    ```
@@ -159,11 +167,12 @@
   - 新增 EHCI（USB 2.0 高速）驱动 `drivers/usb_ehci.c`：MMIO 能力 / 运行寄存器解析、qTD 传输、最多 8 个根端口，64 位 EHCI 明确记录不支持；
   - 新增 xHCI 驱动 `drivers/usb_xhci.c`（USB 2.0 侧）：BIOS Legacy USB 交接、命令环 / 事件环 / ERST、DCBAA 与 scratchpad、Slot 与 Endpoint 上下文管理、EP0 控制传输与中断 IN；仅处理低速 / 全速 / 高速设备，SuperSpeed 端口跳过；
   - 新增 HID 类驱动 `drivers/usb_hid.c`：请求 Boot Protocol，将 HID Usage 映射为 PS/2 Set-1 扫描码并注入既有键盘 / 鼠标输入管线，最多 4 个 HID 设备，可与 PS/2 键鼠同时工作；
-  - `usb_init()` 在开机动画结束后按 xHCI → EHCI → UHCI 的顺序扫描 PCI 类代码 `0C/03` 的控制器，`usb_poll()` 并入桌面主循环；OHCI 自动识别并记录"暂不支持"。
+  - `usb_init()` 在开机动画结束后按 xHCI → EHCI → UHCI 的顺序扫描 PCI 类代码 `0C/03` 的控制器，`usb_poll()` 并入桌面主循环；OHCI 自动识别并记录"暂不支持"；
+  - **固件安全接管（CSM / Legacy USB 平台）**：PS/2 初始化改为幂等且非破坏性（只在必要时改写 8042 命令字节，并强制保持键鼠时钟与 Set-1 扫描码翻译），启动动画期间持续排空 0x60 缓冲；EHCI 在复位前先完成 `USBLEGSUP` 的 BIOS → OS 所有权交接，交接失败则完全不动控制器。这样 CSM + Legacy USB Support 的机器不会因为内核重配键鼠控制器而导致 USB 键鼠掉电失联，必要时仍可回退到固件的 PS/2 模拟；
 - **🧰 构建系统与工具链适配**：
   - Windows 下自动使用 `i686-elf-` 交叉工具链（可通过 `TOOLCHAIN_PREFIX` 覆盖），Linux 保持原生 `gcc` / `ld`；
   - ISO 输出改为固定文件名 `pixel_neko.iso`，不再随版本号变化；版本头生成物统一放入 `build/generated`，`include/version.h` 不再随每次编译被重写；
-  - 新增 `make run-kernel`（直接启动 ELF）、`make run-usb`（USB 键鼠自测 + 串口日志）目标，`make run` / `make debug` 自动通过 `qemu-img` 创建 64MB `disk.img`；
+  - 新增 `make run-kernel`（直接启动 ELF）、`make run-usb`（UHCI 键鼠自测）、`make run-xhci`（xHCI 键鼠自测）目标，`make run` / `make debug` 自动通过 `qemu-img` 创建 64MB `disk.img`；
   - 头文件依赖改为递归发现并排除自动生成的版本头，避免仅版本号变化触发全量重编译。
 - **🏷️ 版本号同步**：内核、开机画面、系统关于视窗、README 与 CI 发布说明统一为 `C2.0 Build 2012.200`。
 
