@@ -20,6 +20,11 @@ static usb_hid_dev_t g_hids[USB_HID_MAX_DEVICES];
 static int g_hid_count = 0;
 static int g_usb_keyboard_count = 0;
 static int g_usb_mouse_count = 0;
+static unsigned int g_usb_controller_mask = 0;
+
+#define USB_HID_CTRL_UHCI 0x1U
+#define USB_HID_CTRL_EHCI 0x2U
+#define USB_HID_CTRL_XHCI 0x4U
 
 /* Translate a HID keyboard usage code to PS/2 scancode set 1.
  * Sets *e0 to 1 when an E0 prefix must be emitted first. */
@@ -198,6 +203,19 @@ int usb_hid_attach(usb_device_t* dev)
     h->ep_in = ep_in;
     h->is_keyboard = is_kbd;
     h->is_mouse = is_mouse;
+    if (dev->hci && dev->hci->name) {
+        const char* name = dev->hci->name;
+        if (name[0] == 'x' && name[1] == 'H' && name[2] == 'C' &&
+            name[3] == 'I') {
+            g_usb_controller_mask |= USB_HID_CTRL_XHCI;
+        } else if (name[0] == 'E' && name[1] == 'H' && name[2] == 'C' &&
+                   name[3] == 'I') {
+            g_usb_controller_mask |= USB_HID_CTRL_EHCI;
+        } else if (name[0] == 'U' && name[1] == 'H' && name[2] == 'C' &&
+                   name[3] == 'I') {
+            g_usb_controller_mask |= USB_HID_CTRL_UHCI;
+        }
+    }
     if (is_kbd) g_usb_keyboard_count++;
     else if (is_mouse) g_usb_mouse_count++;
     g_hid_count++;
@@ -215,6 +233,45 @@ int usb_hid_keyboard_count(void)
 int usb_hid_mouse_count(void)
 {
     return g_usb_mouse_count;
+}
+
+static void append_controller_name(char* out, int cap, int* pos,
+                                   const char* name)
+{
+    if (*pos > 0 && *pos + 3 < cap) {
+        out[(*pos)++] = ' ';
+        out[(*pos)++] = '+';
+        out[(*pos)++] = ' ';
+    }
+    while (*name && *pos < cap - 1) out[(*pos)++] = *name++;
+    out[*pos] = '\0';
+}
+
+int usb_hid_controller_active(void)
+{
+    return g_usb_controller_mask != 0;
+}
+
+const char* usb_hid_controller_summary(void)
+{
+    static char summary[32];
+    int pos = 0;
+    summary[0] = '\0';
+
+    if (g_usb_controller_mask & USB_HID_CTRL_XHCI)
+        append_controller_name(summary, sizeof(summary), &pos, "xHCI");
+    if (g_usb_controller_mask & USB_HID_CTRL_EHCI)
+        append_controller_name(summary, sizeof(summary), &pos, "EHCI");
+    if (g_usb_controller_mask & USB_HID_CTRL_UHCI)
+        append_controller_name(summary, sizeof(summary), &pos, "UHCI");
+
+    if (pos == 0) {
+        const char* none = "None";
+        while (*none && pos < (int)sizeof(summary) - 1)
+            summary[pos++] = *none++;
+        summary[pos] = '\0';
+    }
+    return summary;
 }
 
 void usb_hid_poll(void)

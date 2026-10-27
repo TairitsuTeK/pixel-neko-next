@@ -14,5 +14,7 @@ int  usb_hid_attach(usb_device_t* dev);
 void usb_hid_poll(void);
 int  usb_hid_keyboard_count(void);
 int  usb_hid_mouse_count(void);
+int  usb_hid_controller_active(void);
+const char* usb_hid_controller_summary(void);
 
 #endif /* USB_HID_H */

@@ -353,6 +353,15 @@ void sysinfo_draw(unsigned char* v, int wx, int wy, int ww, int wh) {
         draw_text_fitted(v, value_x, input_y, max_value_chars, input_summary,
                          input_active ? 2 : 8);
 
+        int ctrl_y = input_y + 16;
+        int ctrl_bottom = fy + fh - 10;
+        if (ctrl_y <= ctrl_bottom) {
+            font_draw_text(v, lx, ctrl_y, "USB Controller:", 0);
+            draw_text_fitted(v, value_x, ctrl_y, max_value_chars,
+                             usb_hid_controller_summary(),
+                             usb_hid_controller_active() ? 2 : 8);
+        }
+
     } else if (active_tab == 1) {
         // Tab 1: PCI Devices (6 items per page)
         scan_pci_bus();

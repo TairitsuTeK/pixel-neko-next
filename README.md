@@ -29,6 +29,7 @@
   - **EHCI（USB 2.0）**：解析 MMIO 能力寄存器与运行寄存器，使用 qTD 完成高速传输，并通过 periodic QH 支持高速 HID 中断 IN；最多 8 个根端口，64-bit capable EHCI 使用 32-bit 地址模式。
   - **xHCI（USB 2.0 侧）**：现代 Intel PCH（Skylake 起）已取消 EHCI/UHCI，USB 2.0 端口全部挂在 xHCI 上。新驱动 `drivers/usb_xhci.c` 完成 BIOS Legacy USB 交接（`USBLEGSUP` / OS Owned）、命令环与事件环（ERST）、DCBAA 与 scratchpad、`Enable Slot` / `Address Device` / `Evaluate Context` / `Configure Endpoint` 命令，以及 EP0 控制传输与中断 IN 传输；只处理低速 / 全速 / 高速 USB 2.0 设备，USB 3.x 端口不参与。
   - **HID 启动协议键鼠**：USB 键盘 / 鼠标报告经 HID Usage → PS/2 Set-1 扫描码转换后注入现有输入管线，可与 PS/2 键鼠同时使用，最多支持 4 个 HID 设备。
+  - **System Info 输入状态**：System 页显示当前正在使用的 PS/2/USB 键鼠来源，并新增 `USB Controller` 字段显示对应的 xHCI / EHCI / UHCI 控制器；无 USB HID 时显示 `None`。
   - **安全降级与诊断**：仅扫描 xHCI / EHCI / UHCI 三种 USB 2.0 控制器；xHCI 交接失败时主动放过控制器，不影响固件的 PS/2 模拟；枚举与驱动状态通过 COM1 串口日志（`[USB ]`、`[XHCI]`、`[UHCI]`、`[EHCI]`、`[HID ]`）输出。
   - **已知限制**：xHCI 驱动仅实现 USB 2.0 侧（低速 / 全速 / 高速），不支持 OHCI；暂不支持外接 USB Hub 与运行期热插拔——键鼠需在开机时已插入并尽量直连主板后置端口。
 - **💾 全新统一虚拟文件系统（VFS）与存储子系统**
@@ -167,6 +168,7 @@
   - 新增 EHCI（USB 2.0 高速）驱动 `drivers/usb_ehci.c`：MMIO 能力 / 运行寄存器解析、qTD 传输、periodic QH 高速 HID 中断 IN、最多 8 个根端口，64-bit capable EHCI 使用 32-bit 地址模式；
   - 新增 xHCI 驱动 `drivers/usb_xhci.c`（USB 2.0 侧）：BIOS Legacy USB 交接、命令环 / 事件环 / ERST、DCBAA 与 scratchpad、Slot 与 Endpoint 上下文管理、EP0 控制传输与中断 IN；只处理低速 / 全速 / 高速 USB 2.0 设备；
   - 新增 HID 类驱动 `drivers/usb_hid.c`：请求 Boot Protocol，将 HID Usage 映射为 PS/2 Set-1 扫描码并注入既有键盘 / 鼠标输入管线，最多 4 个 HID 设备，可与 PS/2 键鼠同时工作；
+  - System Info 的 USB 输入状态新增控制器字段，显示当前 USB HID 使用的 xHCI / EHCI / UHCI 控制器；
   - `usb_init()` 在开机动画结束后按 xHCI → EHCI → UHCI 的顺序扫描 PCI 类代码 `0C/03` 的控制器，`usb_poll()` 并入桌面主循环；OHCI 不参与；
   - **固件安全接管（CSM / Legacy USB 平台）**：PS/2 初始化改为幂等且非破坏性（只在必要时改写 8042 命令字节，并强制保持键鼠时钟与 Set-1 扫描码翻译），启动动画期间持续排空 0x60 缓冲；EHCI 在复位前先完成 `USBLEGSUP` 的 BIOS → OS 所有权交接，交接失败则完全不动控制器。这样 CSM + Legacy USB Support 的机器不会因为内核重配键鼠控制器而导致 USB 键鼠掉电失联，必要时仍可回退到固件的 PS/2 模拟；
 - **🧰 构建系统与工具链适配**：
