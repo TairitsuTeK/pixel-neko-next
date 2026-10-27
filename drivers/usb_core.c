@@ -227,15 +227,6 @@ void usb_init(void)
         if (dev->prog_if == 0x00) uhci_probe(dev);
     }
 
-    for (int i = 0; i < pci_get_device_count(); i++) {
-        const pci_device_t* dev = pci_get_device(i);
-        if (!dev || dev->class_code != 0x0C || dev->subclass != 0x03) continue;
-        if (dev->prog_if == 0x10) {
-            log_printf("[USB ] OHCI (bus %u slot %u) not supported\n",
-                       dev->bus, dev->slot);
-        }
-    }
-
     log_printf("[USB ] %d controller(s), %d device(s) enumerated\n",
                g_hci_count, g_device_count);
 }

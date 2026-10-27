@@ -21,8 +21,10 @@
 static int splash_poll_skip(void)
 {
     int skip = 0;
-    while (inb(0x64) & 0x01) {
+    int drained = 0;
+    while ((inb(0x64) & 0x01) && drained++ < 32) {
         unsigned char st = inb(0x64);
+        if (st == 0xFF) break;   /* no 8042 / floating bus: do not spin */
         unsigned char data = inb(0x60);
         if (st & 0x20) {
             // Mouse event: keep the packet parser in sync instead of

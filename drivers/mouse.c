@@ -92,10 +92,8 @@ void mouse_init(void)
     /* 0 = never probed, 1 = controller configured, -1 = leave firmware alone */
     static int controller_state = 0;
 
-    /* The splash screen already ran this once. Re-programming the 8042 when
-     * the desktop appears is what kills the keyboard and mouse on CSM boards:
-     * it makes the firmware drop its USB legacy emulation, the real USB
-     * devices are no longer polled and they suspend (both LEDs go out). */
+    /* Called once from kernel_main before IRQ1/IRQ12 are unmasked. Re-entry is
+     * a no-op; the 8042 must not be reprogrammed after the desktop starts. */
     if (controller_state != 0) {
         cycle = 0;
         kbc_drain();
@@ -187,6 +185,23 @@ void mouse_handle_byte(unsigned char d)
         if (my < 0) my = 0;
         if (my > screen_h - 1) my = screen_h - 1;
     }
+}
+
+/* USB HID mouse reports must not share the PS/2 3-byte packet state in
+ * cycle/buf: a PS/2 packet can be partially buffered when a USB report
+ * arrives, and mixing the bytes corrupts both devices. Keep the states
+ * separate and update the shared cursor/button state atomically. */
+void mouse_handle_usb_report(unsigned char buttons, int dx, int dy)
+{
+    unsigned int flags = irq_save_flags();
+    btn = buttons & 0x07;
+    mx += dx * mouse_speed / 2;
+    my += dy * mouse_speed / 2;   /* HID Y positive = down */
+    if (mx < 0) mx = 0;
+    if (mx > screen_w - 1) mx = screen_w - 1;
+    if (my < 0) my = 0;
+    if (my > screen_h - 1) my = screen_h - 1;
+    irq_restore_flags(flags);
 }
 
 void mouse_get(int* x, int* y, int* b)

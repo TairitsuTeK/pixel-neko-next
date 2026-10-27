@@ -151,6 +151,8 @@ typedef struct {
     int max_ports;
     int max_intrs;
     int page_size;
+    int ctx_size;               /* 32 or 64 bytes (HCCPARAMS1.CSZ) */
+    int ctx_dwords;             /* ctx_size / 4 */
 
     unsigned int* dcbaa;
     xhci_ring_t   cmd;
@@ -415,11 +417,11 @@ static int xhci_highest_dci(xhci_slot_t* s)
 static int xhci_address_device(xhci_ctrl_t* c, xhci_slot_t* s, int mps)
 {
     unsigned int* in = c->in_ctx;
-    usb_memset(in, 0, 33 * XHCI_CTX_SIZE);
+    usb_memset(in, 0, 33 * (unsigned int)c->ctx_size);
 
     in[1] = 0x3;                      /* add slot context + EP0 context */
-    xhci_build_slot_ctx(&in[8], s->speed, s->port + 1, 1);
-    xhci_build_ep_ctx(&in[16], EP_TYPE_CONTROL, mps, 0,
+    xhci_build_slot_ctx(&in[c->ctx_dwords], s->speed, s->port + 1, 1);
+    xhci_build_ep_ctx(&in[2 * c->ctx_dwords], EP_TYPE_CONTROL, mps, 0,
                       xhci_ring_dequeue(&s->ep0));
 
     if (xhci_cmd(c, (unsigned int)in, 0, 0, TRB_ADDRESS_DEV, s->slot_id) < 0)
@@ -433,11 +435,12 @@ static int xhci_address_device(xhci_ctrl_t* c, xhci_slot_t* s, int mps)
 static int xhci_update_ep0_mps(xhci_ctrl_t* c, xhci_slot_t* s, int mps)
 {
     unsigned int* in = c->in_ctx;
-    usb_memset(in, 0, 33 * XHCI_CTX_SIZE);
+    usb_memset(in, 0, 33 * (unsigned int)c->ctx_size);
 
     in[1] = 0x3;                      /* slot + EP0 */
-    xhci_build_slot_ctx(&in[8], s->speed, s->port + 1, xhci_highest_dci(s));
-    xhci_build_ep_ctx(&in[16], EP_TYPE_CONTROL, mps, 0,
+    xhci_build_slot_ctx(&in[c->ctx_dwords], s->speed, s->port + 1,
+                        xhci_highest_dci(s));
+    xhci_build_ep_ctx(&in[2 * c->ctx_dwords], EP_TYPE_CONTROL, mps, 0,
                       xhci_ring_dequeue(&s->ep0));
 
     if (xhci_cmd(c, (unsigned int)in, 0, 0, TRB_EVALUATE_CTX, s->slot_id) < 0)
@@ -455,11 +458,12 @@ static int xhci_configure_intr(xhci_ctrl_t* c, xhci_slot_t* s,
     int dci = ep_num * 2 + ((ep->direction == USB_DIR_IN) ? 1 : 0);
 
     unsigned int* in = c->in_ctx;
-    usb_memset(in, 0, 33 * XHCI_CTX_SIZE);
+    usb_memset(in, 0, 33 * (unsigned int)c->ctx_size);
 
     in[1] = (1U << 0) | (1U << (unsigned int)dci);   /* slot + this endpoint */
-    xhci_build_slot_ctx(&in[8], s->speed, s->port + 1, dci);
-    xhci_build_ep_ctx(&in[8 + dci * 8], EP_TYPE_INTR_IN, ep->max_packet,
+    xhci_build_slot_ctx(&in[c->ctx_dwords], s->speed, s->port + 1, dci);
+    xhci_build_ep_ctx(&in[(1 + dci) * c->ctx_dwords], EP_TYPE_INTR_IN,
+                      ep->max_packet,
                       ep->interval ? ep->interval : 8,
                       xhci_ring_dequeue(&s->intr));
 
@@ -724,15 +728,29 @@ static void xhci_legacy_handoff(xhci_ctrl_t* c)
         unsigned int next = (val >> 8) & 0xFFU;
 
         if (id == 0x01U) {                      /* USB Legacy Support */
-            if (val & 0x00010000U) {            /* BIOS still owns it */
+            int bios_owned = (val & 0x00010000U) ? 1 : 0;
+            int os_owned = (val & 0x01000000U) ? 1 : 0;
+
+            if (bios_owned) {
                 *ext = val | 0x01000000U;       /* claim OS ownership */
                 for (int i = 0; i < 100; i++) {
                     if (!(*ext & 0x00010000U)) break;
                     sleep_ms(10);
                 }
+                if (*ext & 0x00010000U) {
+                    log_printf("[XHCI] BIOS did not release legacy USB "
+                               "ownership\n");
+                } else {
+                    log_printf("[XHCI] legacy USB support taken over from "
+                               "firmware\n");
+                }
+            } else if (os_owned) {
+                log_printf("[XHCI] legacy USB already owned by OS\n");
+            } else {
+                log_printf("[XHCI] legacy USB support present, firmware not "
+                           "asserting ownership\n");
             }
             *(ext + 1) = 0;                     /* USBLEGCTLSTS: no SMIs */
-            log_printf("[XHCI] legacy USB support taken over from firmware\n");
             return;
         }
 
@@ -757,8 +775,13 @@ static void xhci_scan_ports(xhci_ctrl_t* c)
         }
         if (!(sc & XHCI_PORT_CCS)) continue;
 
+        log_printf("[XHCI] port %d: PORTSC=0x%X\n", port + 1, sc);
         int speed = xhci_port_reset(c, port);
-        if (speed < 0) continue;        /* SuperSpeed port or failed reset */
+        if (speed < 0) {
+            log_printf("[XHCI] port %d: reset/speed failed (PORTSC=0x%X)\n",
+                       port + 1, xhci_port_read(c, port));
+            continue;        /* USB 3.x port or failed reset */
+        }
 
         if (xhci_setup_device(c, port, speed) < 0) continue;
         if (usb_enumerate(&c->hci, port, speed) < 0) {
@@ -802,11 +825,13 @@ int xhci_probe(const pci_device_t* dev)
     unsigned int hcs2 = xhci_cap_read(c, XHCI_HCSPARAMS2);
     unsigned int hcc1 = xhci_cap_read(c, XHCI_HCCPARAMS1);
 
-    /* CSZ=1 means 64-byte contexts; this driver only knows the 32-byte form. */
-    if (hcc1 & 0x00000004U) {
-        log_printf("[XHCI] 64-byte contexts unsupported (bus %u slot %u)\n",
-                   dev->bus, dev->slot);
-        return -1;
+    /* CSZ=1 selects 64-byte contexts (common on newer Intel PCHs). Both
+     * layouts keep the same field offsets inside each context; only the
+     * stride changes. */
+    c->ctx_size = (hcc1 & 0x00000004U) ? 64 : 32;
+    c->ctx_dwords = c->ctx_size / 4;
+    if (c->ctx_size == 64) {
+        log_printf("[XHCI] using 64-byte contexts (CSZ=1)\n");
     }
 
     c->cap = (volatile unsigned int*)c->bar;

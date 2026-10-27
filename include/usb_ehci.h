@@ -6,7 +6,7 @@
  *
  * EHCI is the USB 2.0 high-speed (480 Mbps) host controller. It handles
  * high-speed devices directly and hands low/full-speed traffic to its
- * companion controllers (UHCI/OHCI).
+ * companion controllers (UHCI).
  */
 
 #include "usb_core.h"

@@ -2,6 +2,7 @@
 #include "usb_core.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "irq.h"
 #include "log.h"
 
 #define USB_HID_MAX_DEVICES 4
@@ -142,17 +143,9 @@ static void hid_process_keyboard(usb_hid_dev_t* h, const unsigned char* report)
 static void hid_process_mouse(usb_hid_dev_t* h, const unsigned char* report)
 {
     (void)h;
-    int dx = (signed char)report[1];
-    int dy = (signed char)report[2];
-    int ps2_dy = -dy;   /* HID Y positive = down, PS/2 Y positive = up */
-
-    unsigned char p0 = 0x08 | (report[0] & 0x07);
-    if (dx < 0) p0 |= 0x10;
-    if (ps2_dy < 0) p0 |= 0x20;
-
-    mouse_handle_byte(p0);
-    mouse_handle_byte((unsigned char)(dx & 0xFF));
-    mouse_handle_byte((unsigned char)(ps2_dy & 0xFF));
+    mouse_handle_usb_report((unsigned char)(report[0] & 0x07),
+                            (signed char)report[1],
+                            (signed char)report[2]);
 }
 
 int usb_hid_attach(usb_device_t* dev)
@@ -223,8 +216,13 @@ void usb_hid_poll(void)
         int len = h->dev->hci->intr_in(h->dev->hci, h->dev, h->ep_in,
                                        report, sizeof(report));
         if (len > 0) {
+            /* Keep one HID report atomic with respect to PS/2 IRQs. Otherwise
+             * IRQ1/IRQ12 can inject a byte between the individual key/scancode
+             * updates and corrupt the shared keyboard state. */
+            unsigned int flags = irq_save_flags();
             if (h->is_keyboard) hid_process_keyboard(h, report);
             else if (h->is_mouse) hid_process_mouse(h, report);
+            irq_restore_flags(flags);
         }
     }
 }

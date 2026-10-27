@@ -54,6 +54,7 @@ void ps2_input_poll(void) {
 
     while ((inb(0x64) & 0x01) && drained++ < 32) {
         unsigned char status = inb(0x64);
+        if (status == 0xFF) break;   /* no i8042 / floating bus */
         unsigned char data = inb(0x60);
         if (status & 0x20) mouse_handle_byte(data);
         else keyboard_handle_byte(data);

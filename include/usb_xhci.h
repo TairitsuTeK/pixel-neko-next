@@ -11,7 +11,7 @@
  *
  * This driver implements the USB 2.0 half only: low/full/high-speed devices,
  * the EP0 control ring and one interrupt IN endpoint per HID device (boot
- * protocol). SuperSpeed ports are detected and skipped.
+ * protocol). USB 3.x SuperSpeed ports are not used.
  */
 
 #include "usb_core.h"

@@ -260,18 +260,7 @@ static int ehci_control(usb_hci_t* hci, usb_device_t* dev,
     int rc = ehci_td_wait(c, status_qtd, 100);
 
     if (rc < 0) {
-        log_printf("[EHCI] ctrl rc=%d setup[tok=0x%X] data[tok=0x%X] "
-                   "status[tok=0x%X] qh[epchar=0x%X next=0x%X cur=0x%X] "
-                   "cmd=0x%X sts=0x%X list=0x%X\n",
-                   rc,
-                   c->qtds[setup_qtd].token,
-                   data_qtd >= 0 ? c->qtds[data_qtd].token : 0,
-                   c->qtds[status_qtd].token,
-                   c->async_qh.epchar, c->async_qh.next_qtd,
-                   c->async_qh.cur_qtd,
-                   ehci_read32(c, c->op + EHCI_USBCMD / 4),
-                   ehci_read32(c, c->op + EHCI_USBSTS / 4),
-                   ehci_read32(c, c->op + EHCI_ASYNCLIST / 4));
+        log_printf("[EHCI] control transfer failed (rc=%d)\n", rc);
     }
 
     ehci_write32(c, c->op + EHCI_USBCMD / 4,
@@ -291,9 +280,6 @@ static int ehci_port_reset(usb_hci_t* hci, int port)
     volatile unsigned int* portsc = c->op + EHCI_PORTSC0 / 4 + port;
 
     unsigned int sc = ehci_read32(c, portsc);
-    log_printf("[EHCI] dbg port %d: raw PORTSC=0x%X ccs=%d owner=%d pe=%d\n",
-               port, sc, (sc & EHCI_PORT_CCS) ? 1 : 0,
-               (sc & EHCI_PORT_OWNER) ? 1 : 0, (sc & EHCI_PORT_PE) ? 1 : 0);
     if (!(sc & EHCI_PORT_CCS)) return -1;
 
     /* A port already owned by a companion must not be touched by EHCI. */
@@ -319,8 +305,6 @@ static int ehci_port_reset(usb_hci_t* hci, int port)
 
     sc = ehci_read32(c, portsc);
     int speed = (sc & EHCI_PORT_SPEED) >> EHCI_PORT_SPEED_SHIFT;
-    log_printf("[EHCI] dbg port %d: post-reset PORTSC=0x%X speed=%d\n",
-               port, sc, speed);
 
     /* After reset, high-speed devices show PED=1. Some controllers (and QEMU)
      * do not implement the PORTSC speed field, so PED is the reliable bit. */
@@ -331,7 +315,7 @@ static int ehci_port_reset(usb_hci_t* hci, int port)
     }
 
     /* Full/low-speed devices cannot run on an EHCI root port: give the port
-     * back to its companion controller (UHCI/OHCI). */
+     * back to its companion controller (UHCI). */
     ehci_write32(c, portsc, sc | EHCI_PORT_OWNER | EHCI_PORT_PP);
     sleep_ms(10);
     return -1;
@@ -426,10 +410,7 @@ static void ehci_detect_ports(ehci_ctrl_t* c)
         if (sc & EHCI_PORT_OWNER) continue;   /* companion already owns it */
 
         /* Reset first: PORTSC speed bits are only reliable afterwards. */
-        log_printf("[EHCI] dbg detect port %d sc=0x%X fn=%p\n", port, sc,
-                   (void*)c->hci.port_reset);
         int speed = c->hci.port_reset(&c->hci, port);
-        log_printf("[EHCI] dbg detect port %d reset returned %d\n", port, speed);
         if (speed != USB_SPEED_HIGH) {
             log_printf("[EHCI] port %d: full/low-speed device handed to "
                        "companion\n", port);
