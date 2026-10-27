@@ -1,4 +1,5 @@
 #include "usb_core.h"
+#include "usb_xhci.h"
 #include "usb_ehci.h"
 #include "usb_uhci.h"
 #include "usb_hid.h"
@@ -119,7 +120,9 @@ int usb_enumerate(usb_hci_t* hci, int port, int speed)
     dev->port = (unsigned char)port;
     dev->speed = (unsigned char)speed;
     dev->address = 0;
-    dev->max_packet0 = 8;
+    /* High-speed EP0 has a 64-byte max packet; full/low-speed uses 8 for the
+     * first descriptor request. */
+    dev->max_packet0 = (speed == USB_SPEED_HIGH) ? 64 : 8;
 
     /* Read the first 8 bytes of the device descriptor at address 0. */
     usb_device_desc_t ddesc;
@@ -201,23 +204,38 @@ int usb_enumerate(usb_hci_t* hci, int port, int speed)
 void usb_init(void)
 {
     log_printf("[USB ] scanning PCI for USB host controllers\n");
+
+    /* xHCI first: since Skylake the PCH has no EHCI/UHCI left, so every USB
+     * 2.0 port of a modern board is owned by the xHCI controller. */
     for (int i = 0; i < pci_get_device_count(); i++) {
         const pci_device_t* dev = pci_get_device(i);
         if (!dev || dev->class_code != 0x0C || dev->subclass != 0x03) continue;
+        if (dev->prog_if == 0x30) xhci_probe(dev);
+    }
 
-        unsigned char prog_if = dev->prog_if;
-        if (prog_if == 0x00) {
-            uhci_probe(dev);
-        } else if (prog_if == 0x20) {
-            ehci_probe(dev);
-        } else if (prog_if == 0x10) {
+    /* Bring up EHCI first. Full/low-speed ports are handed back to the
+     * companion controllers during EHCI probe, so UHCI must scan afterwards. */
+    for (int i = 0; i < pci_get_device_count(); i++) {
+        const pci_device_t* dev = pci_get_device(i);
+        if (!dev || dev->class_code != 0x0C || dev->subclass != 0x03) continue;
+        if (dev->prog_if == 0x20) ehci_probe(dev);
+    }
+
+    for (int i = 0; i < pci_get_device_count(); i++) {
+        const pci_device_t* dev = pci_get_device(i);
+        if (!dev || dev->class_code != 0x0C || dev->subclass != 0x03) continue;
+        if (dev->prog_if == 0x00) uhci_probe(dev);
+    }
+
+    for (int i = 0; i < pci_get_device_count(); i++) {
+        const pci_device_t* dev = pci_get_device(i);
+        if (!dev || dev->class_code != 0x0C || dev->subclass != 0x03) continue;
+        if (dev->prog_if == 0x10) {
             log_printf("[USB ] OHCI (bus %u slot %u) not supported\n",
-                       dev->bus, dev->slot);
-        } else if (prog_if == 0x30) {
-            log_printf("[USB ] xHCI (bus %u slot %u) not supported\n",
                        dev->bus, dev->slot);
         }
     }
+
     log_printf("[USB ] %d controller(s), %d device(s) enumerated\n",
                g_hci_count, g_device_count);
 }

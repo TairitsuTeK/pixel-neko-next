@@ -1,5 +1,7 @@
 #include "keyboard.h"
 #include "irq.h"
+#include "port.h"
+#include "mouse.h"
 
 static int shift = 0;
 static int ctrl = 0;
@@ -34,6 +36,30 @@ int keyboard_get_key(void) {
 
 int keyboard_get_ctrl(void) {
     return ctrl;
+}
+
+/* Drain the 8042 output buffer into the PS/2 parsers.
+ *
+ * CSM firmware that provides "Legacy USB Support" synthesises PS/2 traffic
+ * from the USB keyboard and mouse inside SMM. Its queue is shallow, so the
+ * kernel has to keep consuming port 0x60 even while it is busy drawing the
+ * boot animation and before IRQ1/IRQ12 are unmasked. If that queue fills up
+ * the firmware stops servicing the USB devices, they suspend and both LEDs go
+ * out even though nothing is electrically wrong.
+ *
+ * Safe to call both from an IRQ handler and from a plain polling loop. */
+void ps2_input_poll(void) {
+    unsigned int flags = irq_save_flags();
+    int drained = 0;
+
+    while ((inb(0x64) & 0x01) && drained++ < 32) {
+        unsigned char status = inb(0x64);
+        unsigned char data = inb(0x60);
+        if (status & 0x20) mouse_handle_byte(data);
+        else keyboard_handle_byte(data);
+    }
+
+    irq_restore_flags(flags);
 }
 
 // Scancode to ASCII tables

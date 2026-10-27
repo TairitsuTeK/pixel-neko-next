@@ -27,13 +27,16 @@
 #define UHCI_STS_USBERR   0x0002
 #define UHCI_STS_HCHALTED 0x0020
 
-/* PORTSC bits */
+/* PORTSC bits (UHCI spec: PR is bit 9, LSDA is bit 8) */
 #define UHCI_PORT_CCS  0x0001  /* current connect status */
 #define UHCI_PORT_CSC  0x0002  /* connect status change */
 #define UHCI_PORT_PE   0x0004  /* port enable */
 #define UHCI_PORT_PEC  0x0008  /* port enable change */
-#define UHCI_PORT_LSDA 0x0010  /* low speed device attached */
-#define UHCI_PORT_PR   0x0100  /* port reset */
+#define UHCI_PORT_RD   0x0040  /* resume detect */
+#define UHCI_PORT_LSDA 0x0100  /* low speed device attached */
+#define UHCI_PORT_PR   0x0200  /* port reset */
+#define UHCI_PORT_SUSP 0x1000  /* suspend */
+#define UHCI_PORT_WC   (UHCI_PORT_CSC | UHCI_PORT_PEC)
 
 /* ---- USB packet IDs (token) ---- */
 #define UHCI_PID_SETUP 0x2D
@@ -57,6 +60,15 @@
                             UHCI_TD_BABBLE | UHCI_TD_NAK | UHCI_TD_CRC | \
                             UHCI_TD_BITSTUFF)
 
+/* The 11-bit MaxLen field in a UHCI token stores (length - 1); 0x7FF means a
+ * zero-length packet. The controller adds one back before using the value. */
+static unsigned int uhci_len_field(int len)
+{
+    if (len <= 0) return 0x7FF;
+    if (len > 0x7FE) len = 0x7FE;
+    return (unsigned int)(len - 1);
+}
+
 /* ---- Transfer Descriptor (32 bytes, 16-byte aligned) ---- */
 typedef struct {
     volatile unsigned int link;
@@ -75,6 +87,7 @@ typedef struct {
 #define UHCI_TD_POOL 32
 #define UHCI_MAX_PORTS 2
 #define UHCI_MAX_INTR_TDS 4
+#define UHCI_MAX_HID_QH 4
 
 typedef struct {
     int used;
@@ -93,7 +106,12 @@ typedef struct {
     uhci_td_t tds[UHCI_TD_POOL];
     uhci_td_owner_t owners[UHCI_TD_POOL];
 
-    uhci_qh_t intr_qh;
+    /* One queue head per HID endpoint keeps each interrupt TD scheduled even
+     * after the controller advances the QH element pointer. */
+    uhci_qh_t intr_qh[UHCI_MAX_HID_QH];
+    unsigned char intr_qh_used[UHCI_MAX_HID_QH];
+    unsigned char intr_qh_dev[UHCI_MAX_HID_QH];
+    unsigned char intr_qh_ep[UHCI_MAX_HID_QH];
     uhci_qh_t control_qh;
 
     usb_hci_t hci;
@@ -223,7 +241,7 @@ static int uhci_control(usb_hci_t* hci, usb_device_t* dev,
     c->tds[status_td].token = (pid_status & 0xFF) |
         ((dev->address & 0x7F) << 8) |
         (1 << 19) |
-        (((pid_status == UHCI_PID_IN) ? 0x7FF : 0) << 21);
+        (uhci_len_field(0) << 21);
     c->tds[status_td].buffer = 0;
 
     /* Optional data stage TD. */
@@ -235,7 +253,7 @@ static int uhci_control(usb_hci_t* hci, usb_device_t* dev,
         c->tds[data_td].token = (pid_data & 0xFF) |
             ((dev->address & 0x7F) << 8) |
             (1 << 19) |
-            ((len & 0x7FF) << 21);
+            (uhci_len_field(len) << 21);
         c->tds[data_td].buffer = (unsigned int)data;
         c->tds[setup_td].link = uhci_link_td(td_phys(c, data_td));
     } else {
@@ -248,7 +266,7 @@ static int uhci_control(usb_hci_t* hci, usb_device_t* dev,
     c->tds[setup_td].token = (UHCI_PID_SETUP & 0xFF) |
         ((dev->address & 0x7F) << 8) |
         (0 << 19) |
-        (8 << 21);
+        (uhci_len_field(8) << 21);
     c->tds[setup_td].buffer = (unsigned int)setup;
 
     /* Schedule on the control queue head and run. */
@@ -276,11 +294,36 @@ static int uhci_control(usb_hci_t* hci, usb_device_t* dev,
     return rc;
 }
 
+static int uhci_intr_qh_slot(uhci_ctrl_t* c, usb_device_t* dev,
+                             usb_endpoint_t* ep)
+{
+    for (int i = 0; i < UHCI_MAX_HID_QH; i++) {
+        if (c->intr_qh_used[i] &&
+            c->intr_qh_dev[i] == dev->address &&
+            c->intr_qh_ep[i] == ep->address) {
+            return i;
+        }
+    }
+    for (int i = 0; i < UHCI_MAX_HID_QH; i++) {
+        if (!c->intr_qh_used[i]) {
+            c->intr_qh_used[i] = 1;
+            c->intr_qh_dev[i] = dev->address;
+            c->intr_qh_ep[i] = ep->address;
+            return i;
+        }
+    }
+    return -1;
+}
+
 static int uhci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
                         void* data, int len)
 {
     uhci_ctrl_t* c = (uhci_ctrl_t*)hci->priv;
     int ls = (dev->speed == USB_SPEED_LOW) ? 1 : 0;
+
+    int slot = uhci_intr_qh_slot(c, dev, ep);
+    if (slot < 0) return -1;
+    uhci_qh_t* qh = &c->intr_qh[slot];
 
     int idx = -1;
     for (int i = 0; i < UHCI_TD_POOL; i++) {
@@ -302,37 +345,47 @@ static int uhci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
         c->owners[idx].buffer = (unsigned char*)data;
         ep->hcd_priv = (void*)(unsigned int)idx;
 
-        c->tds[idx].link = c->intr_qh.element;
+        /* One TD per QH; the QH element pointer re-arms it every frame. */
+        c->tds[idx].link = uhci_link_terminate();
         c->tds[idx].status = UHCI_TD_ACTIVE | UHCI_TD_CERR | UHCI_TD_SPD |
             (ls ? UHCI_TD_LS : 0);
         c->tds[idx].token = (UHCI_PID_IN & 0xFF) |
             ((dev->address & 0x7F) << 8) |
             ((ep->address & 0x0F) << 15) |
             ((ep->toggle & 1) << 19) |
-            ((len & 0x7FF) << 21);
+            (uhci_len_field(len) << 21);
         c->tds[idx].buffer = (unsigned int)data;
-        c->intr_qh.element = uhci_link_td(td_phys(c, idx));
+        qh->element = uhci_link_td(td_phys(c, idx));
         uhci_write(c, UHCI_USBCMD, uhci_read(c, UHCI_USBCMD) | UHCI_CMD_RS);
         return 0;
     }
 
     unsigned int st = c->tds[idx].status;
-    if (st & UHCI_TD_ACTIVE) return 0;
+    if (st & UHCI_TD_ACTIVE) {
+        /* Keep this endpoint scheduled in case the controller advanced the
+         * QH element pointer to the terminate marker. */
+        qh->element = uhci_link_td(td_phys(c, idx));
+        return 0;
+    }
 
     if (st & UHCI_TD_ERROR_MASK) {
-        ep->toggle = 0;
+        /* NAK means "no report yet": keep the data toggle unchanged. */
+        int nak = (st & UHCI_TD_NAK) ? 1 : 0;
+        if (!nak) ep->toggle = 0;
         c->tds[idx].status = UHCI_TD_ACTIVE | UHCI_TD_CERR | UHCI_TD_SPD |
             (ls ? UHCI_TD_LS : 0);
         c->tds[idx].token = (UHCI_PID_IN & 0xFF) |
             ((dev->address & 0x7F) << 8) |
             ((ep->address & 0x0F) << 15) |
             ((ep->toggle & 1) << 19) |
-            ((len & 0x7FF) << 21);
+            (uhci_len_field(len) << 21);
         c->tds[idx].buffer = (unsigned int)data;
-        return -1;
+        qh->element = uhci_link_td(td_phys(c, idx));
+        return nak ? 0 : -1;
     }
 
     int act_len = (int)(st & 0x7FF);
+    act_len = (act_len == 0x7FF) ? 0 : act_len + 1;
     ep->toggle ^= 1;
 
     c->tds[idx].status = UHCI_TD_ACTIVE | UHCI_TD_CERR | UHCI_TD_SPD |
@@ -341,8 +394,9 @@ static int uhci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
         ((dev->address & 0x7F) << 8) |
         ((ep->address & 0x0F) << 15) |
         ((ep->toggle & 1) << 19) |
-        ((len & 0x7FF) << 21);
+        (uhci_len_field(len) << 21);
     c->tds[idx].buffer = (unsigned int)data;
+    qh->element = uhci_link_td(td_phys(c, idx));
 
     return act_len;
 }
@@ -358,19 +412,36 @@ static int uhci_port_reset(usb_hci_t* hci, int port)
 {
     uhci_ctrl_t* c = (uhci_ctrl_t*)hci->priv;
     unsigned short reg = (port == 0) ? UHCI_PORTSC1 : UHCI_PORTSC2;
+    unsigned short sc = uhci_read(c, reg);
 
-    if (!(uhci_read(c, reg) & UHCI_PORT_CCS)) return -1;
+    if (!(sc & UHCI_PORT_CCS)) return -1;
 
-    uhci_write(c, reg, (unsigned short)(uhci_read(c, reg) | UHCI_PORT_PR));
+    /* Clear stale connect/enable change bits before resetting. */
+    uhci_write(c, reg, (unsigned short)(sc | UHCI_PORT_WC));
+    sleep_ms(10);
+
+    /* The UHCI port reset bit is bit 9 and must stay asserted for 50ms. */
+    sc = uhci_read(c, reg);
+    uhci_write(c, reg,
+               (unsigned short)((sc & ~UHCI_PORT_WC) | UHCI_PORT_PR));
     sleep_ms(50);
-    uhci_write(c, reg, (unsigned short)(uhci_read(c, reg) & ~UHCI_PORT_PR));
-    sleep_ms(50);
 
-    int speed = (uhci_read(c, reg) & UHCI_PORT_LSDA) ?
-        USB_SPEED_LOW : USB_SPEED_FULL;
+    sc = uhci_read(c, reg);
+    uhci_write(c, reg, (unsigned short)(sc & ~UHCI_PORT_PR));
+    sleep_ms(20);
 
-    uhci_write(c, reg, (unsigned short)(uhci_read(c, reg) | UHCI_PORT_PE));
-    sleep_ms(5);
+    /* Clear connect/enable changes caused by the reset. */
+    sc = uhci_read(c, reg);
+    uhci_write(c, reg, (unsigned short)(sc | UHCI_PORT_WC));
+    sleep_ms(10);
+
+    sc = uhci_read(c, reg);
+    int speed = (sc & UHCI_PORT_LSDA) ? USB_SPEED_LOW : USB_SPEED_FULL;
+
+    /* Low-speed ports must be enabled by software; doing this for full-speed
+     * devices is harmless and recovers ports that the firmware left disabled. */
+    uhci_write(c, reg, (unsigned short)(sc | UHCI_PORT_PE));
+    sleep_ms(10);
 
     return speed;
 }
@@ -393,10 +464,21 @@ static void uhci_detect_ports(uhci_ctrl_t* c)
 {
     for (int port = 0; port < UHCI_MAX_PORTS; port++) {
         unsigned short reg = (port == 0) ? UHCI_PORTSC1 : UHCI_PORTSC2;
-        if (!(uhci_read(c, reg) & UHCI_PORT_CCS)) continue;
+        unsigned short sc = uhci_read(c, reg);
+
+        if (!(sc & UHCI_PORT_CCS)) {
+            if (sc & UHCI_PORT_WC) {
+                uhci_write(c, reg, (unsigned short)(sc | UHCI_PORT_WC));
+            }
+            continue;
+        }
 
         int speed = c->hci.port_reset(&c->hci, port);
-        if (speed <= 0) continue;
+        if (speed <= 0) {
+            log_printf("[UHCI] port %d: reset failed (PORTSC=0x%X)\n",
+                       port, uhci_read(c, reg));
+            continue;
+        }
 
         log_printf("[UHCI] port %d: device attached (%s speed)\n", port,
                    speed == USB_SPEED_LOW ? "low" : "full");
@@ -438,13 +520,18 @@ int uhci_probe(const pci_device_t* dev)
     c->frame_list = frame_list;
     c->frame_list_phys = (unsigned int)frame_list;
 
-    c->intr_qh.head = uhci_link_qh((unsigned int)&c->control_qh);
-    c->intr_qh.element = uhci_link_terminate();
-    c->control_qh.head = uhci_link_terminate();
+    for (int i = 0; i < UHCI_MAX_HID_QH; i++) {
+        c->intr_qh[i].head = (i + 1 < UHCI_MAX_HID_QH)
+            ? uhci_link_qh((unsigned int)&c->intr_qh[i + 1])
+            : uhci_link_terminate();
+        c->intr_qh[i].element = uhci_link_terminate();
+    }
+    c->control_qh.head = uhci_link_qh((unsigned int)&c->intr_qh[0]);
     c->control_qh.element = uhci_link_terminate();
 
+    /* The control queue is processed first, then every HID queue. */
     for (int i = 0; i < 1024; i++) {
-        frame_list[i] = uhci_link_qh((unsigned int)&c->intr_qh);
+        frame_list[i] = uhci_link_qh((unsigned int)&c->control_qh);
     }
 
     uhci_write(c, UHCI_USBCMD, UHCI_CMD_GRESET);

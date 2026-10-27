@@ -159,6 +159,12 @@ int usb_hid_attach(usb_device_t* dev)
 {
     if (g_hid_count >= USB_HID_MAX_DEVICES) return -1;
 
+    if (!dev->hci || !dev->hci->intr_in) {
+        log_printf("[HID ] %s controller has no interrupt IN support\n",
+                   dev->hci ? dev->hci->name : "unknown");
+        return -1;
+    }
+
     usb_endpoint_t* ep_in = 0;
     for (int i = 0; i < dev->endpoint_count; i++) {
         usb_endpoint_t* ep = &dev->endpoints[i];
@@ -208,7 +214,9 @@ void usb_hid_poll(void)
 {
     for (int i = 0; i < g_hid_count; i++) {
         usb_hid_dev_t* h = &g_hids[i];
-        if (!h->dev || !h->ep_in) continue;
+        if (!h->dev || !h->ep_in || !h->dev->hci || !h->dev->hci->intr_in) {
+            continue;
+        }
 
         unsigned char report[8];
         usb_memset(report, 0, sizeof(report));

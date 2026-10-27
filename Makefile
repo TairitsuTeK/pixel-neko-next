@@ -67,6 +67,7 @@ C_SOURCES = kernel/kernel.c \
             drivers/fdc.c \
             drivers/font.c \
             drivers/usb_core.c \
+            drivers/usb_xhci.c \
             drivers/usb_ehci.c \
             drivers/usb_uhci.c \
             drivers/usb_hid.c \
@@ -175,6 +176,14 @@ run-usb: $(KERNEL_ELF)
 	$(QEMU) -kernel $(KERNEL_ELF) -m 128M \
 		-device piix3-usb-uhci -device usb-kbd -device usb-mouse \
 		-serial file:usb_log.txt -monitor none
+
+# Test the xHCI driver: this is the controller every modern Intel PCH uses for
+# its USB 2.0 ports. A window is opened so host key presses / mouse movement
+# reach the emulated USB keyboard and mouse; the kernel log goes to xhci_log.txt.
+run-xhci: $(KERNEL_ELF)
+	$(QEMU) -kernel $(KERNEL_ELF) -m 128M \
+		-device qemu-xhci -device usb-kbd -device usb-mouse \
+		-serial file:xhci_log.txt -monitor none
 
 debug: $(ISO_FILE) $(DISK_IMG)
 	$(QEMU) -cdrom $(ISO_FILE) -m 128M -hda $(DISK_IMG) -s -S

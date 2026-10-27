@@ -9,6 +9,7 @@
 #include "fat.h"
 #include "vfs.h"
 #include "mouse.h"
+#include "keyboard.h"
 #include "gfx_accel.h"
 #include "version.h"
 
@@ -19,18 +20,22 @@
 // Check if user pressed a key (Esc/Space/Enter) or clicked mouse to skip animation
 static int splash_poll_skip(void)
 {
+    int skip = 0;
     while (inb(0x64) & 0x01) {
         unsigned char st = inb(0x64);
         unsigned char data = inb(0x60);
         if (st & 0x20) {
-            // Mouse event
-            if (data & 0x07) return 1;
+            // Mouse event: keep the packet parser in sync instead of
+            // discarding bytes, otherwise the first desktop packets desync.
+            if (data & 0x07) skip = 1;
+            mouse_handle_byte(data);
         } else {
             // Keyboard event: Esc (0x01), Space (0x39), Enter (0x1C)
-            if (data == 0x01 || data == 0x39 || data == 0x1C) return 1;
+            if (data == 0x01 || data == 0x39 || data == 0x1C) skip = 1;
+            keyboard_handle_byte(data);
         }
     }
-    return 0;
+    return skip;
 }
 
 static void draw_filled_box(unsigned char* v, int bx, int by, int bw, int bh, unsigned char color)

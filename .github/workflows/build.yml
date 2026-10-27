@@ -65,27 +65,24 @@ jobs:
           ## Pixel Neko Next ${{ env.TAG_NAME }}
 
           ### Release Assets
-          - Bootable ISO image: `pixel_neko_build_${{ env.VERSION }}.iso`
+          - Bootable ISO image: `pixel_neko.iso`
           - Source archive: `pixel_neko_source_${{ env.VERSION }}.zip`
           - Build commit: `${{ github.sha }}`
 
           ### Running
-          - QEMU: `qemu-system-i386 -cdrom pixel_neko_build_${{ env.VERSION }}.iso -m 128M -boot d`
+          - QEMU: `qemu-system-i386 -cdrom pixel_neko.iso -m 128M -boot d`
+          - USB input self-test: `qemu-system-i386 -kernel iso/boot/kernel.elf -m 128M -device piix3-usb-uhci -device usb-kbd -device usb-mouse -serial file:usb_log.txt`
           - VirtualBox / VMware: create a 32-bit Other/Unknown virtual machine and boot this ISO.
 
-          ### Highlights
-          - P0 kernel foundation: PCI/BAR management, shared IRQ dispatch, DMA/MMIO helpers, serial ring logging and prioritized driver registration.
-          - P1 VMware SVGA II: 32bpp modes, FIFO 2D fill/copy/update, dirty-rectangle presentation, hardware cursor and safe VBE/linear-framebuffer fallback.
-          - PIT, PS/2 keyboard and PS/2 mouse now use hardware IRQs; CMI8738 and CT4810/ES1371 DMA buffers use the common DMA allocator.
-          - Existing ATI Mach64, CT4810/ES1371, CMI8738 and standard VBE fallback paths remain available.
-          - SVGA 3D-capable VMware profiles are accepted for 2D acceleration; full 3D rendering is not part of this release.
-          - Build 2012.001 fixes stalled SVGA presentation and frozen PS/2 input by using software-cursor and polling fallbacks.
-          - Build 2012.100 adds Intel/VMware HDAudio, VIA VT1708S routing, 44.1/48kHz streams and explicit SVGA 3D-capable 2D compatibility.
-          - Build 2012.101 fixes hidden PCI devices in System Information and adds exact VMware 15AD:1977 HDAudio probing with detailed fallback status.
-          - Build 2012.102 fixes HDA Connection List Node ID decoding for routable VMware HDA Codec output paths.
-          - Build 2012.103 fixes the HDA init return contract so the successfully routed codec is selected by the Audio HAL.
-          - Build 2012.104 fixes the 16-byte HDA Buffer Descriptor List layout required for valid VMware audio DMA.
-          - Build 2012.200 adds a USB 2.0 subsystem with UHCI/EHCI host controllers, HID boot-protocol keyboard and mouse input, and a Windows i686-elf build path.
+          ### Highlights (Build 2012.200)
+          - **USB 2.0 core**: a shared Host Controller Interface abstraction, standard descriptor parsing and full GET_DESCRIPTOR / SET_ADDRESS / SET_CONFIGURATION enumeration (up to 4 controllers and 8 devices).
+          - **UHCI (USB 1.1)**: PCI I/O BAR probing, frame list with QH/TD scheduling, control/interrupt/bulk transfers, two root ports with low/full-speed detection.
+          - **EHCI (USB 2.0)**: MMIO capability and operational register setup, qTD transfers and up to eight root ports; 64-bit EHCI is reported as unsupported.
+          - **HID boot protocol**: USB keyboards and mice are translated to PS/2 Set-1 scancodes and injected into the existing input pipeline, so USB and PS/2 devices work together (up to 4 HID devices).
+          - **Safe fallback and diagnostics**: OHCI/xHCI controllers are detected and logged as unsupported, and enumeration state is written to COM1 as `[USB ]`, `[UHCI]`, `[EHCI]` and `[HID ]` messages.
+          - **Build system**: Windows hosts use the `i686-elf-` cross toolchain, the ISO name is fixed to `pixel_neko.iso`, the build counter writes `build/generated/version.h`, and `make run-kernel` / `make run-usb` are available.
+          - **Maintained baseline**: VMware SVGA II 2D acceleration with VBE/Mach64 fallback, Intel/VMware HDAudio and VIA VT1708S routing (including the 2012.104 BDL fix), CMI8738 and CT4810/ES1371 audio, FAT12/16/32 + ISO9660 VFS, and PS/2 IRQ input with polling fallback.
+          - Full 3D rendering and OHCI/xHCI support are not part of this release.
         draft: false
         prerelease: false
         files: |

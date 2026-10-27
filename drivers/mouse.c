@@ -2,6 +2,7 @@
 #include "port.h"
 #include "wm.h"
 #include "irq.h"
+#include "log.h"
 
 static int mx = 160, my = 100;
 static int btn = 0;
@@ -17,79 +18,149 @@ int mouse_speed = 2;
 void mouse_set_speed(int s) { if(s>=1 && s<=5) mouse_speed = s; }
 int mouse_get_speed(void) { return mouse_speed; }
 
-static inline void kbc_wait_write(void) {
-    int timeout = 100000;
-    while ((inb(0x64) & 0x02) && --timeout);
+/* ---- 8042 keyboard controller helpers -------------------------------
+ * Every wait is bounded: firmware that emulates the PS/2 ports through SMM
+ * (CSM boards with "Legacy USB Support") may never acknowledge a command, and
+ * the desktop still has to come up in that case. */
+#define KBC_TIMEOUT 100000
+
+static int kbc_wait_write(void)
+{
+    for (int i = 0; i < KBC_TIMEOUT; i++) {
+        if (!(inb(0x64) & 0x02)) return 1;
+    }
+    return 0;
 }
 
-static inline int kbc_wait_read(void) {
-    int timeout = 100000;
-    while (!(inb(0x64) & 0x01) && --timeout);
-    return timeout > 0;
+static int kbc_wait_read(void)
+{
+    for (int i = 0; i < KBC_TIMEOUT; i++) {
+        if (inb(0x64) & 0x01) return 1;
+    }
+    return 0;
+}
+
+/* Discard whatever the firmware left in the output buffer. */
+static void kbc_drain(void)
+{
+    for (int i = 0; i < 64; i++) {
+        if (!(inb(0x64) & 0x01)) break;
+        (void)inb(0x60);
+        for (volatile int j = 0; j < 100; j++);
+    }
+}
+
+static int kbc_cmd(unsigned char cmd)
+{
+    if (!kbc_wait_write()) return 0;
+    outb(0x64, cmd);
+    return 1;
+}
+
+static int kbc_write(unsigned char data)
+{
+    if (!kbc_wait_write()) return 0;
+    outb(0x60, data);
+    return 1;
+}
+
+static int kbc_read(unsigned char* out)
+{
+    if (!kbc_wait_read()) return 0;
+    *out = inb(0x60);
+    return 1;
+}
+
+/* Send one byte to the auxiliary (mouse) port and expect its ACK. */
+static int mouse_cmd(unsigned char cmd)
+{
+    unsigned char ack;
+    if (!kbc_cmd(0xD4)) return 0;
+    if (!kbc_write(cmd)) return 0;
+    if (!kbc_read(&ack)) return 0;
+    return ack == 0xFA;
+}
+
+static void kbc_settle(void)
+{
+    for (volatile int i = 0; i < 20000; i++);
+    kbc_drain();
 }
 
 void mouse_init(void)
 {
-    for (volatile int i = 0; i < 100000; i++);
+    /* 0 = never probed, 1 = controller configured, -1 = leave firmware alone */
+    static int controller_state = 0;
 
-    // Drain any leftover data from controller
-    for (int i = 0; i < 100; i++) {
-        if (inb(0x64) & 0x01) inb(0x60);
-        for (volatile int j = 0; j < 1000; j++);
+    /* The splash screen already ran this once. Re-programming the 8042 when
+     * the desktop appears is what kills the keyboard and mouse on CSM boards:
+     * it makes the firmware drop its USB legacy emulation, the real USB
+     * devices are no longer polled and they suspend (both LEDs go out). */
+    if (controller_state != 0) {
+        cycle = 0;
+        kbc_drain();
+        log_printf("[PS2 ] mouse already set up, controller left untouched\n");
+        return;
     }
 
-    // Enable second PS/2 port (auxiliary device)
-    kbc_wait_write();
-    outb(0x64, 0xA8);
-    for (volatile int i = 0; i < 50000; i++);
+    kbc_drain();
 
-    // Read controller configuration byte
-    kbc_wait_write();
-    outb(0x64, 0x20);
-    for (volatile int i = 0; i < 50000; i++);
-    if (!kbc_wait_read()) return;
-    unsigned char cfg = inb(0x60);
+    /* Read the controller command byte (0x20). A real i8042 answers with a
+     * value whose reserved bit 7 is clear; anything else means the byte we
+     * drained was a queued keystroke or the port is firmware-emulated. */
+    unsigned char cfg = 0;
+    int have_cfg = 0;
+    if (kbc_cmd(0x20) && kbc_read(&cfg) && !(cfg & 0x80)) have_cfg = 1;
 
-    // Enable keyboard IRQ1 and mouse IRQ12, and enable the mouse clock.
-    cfg |= 0x03;
-    cfg &= ~0x20;
-
-    // Write back controller configuration byte
-    kbc_wait_write();
-    outb(0x64, 0x60);
-    for (volatile int i = 0; i < 50000; i++);
-    kbc_wait_write();
-    outb(0x60, cfg);
-    for (volatile int i = 0; i < 50000; i++);
-
-    // Tell mouse to use default settings
-    kbc_wait_write();
-    outb(0x64, 0xD4);
-    for (volatile int i = 0; i < 50000; i++);
-    kbc_wait_write();
-    outb(0x60, 0xF6); // Set defaults
-    for (volatile int i = 0; i < 50000; i++);
-    for (int t = 0; t < 100000; t++) {
-        if (inb(0x64) & 0x01) { inb(0x60); break; }
+    if (!have_cfg) {
+        controller_state = -1;
+        cycle = 0;
+        log_printf("[PS2 ] no i8042 command byte, keeping firmware PS/2 mapping\n");
+        return;
     }
 
-    // Enable mouse streaming
-    kbc_wait_write();
-    outb(0x64, 0xD4);
-    for (volatile int i = 0; i < 50000; i++);
-    kbc_wait_write();
-    outb(0x60, 0xF4);
-    for (volatile int i = 0; i < 50000; i++);
-    for (int t = 0; t < 100000; t++) {
-        if (inb(0x64) & 0x01) { inb(0x60); break; }
+    /* Wanted state: IRQ1 + IRQ12 enabled, both device clocks running and
+     * scancode translation on (this kernel decodes PS/2 Set 1). Bits 4 and 5
+     * disable the clocks and are the classic cause of "both devices dead". */
+    unsigned char want = (unsigned char)((cfg | 0x03 | 0x40) & ~0x30);
+    want &= 0x7F;
+
+    if (want == cfg) {
+        /* Firmware already left the controller in a usable state: do not write
+         * anything at all, so the SMM legacy path stays intact. */
+        log_printf("[PS2 ] firmware PS/2 state ok (cfg=0x%X), not rewriting\n", cfg);
+    } else {
+        kbc_cmd(0x60);
+        kbc_write(want);
+        kbc_settle();
+
+        unsigned char check = 0;
+        if (!(kbc_cmd(0x20) && kbc_read(&check) && check == want)) {
+            controller_state = -1;
+            cycle = 0;
+            log_printf("[PS2 ] command byte not writable, using firmware mapping\n");
+            return;
+        }
+        log_printf("[PS2 ] command byte 0x%X -> 0x%X\n", cfg, want);
     }
 
-    // Drain any remaining ACKs or bytes
-    for (int i = 0; i < 50; i++) {
-        if (inb(0x64) & 0x01) inb(0x60);
-        for (volatile int j = 0; j < 500; j++);
+    /* Enable the auxiliary interface only when firmware gated its clock. */
+    if (cfg & 0x20) {
+        kbc_cmd(0xA8);
+        kbc_settle();
     }
 
+    /* Ask the mouse for defaults and streaming, but only while it really
+     * acknowledges. A silent port means the firmware is emulating it and must
+     * be left running exactly as the BIOS configured it. */
+    if (mouse_cmd(0xF6)) {
+        kbc_settle();
+        if (!mouse_cmd(0xF4)) log_printf("[PS2 ] mouse rejected streaming enable\n");
+    } else {
+        log_printf("[PS2 ] no PS/2 mouse ACK, keeping firmware streaming state\n");
+    }
+
+    controller_state = 1;
     cycle = 0;
     init_done = 1;
 }

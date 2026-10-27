@@ -16,6 +16,12 @@ pause.md
 *.bmp
 *.jpg
 *.jpeg
+*.log
+
+# Generated build tree and local QEMU test artifacts
+build/
+*_log.txt
+test_usb.img
 
 # Editor directories
 .vscode/
