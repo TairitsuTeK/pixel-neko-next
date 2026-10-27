@@ -85,6 +85,17 @@ typedef struct {
 
 #define EHCI_QTD_POOL 32
 #define EHCI_MAX_PORTS 8
+#define EHCI_MAX_HIDS 4
+
+typedef struct {
+    int used;
+    int qh;
+    int qtd;
+    usb_device_t* dev;
+    usb_endpoint_t* ep;
+    unsigned char* buf;
+    int len;
+} ehci_hid_t;
 
 typedef struct {
     volatile unsigned int* cap;
@@ -97,6 +108,10 @@ typedef struct {
     ehci_qh_t async_qh;
     ehci_qtd_t qtds[EHCI_QTD_POOL];
     int qtd_used[EHCI_QTD_POOL];
+
+    ehci_qh_t hid_qh[EHCI_MAX_HIDS];
+    ehci_hid_t hids[EHCI_MAX_HIDS];
+    unsigned char hid_buf[EHCI_MAX_HIDS][64];
 
     usb_hci_t hci;
 } ehci_ctrl_t;
@@ -177,6 +192,136 @@ static int ehci_td_wait(ehci_ctrl_t* c, int index, int timeout_ms)
         (EHCI_TD_HALTED | EHCI_TD_BABBLE | EHCI_TD_XACT | EHCI_TD_BUFERR))
         return -3;
     return 0;
+}
+
+/* Rebuild the EHCI periodic schedule: every frame points at the first HID QH
+ * and the QHs are chained through their horizontal link pointers. */
+static void ehci_periodic_rebuild(ehci_ctrl_t* c)
+{
+    if (!c->periodic_list) return;
+
+    unsigned int cmd = ehci_read32(c, c->op + EHCI_USBCMD / 4);
+    ehci_write32(c, c->op + EHCI_USBCMD / 4, cmd & ~EHCI_CMD_PSE);
+
+    unsigned int first = 0;
+    unsigned int prev = 0;
+    for (int i = 0; i < EHCI_MAX_HIDS; i++) {
+        if (!c->hids[i].used) continue;
+
+        ehci_qh_t* qh = &c->hid_qh[i];
+        qh->hlp = 1;
+        /* EHCI link pointers use bits 1-2 as the type field: QH = 1. */
+        unsigned int qhp = ((unsigned int)qh & ~0x1FU) | 2U;
+        if (!first) first = qhp;
+        else if (prev) ((ehci_qh_t*)prev)->hlp = qhp;
+        prev = qhp;
+    }
+
+    for (int i = 0; i < 1024; i++) {
+        c->periodic_list[i] = first ? first : 1;
+    }
+
+    ehci_write32(c, c->op + EHCI_USBCMD / 4,
+                 (ehci_read32(c, c->op + EHCI_USBCMD / 4) & ~EHCI_CMD_PSE) |
+                 EHCI_CMD_PSE);
+}
+
+/* Arm one interrupt qTD. The report buffer is controller-owned so the qTD
+ * remains valid after the HID poll call returns. */
+static void ehci_hid_arm(ehci_ctrl_t* c, ehci_hid_t* h)
+{
+    ehci_qtd_t* qtd = &c->qtds[h->qtd];
+    qtd->next = 1;
+    qtd->alt = 1;
+    qtd->token = EHCI_TD_ACTIVE | EHCI_TD_CERR |
+                 ((unsigned int)EHCI_PID_IN << 8) |
+                 ((unsigned int)h->len << 16);
+    ehci_qtd_set_buffers(c, h->qtd, h->buf, h->len);
+
+    ehci_qh_t* qh = &c->hid_qh[h->qh];
+    qh->cur_qtd = 0;
+    qh->next_qtd = (unsigned int)qtd;
+    qh->alt_qtd = 1;
+    qh->token = 0;
+}
+
+static int ehci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
+                        void* data, int len)
+{
+    ehci_ctrl_t* c = (ehci_ctrl_t*)hci->priv;
+    if (!data || len <= 0 || !ep || !dev) return 0;
+
+    ehci_hid_t* h = 0;
+    for (int i = 0; i < EHCI_MAX_HIDS; i++) {
+        if (c->hids[i].used && c->hids[i].dev == dev &&
+            c->hids[i].ep == ep) {
+            h = &c->hids[i];
+            break;
+        }
+    }
+
+    if (!h) {
+        for (int i = 0; i < EHCI_MAX_HIDS; i++) {
+            if (c->hids[i].used) continue;
+
+            int qtd = ehci_qtd_alloc(c);
+            if (qtd < 0) return -1;
+
+            h = &c->hids[i];
+            usb_memset(h, 0, sizeof(*h));
+            h->used = 1;
+            h->qh = i;
+            h->qtd = qtd;
+            h->dev = dev;
+            h->ep = ep;
+            h->buf = c->hid_buf[i];
+            h->len = ep->max_packet ? ep->max_packet : 8;
+            if (h->len > (int)sizeof(c->hid_buf[i]))
+                h->len = (int)sizeof(c->hid_buf[i]);
+
+            unsigned int speed_bits = (dev->speed == USB_SPEED_HIGH) ? 2 :
+                                      ((dev->speed == USB_SPEED_LOW) ? 1 : 0);
+            ehci_qh_t* qh = &c->hid_qh[i];
+            qh->hlp = 1;
+            qh->epchar = (unsigned int)(dev->address & 0x7F) |
+                         ((unsigned int)(ep->address & 0x0F) << 8) |
+                         (speed_bits << 12) |       /* EPS */
+                         (0U << 14) |               /* DTC: hardware toggle */
+                         (0U << 15) |               /* periodic QH */
+                         (((unsigned int)h->len & 0x7FFU) << 16) |
+                         (0U << 27);                /* C=0 */
+            qh->epcap = 0;
+            qh->cur_qtd = 0;
+            qh->next_qtd = 1;
+            qh->alt_qtd = 1;
+            qh->token = 0;
+            for (int j = 0; j < 5; j++) qh->buf[j] = 0;
+
+            ehci_hid_arm(c, h);
+            ehci_periodic_rebuild(c);
+            return 0;
+        }
+        return -1;
+    }
+
+    ehci_qtd_t* qtd = &c->qtds[h->qtd];
+    unsigned int token = qtd->token;
+    if (token & EHCI_TD_ACTIVE) return 0;
+
+    if (token & (EHCI_TD_HALTED | EHCI_TD_BABBLE | EHCI_TD_XACT |
+                 EHCI_TD_BUFERR)) {
+        ehci_hid_arm(c, h);
+        return 0;
+    }
+
+    int remaining = (int)((token >> 16) & 0x7FFF);
+    int actual = h->len - remaining;
+    if (actual < 0) actual = 0;
+    if (actual > len) actual = len;
+    if (actual > 0) usb_memcpy(data, h->buf, (unsigned int)actual);
+
+    ehci_hid_arm(c, h);
+    return actual;
 }
 
 static int ehci_control(usb_hci_t* hci, usb_device_t* dev,
@@ -499,7 +644,7 @@ int ehci_probe(const pci_device_t* dev)
     ehci_write32(c, c->op + EHCI_USBINTR / 4, 0);
 
     ehci_write32(c, c->op + EHCI_USBCMD / 4,
-                 EHCI_CMD_FLS | EHCI_CMD_PSE | EHCI_CMD_RS);
+                 EHCI_CMD_PSE | EHCI_CMD_RS);
     ehci_write32(c, c->op + EHCI_CONFIGFLAG / 4, 1);
 
     /* Power every root port before probing for devices. On controllers with
@@ -516,7 +661,7 @@ int ehci_probe(const pci_device_t* dev)
     c->hci.name = "EHCI";
     c->hci.priv = c;
     c->hci.control = ehci_control;
-    c->hci.intr_in = 0;   /* HID low/full-speed devices use UHCI */
+    c->hci.intr_in = ehci_intr_in;
     c->hci.bulk = 0;
     c->hci.port_reset = ehci_port_reset;
     c->hci.poll = ehci_poll_hci;

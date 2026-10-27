@@ -103,10 +103,16 @@ KERNEL_ELF = iso/boot/kernel.elf
 GEN_DIR      = build/generated
 GEN_VERSION  = $(GEN_DIR)/version.h
 
-# Fixed ISO name so the first and subsequent builds produce the same file.
-# The build counter / version string is still written into the kernel and
-# grub menu, but no longer affects the output filename.
-ISO_FILE = pixel_neko.iso
+# Version is taken from the checked-in header so the ISO filename always
+# matches the release version without duplicating the string.
+VERSION := $(shell sed -n 's/.*KERNEL_BUILD[[:space:]]*"\([^"]*\)".*/\1/p' include/version.h | head -n 1)
+ifeq ($(strip $(VERSION)),)
+VERSION := 2012.200
+endif
+
+# Versioned ISO name, e.g. pixel_neko_2012.200.iso. The build counter still
+# writes the same version into build/generated/version.h.
+ISO_FILE = pixel_neko_$(VERSION).iso
 
 # Disk image used by `make run` / `make debug`.
 DISK_IMG = disk.img
