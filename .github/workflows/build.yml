@@ -75,7 +75,7 @@ jobs:
           - xHCI input self-test (modern PCH path): `qemu-system-i386 -kernel iso/boot/kernel.elf -m 128M -device qemu-xhci -device usb-kbd -device usb-mouse -serial file:xhci_log.txt`
           - VirtualBox / VMware: create a 32-bit Other/Unknown virtual machine and boot this ISO.
 
-          ### Highlights (Build 2012.170)
+          ### Highlights (Build 2012.200)
           - **USB 2.0 core**: a shared Host Controller Interface abstraction, standard descriptor parsing and full GET_DESCRIPTOR / SET_ADDRESS / SET_CONFIGURATION enumeration (up to 4 controllers and 8 devices).
           - **UHCI (USB 1.1)**: PCI I/O BAR probing, frame list with QH/TD scheduling, control/interrupt/bulk transfers, two root ports with low/full-speed detection.
           - **EHCI (USB 2.0)**: MMIO capability and operational register setup, qTD transfers and up to eight root ports; 64-bit EHCI is reported as unsupported.

@@ -11,7 +11,7 @@ BUILD_FILE="$SCRIPT_DIR/build_number.txt"
 if [ -f "$BUILD_FILE" ]; then
     RAW_VER=$(tr -d '\r\n' < "$BUILD_FILE")
 else
-    RAW_VER="2012.170"
+    RAW_VER="2012.200"
 fi
 
 BUILD_VER="$RAW_VER"

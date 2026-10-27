@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture](https://img.shields.io/badge/Arch-x86--32-blue.svg)](https://en.wikipedia.org/wiki/IA-32)
 [![Boot](https://img.shields.io/badge/Boot-Multiboot%20%2F%20GRUB-green.svg)](https://www.gnu.org/software/grub/)
-[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202012.170)-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/Version-C2.0%20(Build%202012.200)-brightgreen.svg)]()
 
 **Pixel Neko Next** 是一个轻量级、开箱即用的 x86-32 位原生微桌面操作系统（Bare-metal GUI OS）。系统完全基于 C 语言与 NASM 汇编从零编写，具备高分辨率图形桌面、完整的窗口管理器、Windows 驱动器盘符映射、ISO9660 光盘文件系统、FAT12/16/32 文件系统、原生软驱驱动、USB 2.0（UHCI / EHCI / xHCI）键鼠输入、丰富的内置应用程序以及极致复古的经典开机与关机停机体验。
 
@@ -124,7 +124,7 @@
    ```bash
    make
    ```
-   编译完成后会在根目录生成固定命名的 `pixel_neko.iso`；内核与 GRUB 菜单内嵌的版本号取自 `include/version.h` 的 `KERNEL_BUILD`（当前为 `2012.170`）。
+   编译完成后会在根目录生成固定命名的 `pixel_neko.iso`；内核与 GRUB 菜单内嵌的版本号取自 `include/version.h` 的 `KERNEL_BUILD`（当前为 `2012.200`）。
 
 2. **在 QEMU 虚拟机中一键运行（ISO + 64MB 数据盘）**
    ```bash
@@ -160,7 +160,7 @@
 
 ---
 
-## 💾 Build 2012.170 更新特性
+## 💾 Build 2012.200 更新特性
 - **⌨️ 全新 USB 2.0 子系统与 HID 键鼠输入**：
   - 新增 USB 核心层 `drivers/usb_core.c`，提供 Host Controller Interface 抽象、标准描述符（Device / Config / Interface / Endpoint / HID）解析与 `GET_DESCRIPTOR`、`SET_ADDRESS`、`SET_CONFIGURATION` 完整枚举流程；最多支持 4 个控制器与 8 个设备；
   - 新增 UHCI（USB 1.1 全速 / 低速）驱动 `drivers/usb_uhci.c`：PCI I/O BAR 探测、帧列表与 QH/TD 调度、控制 / 中断 IN / 批量传输、2 个根端口复位及低速设备识别；
@@ -174,7 +174,7 @@
   - ISO 输出改为固定文件名 `pixel_neko.iso`，不再随版本号变化；版本头生成物统一放入 `build/generated`，`include/version.h` 不再随每次编译被重写；
   - 新增 `make run-kernel`（直接启动 ELF）、`make run-usb`（UHCI 键鼠自测）、`make run-xhci`（xHCI 键鼠自测）目标，`make run` / `make debug` 自动通过 `qemu-img` 创建 64MB `disk.img`；
   - 头文件依赖改为递归发现并排除自动生成的版本头，避免仅版本号变化触发全量重编译。
-- **🏷️ 版本号同步**：内核、开机画面、系统关于视窗、README 与 CI 发布说明统一为 `C2.0 Build 2012.170`。
+- **🏷️ 版本号同步**：内核、开机画面、系统关于视窗、README 与 CI 发布说明统一为 `C2.0 Build 2012.200`。
 
 ---
 
