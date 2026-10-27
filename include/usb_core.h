@@ -142,10 +142,17 @@ typedef struct {
 } usb_endpoint_t;
 
 typedef struct {
+    /* FIX: slot allocation flag, used by usb_alloc_device/usb_release_device
+     * so a failed enumeration cannot leak or alias a device slot. */
+    int used;
+
     usb_hci_t* hci;
     unsigned char address;        /* assigned USB device address */
     unsigned char speed;          /* USB_SPEED_* */
-    unsigned char port;           /* host controller port number */
+    unsigned char port;           /* host controller root port / hub port */
+    unsigned char parent_hub;     /* address of parent hub, 0 for root */
+    unsigned char parent_port;    /* 1-based port on parent hub, 0 for root */
+    unsigned char hub_depth;      /* number of hubs above this device */
     unsigned short max_packet0;   /* EP0 max packet size */
     unsigned short vendor;
     unsigned short product;
@@ -191,17 +198,32 @@ struct usb_hci {
 
     /* Periodic housekeeping (reap finished HID transfers). */
     void (*poll)(usb_hci_t* hci);
+
+    /* 1 when this HCI can enumerate devices behind USB hubs. EHCI/UHCI set
+     * this; xHCI currently only manages root-port slots. */
+    int supports_hubs;
 };
 
 /* ---- Public API ---- */
 void usb_init(void);
 void usb_poll(void);
 
+/* Returns 1 when firmware legacy-USB state is present: a UHCI legacy
+ * register bit is still armed or EHCI reports BIOS ownership. In that state
+ * mouse_init() must not rewrite the 8042 command byte, because the firmware
+ * may be synthesising PS/2 traffic from USB inside SMM. Each USB controller
+ * driver separately decides whether it can take over its own controller. */
+int  usb_firmware_legacy_active(void);
+
 /* Called by each HCD once it is initialized. */
 void usb_register_hci(usb_hci_t* hci);
 
 /* Called by an HCD after it detects a device on a port (post reset). */
 int  usb_enumerate(usb_hci_t* hci, int port, int speed);
+
+/* Enumerate a device that sits on a downstream port of a configured hub. */
+int  usb_enumerate_hub(usb_hci_t* hci, usb_device_t* hub, int port,
+                       int speed);
 
 int  usb_control_msg(usb_device_t* dev, int dir, unsigned char request,
                      unsigned short value, unsigned short index,

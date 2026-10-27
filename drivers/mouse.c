@@ -3,6 +3,7 @@
 #include "wm.h"
 #include "irq.h"
 #include "log.h"
+#include "usb_core.h"
 
 static int mx = 160, my = 100;
 static int btn = 0;
@@ -92,6 +93,19 @@ void mouse_init(void)
 {
     /* 0 = never probed, 1 = controller configured, -1 = leave firmware alone */
     static int controller_state = 0;
+
+    /* On a CSM with USB legacy support enabled, the 8042 ports are emulated
+     * by SMM from the USB keyboard/mouse. Issuing 0x20/0x60 commands there can
+     * hang the machine during boot. Keep the firmware's controller state and
+     * only drain the existing queue; IRQ1/IRQ12 still deliver its reports. */
+    if (usb_firmware_legacy_active()) {
+        controller_state = -1;
+        cycle = 0;
+        kbc_drain();
+        log_printf("[PS2 ] firmware legacy USB active, leaving PS/2 emulation "
+                   "untouched\n");
+        return;
+    }
 
     /* Called once from kernel_main before IRQ1/IRQ12 are unmasked. Re-entry is
      * a no-op; the 8042 must not be reprogrammed after the desktop starts. */

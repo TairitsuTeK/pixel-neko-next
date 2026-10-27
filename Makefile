@@ -70,6 +70,7 @@ C_SOURCES = kernel/kernel.c \
             drivers/usb_xhci.c \
             drivers/usb_ehci.c \
             drivers/usb_uhci.c \
+            drivers/usb_hub.c \
             drivers/usb_hid.c \
             wm/wm.c \
             apps/calc.c \
@@ -118,7 +119,7 @@ ISO_FILE = pixel_neko_$(VERSION).iso
 DISK_IMG = disk.img
 DISK_SIZE = 64M
 
-.PHONY: all clean run run-kernel run-usb debug rebuild $(GEN_VERSION)
+.PHONY: all clean run run-kernel run-usb run-ehci run-hub run-xhci debug rebuild $(GEN_VERSION)
 
 all: $(GEN_VERSION) $(ISO_FILE)
 
@@ -178,10 +179,30 @@ run-kernel: $(KERNEL_ELF)
 
 # Test USB: attach a UHCI controller + USB keyboard/mouse and capture the
 # kernel's serial (COM1) log, where the USB enumeration messages are printed.
+# Specify the root ports explicitly: otherwise newer QEMU versions put the
+# second device behind an internal USB hub, which this kernel does not drive.
 run-usb: $(KERNEL_ELF)
 	$(QEMU) -kernel $(KERNEL_ELF) -m 128M \
-		-device piix3-usb-uhci -device usb-kbd -device usb-mouse \
+		-device piix3-usb-uhci \
+		-device usb-kbd,port=1 -device usb-mouse,port=2 \
 		-serial file:usb_log.txt -monitor none
+
+# Test the EHCI driver with two high-speed USB HID devices. This is the path
+# used by Intel H55/H57 and other USB 2.0 chipsets with a working EHCI.
+run-ehci: $(KERNEL_ELF)
+	$(QEMU) -kernel $(KERNEL_ELF) -m 128M \
+		-device usb-ehci -device usb-kbd -device usb-mouse \
+		-serial file:ehci_log.txt -monitor none
+
+# Test the Hub class path with a QEMU USB hub (full-speed, attach to UHCI).
+# This validates hub descriptor/port reset/downstream enumeration; the
+# high-speed Intel RMH path on H55/P55 uses the same hub code plus EHCI TT.
+run-hub: $(KERNEL_ELF)
+	$(QEMU) -kernel $(KERNEL_ELF) -m 128M \
+		-device piix3-usb-uhci \
+		-device usb-hub,port=1 \
+		-device usb-kbd,port=1.1 -device usb-mouse,port=1.2 \
+		-serial file:hub_log.txt -monitor none
 
 # Test the xHCI driver: this is the controller every modern Intel PCH uses for
 # its USB 2.0 ports. A window is opened so host key presses / mouse movement

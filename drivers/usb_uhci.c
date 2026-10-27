@@ -38,6 +38,11 @@
 #define UHCI_PORT_SUSP 0x1000  /* suspend */
 #define UHCI_PORT_WC   (UHCI_PORT_CSC | UHCI_PORT_PEC)
 
+/* ---- UHCI legacy support (PCI config, fixed offset) ---- */
+#define UHCI_LEGACY_SUP 0xC0
+#define UHCI_LEGACY_RWC 0x8F00
+#define UHCI_LEGACY_RO  0x5040
+
 /* ---- USB packet IDs (token) ---- */
 #define UHCI_PID_SETUP 0x2D
 #define UHCI_PID_IN    0x69
@@ -112,6 +117,10 @@ typedef struct {
     unsigned char intr_qh_used[UHCI_MAX_HID_QH];
     unsigned char intr_qh_dev[UHCI_MAX_HID_QH];
     unsigned char intr_qh_ep[UHCI_MAX_HID_QH];
+    /* Persistent interrupt report buffers: the controller must never DMA into
+     * the caller's stack buffer after usb_hid_poll() returns. */
+    unsigned char intr_buf[UHCI_MAX_HID_QH][64];
+
     uhci_qh_t control_qh;
 
     usb_hci_t hci;
@@ -159,6 +168,10 @@ static void td_init(uhci_ctrl_t* c, int index)
     c->tds[index].buffer = 0;
     c->owners[index].used = 0;
     c->owners[index].persistent = 0;
+    c->owners[index].ep_addr = 0;
+    c->owners[index].dev_addr = 0;
+    c->owners[index].max_len = 0;
+    c->owners[index].buffer = 0;
 }
 
 static int td_alloc(uhci_ctrl_t* c)
@@ -167,6 +180,9 @@ static int td_alloc(uhci_ctrl_t* c)
         if (!c->owners[i].used) {
             c->owners[i].used = 1;
             c->owners[i].persistent = 0;
+            c->owners[i].ep_addr = 0;
+            c->owners[i].dev_addr = 0;
+            c->owners[i].max_len = 0;
             c->owners[i].buffer = 0;
             return i;
         }
@@ -192,7 +208,17 @@ static int td_wait(uhci_ctrl_t* c, int index, int timeout_ms)
     while (c->tds[index].status & UHCI_TD_ACTIVE) {
         if (uhci_read(c, UHCI_USBSTS) & UHCI_STS_HCHALTED) {
             uhci_write(c, UHCI_USBSTS, UHCI_STS_HCHALTED);
-            uhci_write(c, UHCI_USBCMD, uhci_read(c, UHCI_USBCMD) | UHCI_CMD_RS);
+            uhci_write(c, UHCI_USBCMD,
+                       uhci_read(c, UHCI_USBCMD) | UHCI_CMD_RS);
+
+            /* FIX: wait for the controller to actually leave the halted
+             * state before reporting failure, otherwise the next transfer
+             * immediately halts again. */
+            int settle = 100;
+            while ((uhci_read(c, UHCI_USBSTS) & UHCI_STS_HCHALTED) &&
+                   --settle) {
+                for (volatile int i = 0; i < 100; i++);
+            }
             return -2;
         }
         if ((timer_get_ticks() - start) >= target) return -1;
@@ -285,7 +311,14 @@ static int uhci_control(usb_hci_t* hci, usb_device_t* dev,
                    uhci_read(c, UHCI_USBCMD), uhci_read(c, UHCI_USBSTS));
     }
 
+    /* FIX: instead of a fixed 10 ms sleep, wait (with a bound) until the
+     * controller has actually retired the chain and the QH element pointer is
+     * back to the terminate marker. */
     c->control_qh.element = uhci_link_terminate();
+    int retire = 100;
+    while (((c->control_qh.element & ~0xFU) != 0) && --retire) {
+        for (volatile int i = 0; i < 100; i++);
+    }
 
     td_free(c, setup_td);
     if (data_td >= 0) td_free(c, data_td);
@@ -309,10 +342,35 @@ static int uhci_intr_qh_slot(uhci_ctrl_t* c, usb_device_t* dev,
             c->intr_qh_used[i] = 1;
             c->intr_qh_dev[i] = dev->address;
             c->intr_qh_ep[i] = ep->address;
+            c->intr_qh[i].head = uhci_link_terminate();
+            c->intr_qh[i].element = uhci_link_terminate();
             return i;
         }
     }
     return -1;
+}
+
+/* FIX: release a HID QH slot and its persistent TD. Called when the endpoint
+ * is truly dead (STALL/BABBLE/CRC/...), not on NAK. Without this, hot-unplug
+ * permanently consumes one of the UHCI_MAX_HID_QH slots and one TD. */
+static void uhci_intr_release(uhci_ctrl_t* c, int slot)
+{
+    if (slot < 0 || slot >= UHCI_MAX_HID_QH) return;
+
+    for (int i = 0; i < UHCI_TD_POOL; i++) {
+        if (c->owners[i].used && c->owners[i].persistent &&
+            c->owners[i].dev_addr == c->intr_qh_dev[slot] &&
+            c->owners[i].ep_addr == c->intr_qh_ep[slot]) {
+            td_free(c, i);
+            break;
+        }
+    }
+
+    c->intr_qh[slot].head = uhci_link_terminate();
+    c->intr_qh[slot].element = uhci_link_terminate();
+    c->intr_qh_used[slot] = 0;
+    c->intr_qh_dev[slot] = 0;
+    c->intr_qh_ep[slot] = 0;
 }
 
 static int uhci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
@@ -342,7 +400,7 @@ static int uhci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
         c->owners[idx].dev_addr = dev->address;
         c->owners[idx].ep_addr = ep->address;
         c->owners[idx].max_len = len;
-        c->owners[idx].buffer = (unsigned char*)data;
+        c->owners[idx].buffer = c->intr_buf[slot];
         ep->hcd_priv = (void*)(unsigned int)idx;
 
         /* One TD per QH; the QH element pointer re-arms it every frame. */
@@ -354,7 +412,7 @@ static int uhci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
             ((ep->address & 0x0F) << 15) |
             ((ep->toggle & 1) << 19) |
             (uhci_len_field(len) << 21);
-        c->tds[idx].buffer = (unsigned int)data;
+        c->tds[idx].buffer = (unsigned int)c->intr_buf[slot];
         qh->element = uhci_link_td(td_phys(c, idx));
         uhci_write(c, UHCI_USBCMD, uhci_read(c, UHCI_USBCMD) | UHCI_CMD_RS);
         return 0;
@@ -369,23 +427,36 @@ static int uhci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
     }
 
     if (st & UHCI_TD_ERROR_MASK) {
-        /* NAK means "no report yet": keep the data toggle unchanged. */
         int nak = (st & UHCI_TD_NAK) ? 1 : 0;
-        if (!nak) ep->toggle = 0;
-        c->tds[idx].status = UHCI_TD_ACTIVE | UHCI_TD_CERR | UHCI_TD_SPD |
-            (ls ? UHCI_TD_LS : 0);
-        c->tds[idx].token = (UHCI_PID_IN & 0xFF) |
-            ((dev->address & 0x7F) << 8) |
-            ((ep->address & 0x0F) << 15) |
-            ((ep->toggle & 1) << 19) |
-            (uhci_len_field(len) << 21);
-        c->tds[idx].buffer = (unsigned int)data;
-        qh->element = uhci_link_td(td_phys(c, idx));
-        return nak ? 0 : -1;
+        if (nak) {
+            /* "No report yet": keep the toggle unchanged and re-arm. */
+            c->tds[idx].status = UHCI_TD_ACTIVE | UHCI_TD_CERR |
+                UHCI_TD_SPD | (ls ? UHCI_TD_LS : 0);
+            c->tds[idx].token = (UHCI_PID_IN & 0xFF) |
+                ((dev->address & 0x7F) << 8) |
+                ((ep->address & 0x0F) << 15) |
+                ((ep->toggle & 1) << 19) |
+                (uhci_len_field(len) << 21);
+            c->tds[idx].buffer = (unsigned int)c->intr_buf[slot];
+            qh->element = uhci_link_td(td_phys(c, idx));
+            return 0;
+        }
+
+        /* FIX: a non-NAK error means the endpoint is dead (unplugged or
+         * stalled). Release the QH slot and the persistent TD so a future
+         * device can reuse them. */
+        log_printf("[UHCI] interrupt endpoint 0x%X dev %u died (st=0x%X), "
+                   "releasing slot\n", ep->address, dev->address, st);
+        qh->element = uhci_link_terminate();
+        ep->hcd_priv = 0;
+        uhci_intr_release(c, slot);
+        return -1;
     }
 
     int act_len = (int)(st & 0x7FF);
     act_len = (act_len == 0x7FF) ? 0 : act_len + 1;
+    if (act_len > len) act_len = len;
+    if (act_len > 0) usb_memcpy(data, c->intr_buf[slot], (unsigned int)act_len);
     ep->toggle ^= 1;
 
     c->tds[idx].status = UHCI_TD_ACTIVE | UHCI_TD_CERR | UHCI_TD_SPD |
@@ -395,7 +466,7 @@ static int uhci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
         ((ep->address & 0x0F) << 15) |
         ((ep->toggle & 1) << 19) |
         (uhci_len_field(len) << 21);
-    c->tds[idx].buffer = (unsigned int)data;
+    c->tds[idx].buffer = (unsigned int)c->intr_buf[slot];
     qh->element = uhci_link_td(td_phys(c, idx));
 
     return act_len;
@@ -438,10 +509,13 @@ static int uhci_port_reset(usb_hci_t* hci, int port)
     sc = uhci_read(c, reg);
     int speed = (sc & UHCI_PORT_LSDA) ? USB_SPEED_LOW : USB_SPEED_FULL;
 
-    /* Low-speed ports must be enabled by software; doing this for full-speed
-     * devices is harmless and recovers ports that the firmware left disabled. */
-    uhci_write(c, reg, (unsigned short)(sc | UHCI_PORT_PE));
-    sleep_ms(10);
+    /* FIX: only write PE when the port is not already enabled. Full-speed
+     * devices are enabled by hardware after reset; writing PE again can
+     * cause PEC to bounce on some chipsets. */
+    if (!(sc & UHCI_PORT_PE)) {
+        uhci_write(c, reg, (unsigned short)(sc | UHCI_PORT_PE));
+        sleep_ms(10);
+    }
 
     return speed;
 }
@@ -462,6 +536,7 @@ void uhci_poll(void)
 
 static void uhci_detect_ports(uhci_ctrl_t* c)
 {
+    /* FIX: scan in ascending order; behaviour is otherwise identical. */
     for (int port = 0; port < UHCI_MAX_PORTS; port++) {
         unsigned short reg = (port == 0) ? UHCI_PORTSC1 : UHCI_PORTSC2;
         unsigned short sc = uhci_read(c, reg);
@@ -507,6 +582,20 @@ int uhci_probe(const pci_device_t* dev)
     }
     c->io_base = (unsigned short)(dev->bar[io_bar] & ~3U);
 
+    /* Linux clears the UHCI legacy register (PIRQ/SMI + R/WC bits) before
+     * resetting the controller. Doing this after a CSM has armed its SMM
+     * legacy path is what prevents the firmware and the kernel from fighting
+     * over the controller during boot. */
+    unsigned int legsup = pci_config_read(dev->bus, dev->slot, dev->function,
+                                          UHCI_LEGACY_SUP);
+    if ((legsup & 0xFFFFU) & ~(UHCI_LEGACY_RO | UHCI_LEGACY_RWC)) {
+        log_printf("[UHCI] firmware legacy USB active (legsup=0x%X), leaving "
+                   "controller untouched\n", legsup & 0xFFFFU);
+        return -1;
+    }
+    pci_config_write(dev->bus, dev->slot, dev->function, UHCI_LEGACY_SUP,
+                     (legsup & 0xFFFF0000U) | UHCI_LEGACY_RWC);
+
     pci_enable_io(dev);
     pci_enable_bus_master(dev);
 
@@ -525,6 +614,9 @@ int uhci_probe(const pci_device_t* dev)
             ? uhci_link_qh((unsigned int)&c->intr_qh[i + 1])
             : uhci_link_terminate();
         c->intr_qh[i].element = uhci_link_terminate();
+        c->intr_qh_used[i] = 0;
+        c->intr_qh_dev[i] = 0;
+        c->intr_qh_ep[i] = 0;
     }
     c->control_qh.head = uhci_link_qh((unsigned int)&c->intr_qh[0]);
     c->control_qh.element = uhci_link_terminate();
@@ -534,9 +626,17 @@ int uhci_probe(const pci_device_t* dev)
         frame_list[i] = uhci_link_qh((unsigned int)&c->control_qh);
     }
 
-    uhci_write(c, UHCI_USBCMD, UHCI_CMD_GRESET);
-    for (volatile int i = 0; i < 100000; i++);
+    /* Use HCRESET, not GRESET: HCRESET resets only the host controller and
+     * leaves the root hub/port state in a well-defined condition, matching
+     * the sequence used by Linux's UHCI quirk. GRESET also resets the root
+     * hub and can interact badly with a CSM that still has legacy SMM state. */
+    uhci_write(c, UHCI_USBCMD, UHCI_CMD_HCRESET);
+    int reset_wait = 100000;
+    while ((uhci_read(c, UHCI_USBCMD) & UHCI_CMD_HCRESET) && --reset_wait) {
+        for (volatile int i = 0; i < 10; i++);
+    }
     uhci_write(c, UHCI_USBCMD, 0);
+    uhci_write(c, UHCI_USBINTR, 0);
     uhci_write(c, UHCI_USBSTS, 0x3F);
 
     unsigned int flp = c->frame_list_phys;
@@ -555,6 +655,7 @@ int uhci_probe(const pci_device_t* dev)
     c->hci.bulk = uhci_bulk;
     c->hci.port_reset = uhci_port_reset;
     c->hci.poll = uhci_poll_hci;
+    c->hci.supports_hubs = 1;
 
     usb_register_hci(&c->hci);
     g_uhci_count++;
@@ -565,6 +666,3 @@ int uhci_probe(const pci_device_t* dev)
     uhci_detect_ports(c);
     return 0;
 }
-
-
-

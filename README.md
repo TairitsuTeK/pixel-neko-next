@@ -29,9 +29,10 @@
   - **EHCI（USB 2.0）**：解析 MMIO 能力寄存器与运行寄存器，使用 qTD 完成高速传输，并通过 periodic QH 支持高速 HID 中断 IN；最多 8 个根端口，64-bit capable EHCI 使用 32-bit 地址模式。
   - **xHCI（USB 2.0 侧）**：现代 Intel PCH（Skylake 起）已取消 EHCI/UHCI，USB 2.0 端口全部挂在 xHCI 上。新驱动 `drivers/usb_xhci.c` 完成 BIOS Legacy USB 交接（`USBLEGSUP` / OS Owned）、命令环与事件环（ERST）、DCBAA 与 scratchpad、`Enable Slot` / `Address Device` / `Evaluate Context` / `Configure Endpoint` 命令，以及 EP0 控制传输与中断 IN 传输；只处理低速 / 全速 / 高速 USB 2.0 设备，USB 3.x 端口不参与。
   - **HID 启动协议键鼠**：USB 键盘 / 鼠标报告经 HID Usage → PS/2 Set-1 扫描码转换后注入现有输入管线，可与 PS/2 键鼠同时使用，最多支持 4 个 HID 设备。
+  - **USB Hub / Intel RMH**：新增 Hub class 驱动，支持 Hub descriptor、端口电源、端口复位、连接/复位改变位以及下游设备枚举；EHCI 对 RMH / 外接高速 Hub 后的全速/低速设备使用 TT split 事务，因此 H55/P55 等使用 Integrated Rate Matching Hub 的平台可以识别挂在 Hub 后面的键鼠。
   - **System Info 输入状态**：System 页显示当前正在使用的 PS/2/USB 键鼠来源，并新增 `USB Controller` 字段显示对应的 xHCI / EHCI / UHCI 控制器；无 USB HID 时显示 `None`。
-  - **安全降级与诊断**：仅扫描 xHCI / EHCI / UHCI 三种 USB 2.0 控制器；xHCI 交接失败时主动放过控制器，不影响固件的 PS/2 模拟；枚举与驱动状态通过 COM1 串口日志（`[USB ]`、`[XHCI]`、`[UHCI]`、`[EHCI]`、`[HID ]`）输出。
-  - **已知限制**：xHCI 驱动仅实现 USB 2.0 侧（低速 / 全速 / 高速），不支持 OHCI；暂不支持外接 USB Hub 与运行期热插拔——键鼠需在开机时已插入并尽量直连主板后置端口。
+  - **安全降级与诊断**：仅扫描 xHCI / EHCI / UHCI 三种 USB 2.0 控制器；启动早期只读检查 UHCI 固定 PCI 0xC0 的 Legacy 寄存器与 EHCI 的 BIOS Owned 信号，发现固件仍持有 SMM Legacy USB 时不复位对应控制器，保留 BIOS 的 PS/2 仿真；xHCI 交接失败时同样主动放过控制器。只有固件已释放的连接器才会被内核复位接管，避免 CSM 主板（如 ASUS H55/H57）在启动桌面时因 SMM 与内核争抢 UHCI/EHCI 而死锁。枚举与驱动状态通过 COM1 串口日志（`[USB ]`、`[HUB ]`、`[XHCI]`、`[UHCI]`、`[EHCI]`、`[HID ]`）输出。
+  - **已知限制**：xHCI 驱动仅实现 USB 2.0 侧（低速 / 全速 / 高速），不支持 OHCI；暂不支持运行期热插拔——键鼠需在开机时已插入。EHCI/UHCI 路径可枚举内置 RMH 与开机时已连接的外接 Hub（最多 3 层、最多 8 个设备）；xHCI 目前仍只管理根端口。
 - **💾 全新统一虚拟文件系统（VFS）与存储子系统**
   - **Windows 对齐盘符体系**：A: 与 B: 专给软驱预留；硬盘数据分区从 C: 开始依次分配；光驱紧随已分配硬盘分区之后（若无硬盘则光驱自动为 C: 盘）；自动隐藏 EFI 系统分区与扩展容器分区。
   - **CDFS 光盘驱动 (ISO9660 + Joliet)**：完整支持标准 ISO9660 与 Joliet 长文件名扩展，解决 CD/DVD 点开为空的问题，支持只读浏览与读取光盘文件。
@@ -74,7 +75,8 @@
 │   ├── fdc.c             # 原生软驱控制器驱动 (FDC 82077AA)
 │   ├── usb_core.c        # USB 2.0 核心层、描述符解析与设备枚举
 │   ├── usb_uhci.c        # UHCI (USB 1.1 全速/低速) 主机控制器驱动
-│   ├── usb_ehci.c        # EHCI (USB 2.0 高速) 主机控制器驱动
+│   ├── usb_ehci.c        # EHCI (USB 2.0 高速) 主机控制器驱动、RMH split
+│   ├── usb_hub.c         # USB Hub class 驱动与 RMH 下游端口枚举
 │   ├── usb_xhci.c        # xHCI (USB 2.0 侧) 主机控制器驱动、BIOS Legacy USB 交接
 │   ├── usb_hid.c         # HID 启动协议键盘/鼠标驱动
 │   ├── isadma.c          # ISA DMA 控制器驱动
@@ -97,7 +99,7 @@
 │   ├── sysinfo.c         # 系统信息工具与全 PCI 总线设备浏览器
 │   └── puzzle.c          # 经典 15 数字推盘小游戏
 ├── include/              # 全局公共头文件
-│   └── *.h               # ati_mach64.h, gfx_accel.h, usb_core.h, usb_uhci.h, usb_ehci.h, usb_xhci.h, usb_hid.h, panic.h, sysinfo.h, puzzle.h, etc.
+│   └── *.h               # ati_mach64.h, gfx_accel.h, usb_core.h, usb_uhci.h, usb_ehci.h, usb_hub.h, usb_xhci.h, usb_hid.h, panic.h, sysinfo.h, puzzle.h, etc.
 ├── scripts/              # 编译与构建辅助脚本
 │   ├── build_counter.sh
 │   └── build_number.txt
@@ -141,23 +143,48 @@
    ```bash
    make run-usb
    ```
-   自动附加 `piix3-usb-uhci` 控制器与 USB 键盘 / 鼠标，并将 `[USB ]`、`[UHCI]`、`[HID ]` 枚举日志写入 `usb_log.txt`。
+   自动附加 `piix3-usb-uhci` 控制器与 USB 键盘 / 鼠标，并将 `[USB ]`、`[UHCI]`、`[HID ]` 枚举日志写入 `usb_log.txt`。命令显式使用 `port=1` / `port=2`，避免新版 QEMU 把第二台设备挂到内部 USB Hub（当前内核不驱动外接 Hub）。
 
-5. **xHCI 输入自测模式（现代 Intel PCH 路径）**
+5. **EHCI 输入自测模式（USB 2.0 原生高速路径）**
+   ```bash
+   make run-ehci
+   ```
+   等价于：
+   ```bash
+   qemu-system-i386 -kernel iso/boot/kernel.elf -m 128M \
+       -device usb-ehci -device usb-kbd -device usb-mouse \
+       -serial file:ehci_log.txt -monitor none
+   ```
+   该模式模拟 Intel H55/H57 等带 EHCI 的 USB 2.0 平台；枚举日志写入 `ehci_log.txt`，窗口内可直接用键盘 / 鼠标验证输入。
+
+6. **Hub / RMH 枚举自测（QEMU 用全速 USB Hub 验证）**
+   ```bash
+   make run-hub
+   ```
+   自动附加 `usb-hub` 与两个下游 HID；用于验证 Hub descriptor、端口复位、下游设备枚举和 HID 输入。H55/P55 的 Intel Integrated RMH 是高速 Hub，核心 Hub 代码相同，另外走 EHCI TT split 路径。
+
+7. **xHCI 输入自测模式（现代 Intel PCH 路径）**
    ```bash
    make run-xhci
    ```
    自动附加 `qemu-xhci` 控制器与 USB 键盘 / 鼠标，模拟 Skylake 之后的平台（PCH 已取消 EHCI/UHCI，USB 2.0 端口全部挂在 xHCI 上），枚举日志写入 `xhci_log.txt`；窗口内可直接用键盘 / 鼠标验证输入。
 
-6. **GDB 远程调试模式**
+8. **GDB 远程调试模式**
    ```bash
    make debug
    ```
 
-7. **清理构建生成物**
+9. **清理构建生成物**
    ```bash
    make clean
    ```
+
+### 实机 BIOS / CSM 设置（ASUS P7H55-M LE 等 H55/H57 平台）
+
+- **推荐的原生 USB 配置**：`Legacy USB Support = Disabled`、`EHCI Hand-off = Enabled`、`USB Functions / USB 2.0 Controller = Enabled`。此时固件不占用 UHCI/EHCI，内核会清理 UHCI Legacy PIRQ/SMI、用 HCRESET 接管 UHCI，并以正确的 `USBLEGSUP` OS Owned（bit 24）接管 EHCI；H55/P55 的 Integrated RMH 会作为 class 9 Hub 被枚举，其下游键鼠通过 EHCI TT split 访问。
+- **必须启用 Legacy USB Support 时**（例如需要在 BIOS 阶段使用 USB 键盘）：内核按控制器单独判断——UHCI 的 0xC0 Legacy 寄存器中若出现 R/O 与 R/WC 掩码之外的固件持有位，则跳过该 UHCI（R/WC 状态位在无 CSM 的 QEMU/部分芯片组上也可能读到 0x8F00，不能单独作为接管依据）；否则按 Linux 顺序清除 Legacy 位后执行 HCRESET。EHCI 的 BIOS Owned 位仍置位时跳过该 EHCI，不向仍被 SMM 接管的控制器发起复位。被跳过的 USB 设备由 BIOS 的 SMM PS/2 仿真提供，而干净的 UHCI/EHCI 仍可被内核枚举；串口会打印 `[USB ] firmware legacy USB present ...` / `firmware still owns EHCI legacy USB ...`。这避免了 H55 主板在 “Starting desktop...” 阶段与 SMM 争抢控制器导致的死锁。
+- **关闭 Legacy USB 后 USB 键鼠灯不亮**：部分 ASUS H55 BIOS 在 POST 阶段不初始化 USB 设备，设备要等操作系统完成端口复位 / 枚举后才上电。请确认 `USB Functions`、`USB 2.0 Controller` 已启用，并优先使用主板后置 USB 2.0 端口；若仍无反应，可临时启用 Legacy USB Support 以使用固件 PS/2 仿真。
+- **PS/2 键鼠**：关闭两个 Legacy USB 选项时使用原生 8042；保留 Legacy USB 时内核不会重写 8042 命令字节，避免打断 SMM 仿真。
 
 ---
 
@@ -170,11 +197,12 @@
   - 新增 HID 类驱动 `drivers/usb_hid.c`：请求 Boot Protocol，将 HID Usage 映射为 PS/2 Set-1 扫描码并注入既有键盘 / 鼠标输入管线，最多 4 个 HID 设备，可与 PS/2 键鼠同时工作；
   - System Info 的 USB 输入状态新增控制器字段，显示当前 USB HID 使用的 xHCI / EHCI / UHCI 控制器；
   - `usb_init()` 在开机动画结束后按 xHCI → EHCI → UHCI 的顺序扫描 PCI 类代码 `0C/03` 的控制器，`usb_poll()` 并入桌面主循环；OHCI 不参与；
-  - **固件安全接管（CSM / Legacy USB 平台）**：PS/2 初始化改为幂等且非破坏性（只在必要时改写 8042 命令字节，并强制保持键鼠时钟与 Set-1 扫描码翻译），启动动画期间持续排空 0x60 缓冲；EHCI 在复位前先完成 `USBLEGSUP` 的 BIOS → OS 所有权交接，交接失败则完全不动控制器。这样 CSM + Legacy USB Support 的机器不会因为内核重配键鼠控制器而导致 USB 键鼠掉电失联，必要时仍可回退到固件的 PS/2 模拟；
+  - **固件安全接管（CSM / Legacy USB 平台）**：PS/2 初始化改为幂等且非破坏性（只在必要时改写 8042 命令字节，并强制保持键鼠时钟与 Set-1 扫描码翻译），启动动画期间持续排空 0x60 缓冲；UHCI 在 HCRESET 前按固定 PCI 0xC0 清除 Legacy PIRQ/SMI，EHCI 使用正确的 `USBLEGSUP` OS Owned（bit 24）完成 BIOS → OS 交接。每个控制器独立判断：固件仍持有 UHCI Legacy 时跳过该 UHCI，EHCI BIOS Owned 仍置位时跳过该 EHCI，不影响另一个干净的 companion。这修复了 ASUS H55/H57 等 CSM 主板在 “Starting desktop...” 阶段与固件争抢控制器导致的死锁；
+  - **EHCI 规范修复与 USB Hub/RMH**：异步 QH 的 Horizontal Link Pointer 改为自环（不再在 Async List 使用 T=1），HCRESET 前先清 Run/Stop 并等待 HCHalted；新增 `drivers/usb_hub.c`，支持 class 9 Hub descriptor、端口电源/复位/改变位与下游枚举，EHCI 对高速 Hub 后的全速/低速设备使用 TT split QH。H55/P55 的 Integrated Rate Matching Hub 因此可以识别物理键鼠；
 - **🧰 构建系统与工具链适配**：
   - Windows 下自动使用 `i686-elf-` 交叉工具链（可通过 `TOOLCHAIN_PREFIX` 覆盖），Linux 保持原生 `gcc` / `ld`；
   - ISO 输出改为带版本号文件名 `pixel_neko_<版本>.iso`（当前为 `pixel_neko_2012.200.iso`）；版本头生成物统一放入 `build/generated`，`include/version.h` 不再随每次编译被重写；
-  - 新增 `make run-kernel`（直接启动 ELF）、`make run-usb`（UHCI 键鼠自测）、`make run-xhci`（xHCI 键鼠自测）目标，`make run` / `make debug` 自动通过 `qemu-img` 创建 64MB `disk.img`；
+  - 新增 `make run-kernel`（直接启动 ELF）、`make run-usb`（UHCI 键鼠自测）、`make run-ehci`（EHCI 键鼠自测）、`make run-hub`（USB Hub/RMH 枚举自测）、`make run-xhci`（xHCI 键鼠自测）目标，`make run` / `make debug` 自动通过 `qemu-img` 创建 64MB `disk.img`；
   - 头文件依赖改为递归发现并排除自动生成的版本头，避免仅版本号变化触发全量重编译。
 - **🏷️ 版本号同步**：内核、开机画面、系统关于视窗、README 与 CI 发布说明统一为 `C2.0 Build 2012.200`。
 

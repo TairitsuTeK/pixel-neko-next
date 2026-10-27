@@ -87,6 +87,33 @@ typedef struct {
 #define EHCI_MAX_PORTS 8
 #define EHCI_MAX_HIDS 4
 
+/* QH Endpoint Characteristics / Capabilities bits (EHCI 3.6.2). */
+#define EHCI_QH_LOW_SPEED      0x00001000U
+#define EHCI_QH_HIGH_SPEED     0x00002000U
+#define EHCI_QH_TOGGLE_CTL     0x00004000U
+#define EHCI_QH_HEAD           0x00008000U
+#define EHCI_QH_CONTROL_EP     0x08000000U
+#define EHCI_QH_SMASK          0x000000FFU
+#define EHCI_QH_CMASK          0x0000FF00U
+#define EHCI_QH_HUBADDR        0x007F0000U
+#define EHCI_QH_HUBPORT        0x3F800000U
+#define EHCI_QH_MULT_TT        0x40000000U
+
+static unsigned int ehci_tt_epcap(const usb_device_t* dev, int interrupt)
+{
+    if (!dev || !dev->parent_hub || dev->speed == USB_SPEED_HIGH) return 0;
+
+    unsigned int v = EHCI_QH_MULT_TT |
+                     (((unsigned int)dev->parent_hub & 0x7FU) << 16) |
+                     (((unsigned int)dev->parent_port & 0x3FU) << 23);
+
+    /* Periodic split scheduling: start in microframe 0, complete in the
+     * following two microframes. Async control/bulk splits are scheduled by
+     * the host controller itself, so their S/C masks stay zero. */
+    if (interrupt) v |= EHCI_QH_SMASK | (3U << 8);
+    return v;
+}
+
 typedef struct {
     int used;
     int qh;
@@ -157,7 +184,10 @@ static void ehci_qtd_free(ehci_ctrl_t* c, int index)
     if (index >= 0 && index < EHCI_QTD_POOL) ehci_qtd_init(c, index);
 }
 
-/* Fill the five 4KB page pointers a qTD uses for one transfer. */
+/* Fill the five 4KB page pointers a qTD uses for one transfer.
+ * NOTE: a qTD can describe at most 5 pages (20KB); longer transfers must be
+ * chained across multiple qTDs. We log when truncation happens instead of
+ * silently dropping data. */
 static void ehci_qtd_set_buffers(ehci_ctrl_t* c, int index, void* data,
                                  int len)
 {
@@ -165,13 +195,26 @@ static void ehci_qtd_set_buffers(ehci_ctrl_t* c, int index, void* data,
     if (!data || len <= 0) return;
 
     unsigned int addr = (unsigned int)data;
-    unsigned int end = addr + (unsigned int)len;
+    /* FIX: use 64-bit arithmetic to avoid wrap when addr is near 4GB. */
+    unsigned long long end64 = (unsigned long long)addr + (unsigned int)len;
+    if (end64 > 0xFFFFFFFFULL) {
+        log_printf("[EHCI] qTD buffer spans past 4GB, truncating\n");
+        end64 = 0xFFFFFFFFULL;
+    }
+    unsigned int end = (unsigned int)end64;
+
     c->qtds[index].buf[0] = addr;
 
     int slot = 1;
     for (unsigned int page = (addr & ~0xFFFU) + 0x1000U;
          page < end && slot < 5; page += 0x1000U) {
         c->qtds[index].buf[slot++] = page;
+    }
+
+    /* FIX: warn if the transfer needs more than 5 pages. */
+    if (end > ((addr & ~0xFFFU) + 5U * 0x1000U)) {
+        log_printf("[EHCI] qTD needs more than 5 pages, chain required "
+                   "(addr=0x%X len=%d)\n", addr, len);
     }
 }
 
@@ -194,6 +237,26 @@ static int ehci_td_wait(ehci_ctrl_t* c, int index, int timeout_ms)
     return 0;
 }
 
+/* Wait until the periodic/async schedule status bit clears after we disable
+ * the corresponding schedule. Real hardware needs this before the queue
+ * memory can be safely rewritten; QEMU often finishes instantly. */
+static void ehci_wait_schedule_stopped(ehci_ctrl_t* c, unsigned int sts_bit,
+                                       int timeout_ms)
+{
+    int start = timer_get_ticks();
+    int target = timeout_ms / 10;
+    if (target < 1) target = 1;
+
+    while (ehci_read32(c, c->op + EHCI_USBSTS / 4) & sts_bit) {
+        if ((timer_get_ticks() - start) >= target) {
+            log_printf("[EHCI] schedule stop timeout (sts bit 0x%X)\n",
+                       sts_bit);
+            return;
+        }
+        for (volatile int i = 0; i < 200; i++);
+    }
+}
+
 /* Rebuild the EHCI periodic schedule: every frame points at the first HID QH
  * and the QHs are chained through their horizontal link pointers. */
 static void ehci_periodic_rebuild(ehci_ctrl_t* c)
@@ -203,18 +266,24 @@ static void ehci_periodic_rebuild(ehci_ctrl_t* c)
     unsigned int cmd = ehci_read32(c, c->op + EHCI_USBCMD / 4);
     ehci_write32(c, c->op + EHCI_USBCMD / 4, cmd & ~EHCI_CMD_PSE);
 
+    /* FIX: wait for the controller to actually stop touching the list. */
+    ehci_wait_schedule_stopped(c, EHCI_STS_PS, 100);
+
     unsigned int first = 0;
-    unsigned int prev = 0;
+    /* FIX: keep the raw (unaligned) pointer separate from the link value that
+     * carries the QH type bits, so we never dereference a tagged pointer. */
+    unsigned int prev_raw = 0;
+
     for (int i = 0; i < EHCI_MAX_HIDS; i++) {
         if (!c->hids[i].used) continue;
 
         ehci_qh_t* qh = &c->hid_qh[i];
         qh->hlp = 1;
-        /* EHCI link pointers use bits 1-2 as the type field: QH = 1. */
+        /* EHCI link pointers use bits 1-2 as the type field: QH = 01b. */
         unsigned int qhp = ((unsigned int)qh & ~0x1FU) | 2U;
         if (!first) first = qhp;
-        else if (prev) ((ehci_qh_t*)prev)->hlp = qhp;
-        prev = qhp;
+        if (prev_raw) ((ehci_qh_t*)prev_raw)->hlp = qhp;
+        prev_raw = (unsigned int)qh;
     }
 
     for (int i = 0; i < 1024; i++) {
@@ -239,10 +308,16 @@ static void ehci_hid_arm(ehci_ctrl_t* c, ehci_hid_t* h)
     ehci_qtd_set_buffers(c, h->qtd, h->buf, h->len);
 
     ehci_qh_t* qh = &c->hid_qh[h->qh];
+
+    /* FIX: preserve the hardware-maintained data toggle in QH.token bit 31.
+     * Clearing the whole token field on every arm would reset the toggle to
+     * DATA0 and desynchronise the device's interrupt endpoint. */
+    unsigned int saved_toggle = qh->token & EHCI_TD_DT;
+
     qh->cur_qtd = 0;
     qh->next_qtd = (unsigned int)qtd;
     qh->alt_qtd = 1;
-    qh->token = 0;
+    qh->token = saved_toggle;
 }
 
 static int ehci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
@@ -279,18 +354,17 @@ static int ehci_intr_in(usb_hci_t* hci, usb_device_t* dev, usb_endpoint_t* ep,
             if (h->len > (int)sizeof(c->hid_buf[i]))
                 h->len = (int)sizeof(c->hid_buf[i]);
 
-            unsigned int speed_bits = (dev->speed == USB_SPEED_HIGH) ? 2 :
-                                      ((dev->speed == USB_SPEED_LOW) ? 1 : 0);
+            unsigned int speed_bits = (dev->speed == USB_SPEED_HIGH) ?
+                                      EHCI_QH_HIGH_SPEED :
+                                      ((dev->speed == USB_SPEED_LOW) ?
+                                       EHCI_QH_LOW_SPEED : 0);
             ehci_qh_t* qh = &c->hid_qh[i];
             qh->hlp = 1;
             qh->epchar = (unsigned int)(dev->address & 0x7F) |
                          ((unsigned int)(ep->address & 0x0F) << 8) |
-                         (speed_bits << 12) |       /* EPS */
-                         (0U << 14) |               /* DTC: hardware toggle */
-                         (0U << 15) |               /* periodic QH */
-                         (((unsigned int)h->len & 0x7FFU) << 16) |
-                         (0U << 27);                /* C=0 */
-            qh->epcap = 0;
+                         speed_bits |
+                         (((unsigned int)h->len & 0x7FFU) << 16);
+            qh->epcap = ehci_tt_epcap(dev, 1);
             qh->cur_qtd = 0;
             qh->next_qtd = 1;
             qh->alt_qtd = 1;
@@ -349,11 +423,12 @@ static int ehci_control(usb_hci_t* hci, usb_device_t* dev,
     int pid_data = (dir == USB_DIR_IN) ? EHCI_PID_IN : EHCI_PID_OUT;
     int pid_status = (dir == USB_DIR_IN) ? EHCI_PID_OUT : EHCI_PID_IN;
 
-    /* Status stage (last): zero-length DATA1 packet. */
+    /* Status stage (last): zero-length DATA1 packet.
+     * FIX: set IOC so completion is explicit, and keep DT=DATA1 per spec. */
     c->qtds[status_qtd].next = 1;   /* terminate */
     c->qtds[status_qtd].alt = 1;
     c->qtds[status_qtd].token = EHCI_TD_ACTIVE | EHCI_TD_CERR | EHCI_TD_DT |
-        (unsigned int)(pid_status << 8);
+        EHCI_TD_IOC | (unsigned int)(pid_status << 8);
     ehci_qtd_set_buffers(c, status_qtd, 0, 0);
 
     /* Data stage (optional): DATA1, with page pointers for DMA. */
@@ -377,19 +452,20 @@ static int ehci_control(usb_hci_t* hci, usb_device_t* dev,
 
     /* Configure the async queue head for this device (EP0, control). */
     unsigned int speed_bits;
-    if (dev->speed == USB_SPEED_LOW) speed_bits = 1;
-    else if (dev->speed == USB_SPEED_HIGH) speed_bits = 2;
+    if (dev->speed == USB_SPEED_LOW) speed_bits = EHCI_QH_LOW_SPEED;
+    else if (dev->speed == USB_SPEED_HIGH) speed_bits = EHCI_QH_HIGH_SPEED;
     else speed_bits = 0;
 
-    c->async_qh.hlp = 1;   /* terminate list */
+    int tt_control = (dev->parent_hub && dev->speed != USB_SPEED_HIGH) ? 1 : 0;
+    c->async_qh.hlp = (((unsigned int)&c->async_qh) & ~0x1FU) | 0x2U;
     c->async_qh.epchar = (unsigned int)(dev->address & 0x7F) |
         (0U << 9) |
-        (speed_bits << 12) |
-        (0U << 14) |        /* DTC=0: hardware manages toggle */
-        (1U << 15) |        /* H=1 (head of list) */
+        speed_bits |
+        (tt_control ? EHCI_QH_TOGGLE_CTL : 0U) |
+        EHCI_QH_HEAD |
         ((dev->max_packet0 & 0x7FFU) << 16) |
-        (1U << 27);         /* C=1 (control endpoint) */
-    c->async_qh.epcap = 0;
+        EHCI_QH_CONTROL_EP;
+    c->async_qh.epcap = ehci_tt_epcap(dev, 0);
     c->async_qh.cur_qtd = 0;
     c->async_qh.next_qtd = (unsigned int)&c->qtds[setup_qtd];
     c->async_qh.alt_qtd = 1;
@@ -404,12 +480,22 @@ static int ehci_control(usb_hci_t* hci, usb_device_t* dev,
 
     int rc = ehci_td_wait(c, status_qtd, 100);
 
+    /* FIX: on failure, inspect each stage so the log points at the right
+     * qTD instead of a generic "control transfer failed". */
     if (rc < 0) {
-        log_printf("[EHCI] control transfer failed (rc=%d)\n", rc);
+        unsigned int ts = c->qtds[setup_qtd].token;
+        unsigned int td = (data_qtd >= 0) ? c->qtds[data_qtd].token : 0;
+        unsigned int tt = c->qtds[status_qtd].token;
+        log_printf("[EHCI] control failed rc=%d setup=0x%X data=0x%X "
+                   "status=0x%X\n", rc, ts, td, tt);
     }
 
     ehci_write32(c, c->op + EHCI_USBCMD / 4,
                  ehci_read32(c, c->op + EHCI_USBCMD / 4) & ~EHCI_CMD_ASE);
+
+    /* FIX: wait for the async schedule to actually stop before rewriting the
+     * queue head. */
+    ehci_wait_schedule_stopped(c, EHCI_STS_AS, 100);
     c->async_qh.next_qtd = 1;
 
     ehci_qtd_free(c, setup_qtd);
@@ -452,8 +538,18 @@ static int ehci_port_reset(usb_hci_t* hci, int port)
     int speed = (sc & EHCI_PORT_SPEED) >> EHCI_PORT_SPEED_SHIFT;
 
     /* After reset, high-speed devices show PED=1. Some controllers (and QEMU)
-     * do not implement the PORTSC speed field, so PED is the reliable bit. */
-    if ((sc & EHCI_PORT_PE) || speed == 2) {
+     * do not implement the PORTSC speed field, so PED is the reliable bit.
+     * FIX: only write PE when the port is not already enabled, and check
+     * OWNER first so a companion-owned port is never re-enabled here. */
+    if (sc & EHCI_PORT_OWNER) {
+        return -1;
+    }
+
+    if (sc & EHCI_PORT_PE) {
+        return USB_SPEED_HIGH;
+    }
+
+    if (speed == 2) {
         ehci_write32(c, portsc, sc | EHCI_PORT_PE | EHCI_PORT_PP);
         sleep_ms(10);
         return USB_SPEED_HIGH;
@@ -469,10 +565,17 @@ static int ehci_port_reset(usb_hci_t* hci, int port)
 static void ehci_poll_hci(usb_hci_t* hci)
 {
     ehci_ctrl_t* c = (ehci_ctrl_t*)hci->priv;
-    if (ehci_read32(c, c->op + EHCI_USBSTS / 4) & EHCI_STS_HCHALTED) {
+    unsigned int sts = ehci_read32(c, c->op + EHCI_USBSTS / 4);
+    if (sts & EHCI_STS_HCHALTED) {
         ehci_write32(c, c->op + EHCI_USBSTS / 4, EHCI_STS_HCHALTED);
+
+        /* FIX: a halted controller may have lost PSE/ASE/CONFIGFLAG too, so
+         * restore the full run state instead of only RS. */
+        ehci_write32(c, c->op + EHCI_CONFIGFLAG / 4, 1);
         ehci_write32(c, c->op + EHCI_USBCMD / 4,
-                     ehci_read32(c, c->op + EHCI_USBCMD / 4) | EHCI_CMD_RS);
+                     ehci_read32(c, c->op + EHCI_USBCMD / 4) |
+                     EHCI_CMD_PSE | EHCI_CMD_ASE | EHCI_CMD_RS);
+        log_printf("[EHCI] controller halted, restored run state\n");
     }
 }
 
@@ -493,6 +596,12 @@ void ehci_poll(void)
  * the handoff and the caller must leave the hardware completely untouched. */
 static int ehci_legacy_handoff(const pci_device_t* dev)
 {
+    /* USBLEGSUP bit 16 is BIOS Owned; bit 24 is OS Owned (EHCI spec and
+     * Linux pci-quirks use the same layout). Earlier revisions of this
+     * driver used bit 17, which never released the firmware semaphore. */
+    #define EHCI_LEGACY_BIOS_OWNED 0x00010000U
+    #define EHCI_LEGACY_OS_OWNED   0x01000000U
+
     unsigned int hccparams = pci_config_read(dev->bus, dev->slot,
                                              dev->function, EHCI_HCCPARAMS);
     unsigned char eecp = (unsigned char)((hccparams >> 8) & 0xFF);
@@ -507,17 +616,25 @@ static int ehci_legacy_handoff(const pci_device_t* dev)
             continue;
         }
 
-        /* Bit 16 = HC BIOS Owned semaphore, bit 17 = HC OS Owned semaphore.
-         * Bits 20 and 23 are write-1-to-clear SMI enables. */
-        if (!(cap & 0x00010000U) && (cap & 0x00020000U)) return 1;
+        /* Bit 16 = HC BIOS Owned semaphore, bit 24 = OS Owned semaphore.
+         * If BIOS still owns EHCI, do not even write the OS semaphore here:
+         * on some CSM boards (including H55 with hand-off disabled) that write
+         * raises an SMI while firmware refuses to hand over. */
+        if (cap & EHCI_LEGACY_BIOS_OWNED) {
+            log_printf("[EHCI] BIOS still owns legacy USB (bus %u slot %u), "
+                       "leaving the controller alone\n", dev->bus, dev->slot);
+            return 0;
+        }
 
-        pci_config_write(dev->bus, dev->slot, dev->function, eecp,
-                         cap | 0x00020000U | 0x00900000U);
+        if (!(cap & EHCI_LEGACY_OS_OWNED)) {
+            pci_config_write(dev->bus, dev->slot, dev->function, eecp,
+                             cap | EHCI_LEGACY_OS_OWNED);
+        }
 
         int released = 0;
         for (int i = 0; i < 20; i++) {
             if (!(pci_config_read(dev->bus, dev->slot, dev->function, eecp) &
-                  0x00010000U)) {
+                  EHCI_LEGACY_BIOS_OWNED)) {
                 released = 1;
                 break;
             }
@@ -579,6 +696,11 @@ int ehci_probe(const pci_device_t* dev)
         return -1;
     }
 
+    /* Do the legacy handoff entirely through PCI config before touching the
+     * MMIO BAR. If firmware still owns EHCI, returning here leaves its SMM
+     * legacy path (and the BIOS PS/2 emulation) completely intact. */
+    if (!ehci_legacy_handoff(dev)) return -1;
+
     c->cap = (volatile unsigned int*)dev->bar[0];
     unsigned char cap_len = *(volatile unsigned char*)dev->bar[0];
     c->op = (volatile unsigned int*)(dev->bar[0] + cap_len);
@@ -607,8 +729,8 @@ int ehci_probe(const pci_device_t* dev)
 
     /* Firmware that still owns the controller through legacy USB support must
      * keep it: resetting it would cut off the USB keyboard/mouse that the BIOS
-     * is emulating as PS/2. */
-    if (!ehci_legacy_handoff(dev)) return -1;
+     * is emulating as PS/2. The handoff above already checked this via PCI
+     * config without touching MMIO. */
 
     for (int i = 0; i < EHCI_QTD_POOL; i++) ehci_qtd_init(c, i);
 
@@ -620,6 +742,22 @@ int ehci_probe(const pci_device_t* dev)
     c->periodic_list = plist;
     for (int i = 0; i < 1024; i++) plist[i] = 1;  /* terminate */
 
+    /* EHCI requires the controller to be halted before HCRESET; the BIOS may
+     * have left it running while polling a USB keyboard. Clear Run/Stop and
+     * wait for HCHalted first. */
+    unsigned int cmd = ehci_read32(c, c->op + EHCI_USBCMD / 4);
+    ehci_write32(c, c->op + EHCI_USBCMD / 4,
+                 cmd & ~(EHCI_CMD_RS | EHCI_CMD_PSE | EHCI_CMD_ASE));
+    int halt_wait = 100000;
+    while (!(ehci_read32(c, c->op + EHCI_USBSTS / 4) & EHCI_STS_HCHALTED) &&
+           --halt_wait) {
+        for (volatile int i = 0; i < 10; i++);
+    }
+    if (!(ehci_read32(c, c->op + EHCI_USBSTS / 4) & EHCI_STS_HCHALTED)) {
+        log_printf("[EHCI] controller did not halt, skipping reset\n");
+        return -1;
+    }
+
     ehci_write32(c, c->op + EHCI_USBCMD / 4, EHCI_CMD_HCRESET);
     int timeout = 1000000;
     while ((ehci_read32(c, c->op + EHCI_USBCMD / 4) & EHCI_CMD_HCRESET) &&
@@ -630,7 +768,7 @@ int ehci_probe(const pci_device_t* dev)
     ehci_write32(c, c->op + EHCI_CTRLDSSEG / 4, 0);
     ehci_write32(c, c->op + EHCI_PERIODICLIST / 4, (unsigned int)plist);
 
-    c->async_qh.hlp = 1;
+    c->async_qh.hlp = (((unsigned int)&c->async_qh) & ~0x1FU) | 0x2U;
     c->async_qh.epchar = 0;
     c->async_qh.epcap = 0;
     c->async_qh.cur_qtd = 0;
@@ -643,12 +781,14 @@ int ehci_probe(const pci_device_t* dev)
     ehci_write32(c, c->op + EHCI_USBSTS / 4, 0x3F);
     ehci_write32(c, c->op + EHCI_USBINTR / 4, 0);
 
+    ehci_write32(c, c->op + EHCI_CONFIGFLAG / 4, 1);
     ehci_write32(c, c->op + EHCI_USBCMD / 4,
                  EHCI_CMD_PSE | EHCI_CMD_RS);
-    ehci_write32(c, c->op + EHCI_CONFIGFLAG / 4, 1);
 
     /* Power every root port before probing for devices. On controllers with
-     * port-power control this is required to see anything at all. */
+     * port-power control this is required to see anything at all.
+     * FIX: wait longer and verify PP actually settled before touching PORTSC
+     * again during detection. */
     for (int port = 0; port < c->num_ports; port++) {
         volatile unsigned int* portsc = c->op + EHCI_PORTSC0 / 4 + port;
         unsigned int sc = ehci_read32(c, portsc);
@@ -656,7 +796,16 @@ int ehci_probe(const pci_device_t* dev)
             ehci_write32(c, portsc, sc | EHCI_PORT_PP);
         }
     }
-    sleep_ms(50);
+    sleep_ms(100);
+
+    for (int port = 0; port < c->num_ports; port++) {
+        volatile unsigned int* portsc = c->op + EHCI_PORTSC0 / 4 + port;
+        int waited = 0;
+        while (!(ehci_read32(c, portsc) & EHCI_PORT_PP) && waited < 20) {
+            sleep_ms(10);
+            waited++;
+        }
+    }
 
     c->hci.name = "EHCI";
     c->hci.priv = c;
@@ -665,6 +814,7 @@ int ehci_probe(const pci_device_t* dev)
     c->hci.bulk = 0;
     c->hci.port_reset = ehci_port_reset;
     c->hci.poll = ehci_poll_hci;
+    c->hci.supports_hubs = 1;
 
     usb_register_hci(&c->hci);
     g_ehci_count++;
@@ -677,5 +827,3 @@ int ehci_probe(const pci_device_t* dev)
     ehci_detect_ports(c);
     return 0;
 }
-
-

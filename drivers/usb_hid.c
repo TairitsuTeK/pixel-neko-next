@@ -6,18 +6,24 @@
 #include "log.h"
 
 #define USB_HID_MAX_DEVICES 4
+#define USB_HID_FAIL_LIMIT  10
+
+/* HID class requests (not in usb_core.h to keep the core generic). */
+#define USB_REQ_HID_SET_IDLE     0x0A
+#define USB_REQ_HID_SET_PROTOCOL 0x0B
 
 typedef struct {
+    int             used;
     usb_device_t*   dev;
     usb_endpoint_t* ep_in;
-    int is_keyboard;
-    int is_mouse;
-    unsigned char prev_mods;
-    unsigned char prev_keys[6];
+    int             is_keyboard;
+    int             is_mouse;
+    int             fail_count;
+    unsigned char   prev_mods;
+    unsigned char   prev_keys[6];
 } usb_hid_dev_t;
 
 static usb_hid_dev_t g_hids[USB_HID_MAX_DEVICES];
-static int g_hid_count = 0;
 static int g_usb_keyboard_count = 0;
 static int g_usb_mouse_count = 0;
 static unsigned int g_usb_controller_mask = 0;
@@ -155,9 +161,33 @@ static void hid_process_mouse(usb_hid_dev_t* h, const unsigned char* report)
                             (signed char)report[2]);
 }
 
+static int hid_controller_bit(const char* name)
+{
+    if (!name) return 0;
+    if (name[0] == 'x' && name[1] == 'H' && name[2] == 'C' && name[3] == 'I')
+        return USB_HID_CTRL_XHCI;
+    if (name[0] == 'E' && name[1] == 'H' && name[2] == 'C' && name[3] == 'I')
+        return USB_HID_CTRL_EHCI;
+    if (name[0] == 'U' && name[1] == 'H' && name[2] == 'C' && name[3] == 'I')
+        return USB_HID_CTRL_UHCI;
+    return 0;
+}
+
+/* Recompute which controller families still have at least one HID. */
+static void hid_recompute_controller_mask(void)
+{
+    unsigned int mask = 0;
+    for (int i = 0; i < USB_HID_MAX_DEVICES; i++) {
+        if (!g_hids[i].used) continue;
+        if (!g_hids[i].dev || !g_hids[i].dev->hci) continue;
+        mask |= (unsigned int)hid_controller_bit(g_hids[i].dev->hci->name);
+    }
+    g_usb_controller_mask = mask;
+}
+
 int usb_hid_attach(usb_device_t* dev)
 {
-    if (g_hid_count >= USB_HID_MAX_DEVICES) return -1;
+    if (!dev) return -1;
 
     if (!dev->hci || !dev->hci->intr_in) {
         log_printf("[HID ] %s controller has no interrupt IN support\n",
@@ -187,42 +217,79 @@ int usb_hid_attach(usb_device_t* dev)
         is_kbd = 1;
     }
 
-    /* Request HID boot protocol. */
+    /* Find a free HID slot before talking to the device, so a control
+     * transfer failure does not leave a half-registered slot behind. */
+    int slot = -1;
+    for (int i = 0; i < USB_HID_MAX_DEVICES; i++) {
+        if (!g_hids[i].used) { slot = i; break; }
+    }
+    if (slot < 0) {
+        log_printf("[HID ] no free HID slot\n");
+        return -1;
+    }
+
+    /* SET_PROTOCOL(boot). Failure means the device stays in report protocol
+     * and our boot-format parsing would be wrong, so treat it as fatal. */
     usb_setup_packet_t setup;
     usb_memset(&setup, 0, sizeof(setup));
     setup.bmRequestType = 0x21;  /* Host-to-device, Class, Interface */
-    setup.bRequest = 0x0B;       /* SET_PROTOCOL */
+    setup.bRequest = USB_REQ_HID_SET_PROTOCOL;
     setup.wValue = 0;            /* boot protocol */
     setup.wIndex = dev->interface_number;
     setup.wLength = 0;
-    dev->hci->control(dev->hci, dev, &setup, NULL, 0, USB_DIR_OUT);
+    if (dev->hci->control(dev->hci, dev, &setup, NULL, 0, USB_DIR_OUT) < 0) {
+        log_printf("[HID ] SET_PROTOCOL(boot) failed\n");
+        return -1;
+    }
 
-    usb_hid_dev_t* h = &g_hids[g_hid_count];
+    /* SET_IDLE(0, 0). Many boot keyboards work without it, so a failure is
+     * logged but not fatal; the device may still report on change only. */
+    usb_memset(&setup, 0, sizeof(setup));
+    setup.bmRequestType = 0x21;
+    setup.bRequest = USB_REQ_HID_SET_IDLE;
+    setup.wValue = 0;            /* duration = 0 (infinite) */
+    setup.wIndex = dev->interface_number;
+    setup.wLength = 0;
+    if (dev->hci->control(dev->hci, dev, &setup, NULL, 0, USB_DIR_OUT) < 0) {
+        log_printf("[HID ] SET_IDLE failed (continuing)\n");
+    }
+
+    usb_hid_dev_t* h = &g_hids[slot];
     usb_memset(h, 0, sizeof(*h));
+    h->used = 1;
     h->dev = dev;
     h->ep_in = ep_in;
     h->is_keyboard = is_kbd;
     h->is_mouse = is_mouse;
-    if (dev->hci && dev->hci->name) {
-        const char* name = dev->hci->name;
-        if (name[0] == 'x' && name[1] == 'H' && name[2] == 'C' &&
-            name[3] == 'I') {
-            g_usb_controller_mask |= USB_HID_CTRL_XHCI;
-        } else if (name[0] == 'E' && name[1] == 'H' && name[2] == 'C' &&
-                   name[3] == 'I') {
-            g_usb_controller_mask |= USB_HID_CTRL_EHCI;
-        } else if (name[0] == 'U' && name[1] == 'H' && name[2] == 'C' &&
-                   name[3] == 'I') {
-            g_usb_controller_mask |= USB_HID_CTRL_UHCI;
-        }
-    }
+    h->fail_count = 0;
+
     if (is_kbd) g_usb_keyboard_count++;
     else if (is_mouse) g_usb_mouse_count++;
-    g_hid_count++;
+
+    g_usb_controller_mask |= (unsigned int)hid_controller_bit(dev->hci->name);
 
     log_printf("[HID ] %s attached (ep 0x%X)\n",
                is_kbd ? "keyboard" : "mouse", ep_in->address);
     return 0;
+}
+
+void usb_hid_detach(usb_device_t* dev)
+{
+    if (!dev) return;
+
+    for (int i = 0; i < USB_HID_MAX_DEVICES; i++) {
+        usb_hid_dev_t* h = &g_hids[i];
+        if (!h->used || h->dev != dev) continue;
+
+        if (h->is_keyboard && g_usb_keyboard_count > 0)
+            g_usb_keyboard_count--;
+        else if (h->is_mouse && g_usb_mouse_count > 0)
+            g_usb_mouse_count--;
+
+        usb_memset(h, 0, sizeof(*h));
+        hid_recompute_controller_mask();
+        return;
+    }
 }
 
 int usb_hid_keyboard_count(void)
@@ -276,9 +343,11 @@ const char* usb_hid_controller_summary(void)
 
 void usb_hid_poll(void)
 {
-    for (int i = 0; i < g_hid_count; i++) {
+    for (int i = 0; i < USB_HID_MAX_DEVICES; i++) {
         usb_hid_dev_t* h = &g_hids[i];
+        if (!h->used) continue;
         if (!h->dev || !h->ep_in || !h->dev->hci || !h->dev->hci->intr_in) {
+            usb_hid_detach(h->dev);
             continue;
         }
 
@@ -286,6 +355,21 @@ void usb_hid_poll(void)
         usb_memset(report, 0, sizeof(report));
         int len = h->dev->hci->intr_in(h->dev->hci, h->dev, h->ep_in,
                                        report, sizeof(report));
+        if (len < 0) {
+            /* The device may have been unplugged; give it a few polls to
+             * recover before dropping it. */
+            h->fail_count++;
+            if (h->fail_count >= USB_HID_FAIL_LIMIT) {
+                log_printf("[HID ] %s at ep 0x%X stopped responding, "
+                           "detaching\n",
+                           h->is_keyboard ? "keyboard" : "mouse",
+                           h->ep_in->address);
+                usb_hid_detach(h->dev);
+            }
+            continue;
+        }
+        h->fail_count = 0;
+
         if (len > 0) {
             /* Keep one HID report atomic with respect to PS/2 IRQs. Otherwise
              * IRQ1/IRQ12 can inject a byte between the individual key/scancode
@@ -297,4 +381,3 @@ void usb_hid_poll(void)
         }
     }
 }
-
